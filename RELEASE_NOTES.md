@@ -1,5 +1,17 @@
 # Release notes
 
+## [2026.10.0-port.32] - 2026-10-31
+
+- Remove Discussions from the course sidebar while retaining it for groups and schools; refine the course navigation glyphs with WinUI-native equivalents and Schoology theme colors.
+- Render assignment submissions as revision rows with dates, draft/late status, rich text and attachment actions.
+- Render post, message and submission attachments as native XAML buttons; show images inline, open PDF/image view-or-download choices, and download/open other files without routing them through the shared WebView.
+- Open attached links and rich-text hyperlinks in the default browser without injecting Schoology WebView cookies.
+- Restore nested post attachment and poll payload parsing so post images and poll options render.
+- Remove nested attachment cards and card-like backgrounds from post split-button actions.
+- Expand Light/Dark/High Contrast resources for text inputs, combo boxes, lists, navigation and buttons; rebuild the native file viewer on theme changes.
+- Fix WinUI analyzer warnings and move the attachment cancellation token to the final parameter position.
+- Upgrade GitHub Actions to Node 24-compatible action releases and locate MSBuild through Visual Studio Installer instead of the deprecated Node 20 setup action.
+
 ## [2026.10.0-port.31] - 2026-10-31
 
 - Fix the rich-content compiler errors by composing native WinUI Italic and Underline inline spans.

@@ -44,6 +44,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private Button? _titleBarCreateButton;
     private string _titleBarCreateContext = string.Empty;
     private readonly SchoologyAuthService _auth = new(false);
+    private readonly AccessibilitySettings _accessibilitySettings = new();
     private readonly SchoologyApiClient _api;
     private readonly ObservableCollection<SchoologyEntity> _courses = new();
     private readonly ObservableCollection<SchoologyEntity> _groups = new();
@@ -57,6 +58,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private readonly SemaphoreSlim _sharedWebViewGate = new(1, 1);
     private bool _sharedWebViewInitialized;
     private Grid? _activeNativeFileViewerRoot;
+    private Action? _refreshNativeFileViewer;
     private DispatcherTimer? _notificationTimer;
     private bool _notificationPollInProgress;
     private bool _allowExit;
@@ -108,6 +110,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             _ => ElementTheme.Default
         };
         _root.ActualThemeChanged += (_, _) => RefreshThemeSurfaces();
+        _accessibilitySettings.HighContrastChanged += (_, _) => RefreshThemeSurfaces();
         Title = "Schoology";
         ExtendsContentIntoTitleBar = true;
         AppWindow.TitleBar.ExtendsContentIntoTitleBar = true;
@@ -187,7 +190,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     }
     [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X; public int Y; }
     private static bool BackgroundModeEnabled => string.Equals(ReadAppSetting("RunInBackgroundAtStartup", "true"), "true", StringComparison.OrdinalIgnoreCase);
-    private void ConfigureStartupRegistration()
+    private static void ConfigureStartupRegistration()
     {
         try
         {
@@ -390,7 +393,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         // These brushes live in ThemeDictionaries, so looking them up directly in
         // Application.Resources throws at runtime. Resolve against the active
         // Window theme and keep a safe fallback so startup cannot fail on a lookup.
-        var themeName = _root.ActualTheme switch
+        var themeName = _accessibilitySettings.HighContrast ? "HighContrast" : _root.ActualTheme switch
         {
             ElementTheme.Dark => "Dark",
             ElementTheme.Light => "Light",
@@ -2702,7 +2705,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         _selectedEntityId = entityId;
         var tabs = kind == "School Profile" ? new[] { "Updates", "Info", "Resources", "Discussions" } :
             kind == "Groups" ? new[] { "Updates", "Members", "Discussions", "Resources" } :
-            new[] { "Materials", "Updates", "Grades", "Members", "Discussions" };
+            new[] { "Materials", "Updates", "Grades", "Members" };
 
         var root = new Grid { Background = new SolidColorBrush(Colors.Transparent) };
         var wide = new Grid { ColumnSpacing = 0 };
@@ -2747,22 +2750,21 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var tabRow = new Grid { ColumnSpacing = 12 };
             tabRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
             tabRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var tabIcon = new SymbolIcon(tab switch
+            IconElement tabIcon = tab switch
             {
-                "Materials" => Symbol.Folder,
-                "Updates" => Symbol.Message,
-                "Grades" => Symbol.Calculator,
-                "Members" => Symbol.People,
-                "Discussions" => Symbol.Comment,
-                "Resources" => Symbol.Folder,
-                "Info" => Symbol.Help,
-                _ => Symbol.Page
-            })
-            {
-                Width = 22, Height = 22,
-                Foreground = ThemeBrush("SchoologyBlueBrush"),
-                VerticalAlignment = VerticalAlignment.Center
+                "Materials" => new FontIcon { Glyph = ((char)0xE8B7).ToString(), FontSize = 20 },
+                "Updates" => new FontIcon { Glyph = ((char)0xE8BD).ToString(), FontSize = 20 },
+                "Grades" => new FontIcon { Glyph = ((char)0xE9D5).ToString(), FontSize = 20 },
+                "Members" => new SymbolIcon(Symbol.People),
+                "Discussions" => new FontIcon { Glyph = ((char)0xE8BD).ToString(), FontSize = 20 },
+                "Resources" => new FontIcon { Glyph = ((char)0xE8B7).ToString(), FontSize = 20 },
+                "Info" => new SymbolIcon(Symbol.Help),
+                _ => new SymbolIcon(Symbol.Page)
             };
+            tabIcon.Width = 22;
+            tabIcon.Height = 22;
+            tabIcon.Foreground = ThemeBrush("SchoologyBlueBrush");
+            tabIcon.VerticalAlignment = VerticalAlignment.Center;
             tabRow.Children.Add(tabIcon);
             var tabLabel = Text(tab, 14, true);
             tabLabel.Foreground = ThemeBrush("SchoologyTextBrush");
@@ -3016,7 +3018,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { App.WriteStartupLog($"Could not save setting '{key}'.", ex); }
     }
 
-    private void NavigateShellFrame(Frame frame, UIElement content, SlideNavigationTransitionEffect effect)
+    private static void NavigateShellFrame(Frame frame, UIElement content, SlideNavigationTransitionEffect effect)
     {
         var animationsEnabled = AnimationsEnabled;
         var transition = new SlideNavigationTransitionInfo { Effect = effect };
@@ -3164,22 +3166,90 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 }
                 catch (Exception ex) { submissionLoadError = ex.Message; }
             }
+            JsonElement submissionGrade = default;
+            if (submissionsEnabled && gradeItemId > 0)
+            {
+                try
+                {
+                    using var gradeDocument = await _api.GetAssignmentGradesAsync(session, sectionId, gradeItemId);
+                    submissionGrade = SchoologyApiClient.ReadRecords(gradeDocument.RootElement, "grade", "grades")
+                        .FirstOrDefault()?.Data ?? default;
+                }
+                catch (Exception ex) { App.WriteStartupLog("Could not load the assignment's overall grade for its submission view.", ex); }
+            }
+
             UIElement BuildSubmissionsView()
             {
-                var submissions = new StackPanel { Spacing = 8, Margin = new Thickness(8) };
-                submissions.Children.Add(Text("Submissions", 18, true));
-                if (gradeItemId <= 0) submissions.Children.Add(EmptyState("Schoology did not return a grade-item ID."));
-                else if (submissionLoadError is not null) submissions.Children.Add(EmptyState("Unable to load your submission.", submissionLoadError));
-                else if (submissionRecords.Count == 0) submissions.Children.Add(EmptyState("No submission has been recorded."));
-                foreach (var submission in submissionRecords)
+                var submissions = new StackPanel { Spacing = 12, Margin = new Thickness(8) };
+                var gradeValue = ProfileValue(submissionGrade, "grade", "calculated_grade");
+                var gradeLabel = string.IsNullOrWhiteSpace(gradeValue) ? "—" : gradeValue;
+                if (!string.IsNullOrWhiteSpace(points)) gradeLabel += " / " + points;
+                var submissionHeader = new Grid { ColumnSpacing = 12 };
+                submissionHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                submissionHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                submissionHeader.Children.Add(Text("Your Submissions", 18, true));
+                var overallGrade = Text(gradeLabel, 15, true);
+                Grid.SetColumn(overallGrade, 1);
+                submissionHeader.Children.Add(overallGrade);
+                submissions.Children.Add(submissionHeader);
+                var commentElement = FindJsonPropertyRecursive(submissionGrade, "comment", "teacher_comment", "teacherComment");
+                var overallComment = commentElement.ValueKind == JsonValueKind.Object
+                    ? ProfileValue(commentElement, "comment", "body", "text")
+                    : commentElement.ValueKind == JsonValueKind.String ? commentElement.GetString()
+                    : ProfileValue(submissionGrade, "comment", "teacher_comment", "teacherComment");
+                if (!string.IsNullOrWhiteSpace(overallComment))
                 {
-                    var card = new StackPanel { Spacing = 4, Padding = new Thickness(12) };
-                    foreach (var key in new[] { "status", "created", "body", "filename", "file_name" })
+                    var comment = new StackPanel { Spacing = 5 };
+                    comment.Children.Add(Text("Overall Comment", 14, true));
+                    comment.Children.Add(CreateRichContent(overallComment, 13));
+                    submissions.Children.Add(comment);
+                }
+                if (gradeItemId <= 0)
+                    submissions.Children.Add(EmptyState("Schoology did not return a grade-item ID."));
+                else if (submissionLoadError is not null)
+                    submissions.Children.Add(EmptyState("Unable to load your submission.", submissionLoadError));
+                else if (submissionRecords.Count == 0)
+                    submissions.Children.Add(EmptyState("You haven’t made any submissions."));
+                foreach (var submission in submissionRecords
+                    .OrderByDescending(item => JsonLong(item.Data, "revision_id", "revisionId", "id")))
+                {
+                    var revisionId = ProfileValue(submission.Data, "revision_id", "revisionId", "id") ?? "—";
+                    var created = ProfileValue(submission.Data, "created", "created_at", "timestamp");
+                    var draft = JsonBoolean(submission.Data, "draft", "is_draft", "isDraft");
+                    var late = JsonBoolean(submission.Data, "late", "is_late", "isLate");
+                    var statusText = draft ? "Draft" : late ? "Late" : "On time";
+                    var revision = new StackPanel { Spacing = 6, Padding = new Thickness(0, 10, 0, 12) };
+                    var heading = new Grid { ColumnSpacing = 12 };
+                    heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    heading.Children.Add(Text($"Revision {revisionId}", 14, true));
+                    var stateLabel = Text(statusText, 12, true);
+                    stateLabel.Foreground = ThemeBrush(draft ? "SchoologyMutedTextBrush" :
+                        late ? "SchoologyWarningTextBrush" : "SchoologySuccessTextBrush");
+                    Grid.SetColumn(stateLabel, 1);
+                    heading.Children.Add(stateLabel);
+                    revision.Children.Add(heading);
+                    if (!string.IsNullOrWhiteSpace(created))
                     {
-                        var value = ProfileValue(submission.Data, key);
-                        if (!string.IsNullOrWhiteSpace(value)) card.Children.Add(Text(key.Replace('_', ' ') + ": " + StripMarkup(value), 13));
+                        var date = Text(ParseSchoologyDate(created)?.ToString("g",
+                            System.Globalization.CultureInfo.CurrentCulture) ?? created, 11);
+                        date.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+                        revision.Children.Add(date);
                     }
-                    submissions.Children.Add(Surface(card));
+                    var bodyText = ProfileValue(submission.Data, "body", "text", "comment", "description");
+                    if (!string.IsNullOrWhiteSpace(bodyText)) revision.Children.Add(CreateRichContent(bodyText, 13));
+                    var attachments = BuildAttachmentControls(submission.Data,
+                        () => _ = ShowAssignmentDetailsAsync(sectionId, record));
+                    if (attachments.Children.Count > 0) revision.Children.Add(attachments);
+                    var filename = ProfileValue(submission.Data, "filename", "file_name", "fileName");
+                    if (attachments.Children.Count == 0 && !string.IsNullOrWhiteSpace(filename))
+                        revision.Children.Add(Text(filename, 12));
+                    revision.Children.Add(new Border
+                    {
+                        Height = 1, Background = ThemeBrush("SchoologyDividerBrush"),
+                        Margin = new Thickness(0, 6, 0, 0)
+                    });
+                    submissions.Children.Add(revision);
                 }
                 return new ScrollViewer { Content = submissions, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             }
@@ -3732,7 +3802,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             });
             var download = _auth.GetSchoologyFileBytesAsync(
                 _session ?? throw new InvalidOperationException("Sign in to download Schoology files."),
-                url, cancellation.Token, progress);
+                url, progress, cancellation.Token);
             var completed = await Task.WhenAny(download, cancelled.Task);
             if (completed == cancelled.Task)
             {
@@ -3869,6 +3939,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var back = Action("‹ Back", (_, _) =>
         {
             _activeNativeFileViewerRoot = null;
+            _refreshNativeFileViewer = null;
             try { File.Delete(previewPath); } catch { }
             onBack();
         });
@@ -3952,6 +4023,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
 
         _activeNativeFileViewerRoot = viewer;
+        _refreshNativeFileViewer = () =>
+            _ = ShowNativeFileViewerAsync(previewPath, title, isPdf, originalUrl, originalFilename, originalMime, onBack);
         if (_sectionFrame is not null) NavigateMainSection(viewer, title);
         else Reset(BuildApplicationShell(title, viewer));
     }
@@ -4085,10 +4158,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             {
                 var useConverted = !string.IsNullOrWhiteSpace(convertedFileUrl) &&
                     (convertedStatus.Length == 0 || convertedStatus is "success" or "converted" or "1");
-                await OpenNativeMaterialFileAsync(
-                    useConverted ? convertedFileUrl! : originalFileUrl!,
-                    useConverted ? "application/pdf" : originalFileMime,
-                    originalFileUrl!, originalFileName, originalFileMime, title,
+                await ShowAttachmentOptionsAsync(
+                    fileAttachment.ValueKind == JsonValueKind.Object ? fileAttachment : record.Data,
                     () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
                 return;
             }
@@ -4115,8 +4186,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     var isLtiOrAssessment = type.Contains("lti") || type.Contains("external_tool") ||
                         type.Contains("assessment") || type.Contains("quiz") || type.Contains("test") ||
                 type.Contains("embed") || type.Contains("scorm");
-                    await OpenSharedWebViewAsync(uri.AbsoluteUri, title, isLtiOrAssessment,
-                        () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
+                    if (isLtiOrAssessment)
+                        await OpenSharedWebViewAsync(uri.AbsoluteUri, title, allowLtiExternal: true,
+                            onBack: () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
+                    else
+                        await OpenExternalLinkAsync(uri.AbsoluteUri);
                     return;
                 }
             }
@@ -4446,6 +4520,278 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return color is "black" or "blue" or "gray" or "green" or "orange" or "pink" or "purple" or "red" or "yellow"
             ? color : "gray";
     }
+    private static JsonElement FindJsonPropertyRecursive(JsonElement root, params string[] keys)
+    {
+        if (root.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in root.EnumerateObject())
+                if (keys.Contains(property.Name, StringComparer.OrdinalIgnoreCase))
+                    return property.Value;
+            foreach (var property in root.EnumerateObject())
+            {
+                var found = FindJsonPropertyRecursive(property.Value, keys);
+                if (found.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)) return found;
+            }
+        }
+        else if (root.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in root.EnumerateArray())
+            {
+                var found = FindJsonPropertyRecursive(item, keys);
+                if (found.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)) return found;
+            }
+        }
+        return default;
+    }
+
+    private static IReadOnlyList<(JsonElement Item, string Kind)> ReadAttachmentItems(JsonElement root)
+    {
+        var result = new List<(JsonElement Item, string Kind)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Visit(JsonElement node, string kind, int depth)
+        {
+            if (depth > 8 || node.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) return;
+            if (node.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var child in node.EnumerateArray()) Visit(child, kind, depth + 1);
+                return;
+            }
+            if (node.ValueKind != JsonValueKind.Object) return;
+
+            var declaredType = ProfileValue(node, "type", "attachment_type", "attachmentType")?.ToLowerInvariant() ?? "";
+            var mime = ProfileValue(node, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ?? "";
+            var fileUrl = ProfileValue(node, "file_download_url", "fileDownloadURL", "download_path",
+                "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url");
+            var convertedUrl = ProfileValue(node, "file_converted_download_url", "fileConvertedDownloadURL",
+                "converted_download_path", "convertedDownloadPath");
+            var url = ProfileValue(node, "url", "href", "link_url", "linkURL", "linkUrl", "video_url", "videoURL", "videoUrl");
+            var thumbnail = ProfileValue(node, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
+            var itemKind = kind;
+            if (itemKind == "container")
+            {
+                if (declaredType.Contains("file") || fileUrl is not null || convertedUrl is not null ||
+                    mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                    itemKind = "file";
+                else if (declaredType.Contains("embed") || ProfileValue(node, "embed_code", "embedCode") is not null) itemKind = "embed";
+                else if (declaredType.Contains("video")) itemKind = "video";
+                else if (declaredType.Contains("link") || url is not null) itemKind = "link";
+                else if (thumbnail is not null) itemKind = "file";
+            }
+
+            if (itemKind is "file" or "link" or "video" or "embed")
+            {
+                var key = string.Join("|", ProfileValue(node, "id", "fid", "file_id", "fileId") ?? "",
+                    fileUrl ?? convertedUrl ?? url ?? thumbnail ?? "",
+                    ProfileValue(node, "filename", "fileName", "title", "name") ?? "");
+                if (key != "||" && seen.Add(itemKind + "|" + key))
+                    result.Add((node.Clone(), itemKind));
+            }
+
+            foreach (var property in node.EnumerateObject())
+            {
+                var key = property.Name.Replace("_", "").Replace("-", "").ToLowerInvariant();
+                switch (key)
+                {
+                    case "attachments":
+                    case "attachment": Visit(property.Value, "container", depth + 1); break;
+                    case "files":
+                    case "file":
+                    case "fileattachment":
+                    case "fileattachments": Visit(property.Value, "file", depth + 1); break;
+                    case "links":
+                    case "link": Visit(property.Value, "link", depth + 1); break;
+                    case "videos":
+                    case "video": Visit(property.Value, "video", depth + 1); break;
+                    case "embeds":
+                    case "embed": Visit(property.Value, "embed", depth + 1); break;
+                }
+            }
+        }
+        Visit(root, "container", 0);
+        return result;
+    }
+
+    private async Task OpenExternalLinkAsync(string rawUrl)
+    {
+        if (string.IsNullOrWhiteSpace(rawUrl)) return;
+        var normalized = NormalizeSchoologyWebUrl(rawUrl);
+        if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) ||
+            !string.IsNullOrEmpty(uri.UserInfo))
+            throw new InvalidOperationException("Schoology returned an invalid external link.");
+        var opened = await Windows.System.Launcher.LaunchUriAsync(uri);
+        if (!opened) await ShowApiErrorAsync("Unable to open link", "Windows could not open this link in the default browser.");
+    }
+
+    private async Task ShowAttachmentOptionsAsync(JsonElement attachment, Action onBack)
+    {
+        var name = SafeMaterialFileName(ProfileValue(attachment, "filename", "fileName", "file_title",
+            "fileTitle", "title", "name"), "Schoology attachment");
+        var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ??
+            "application/octet-stream";
+        var originalUrl = ProfileValue(attachment, "file_download_url", "fileDownloadURL", "download_path",
+            "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url");
+        var convertedUrl = ProfileValue(attachment, "file_converted_download_url", "fileConvertedDownloadURL",
+            "converted_download_path", "convertedDownloadPath");
+        var convertedStatus = ProfileValue(attachment, "converted_status", "convertedStatus")?.ToLowerInvariant() ?? "";
+        var convertedReady = !string.IsNullOrWhiteSpace(convertedUrl) &&
+            (convertedStatus.Length == 0 || convertedStatus is "success" or "converted" or "1");
+        var thumbnail = ProfileValue(attachment, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
+        originalUrl ??= ProfileValue(attachment, "url", "href") ?? convertedUrl ?? thumbnail;
+        if (string.IsNullOrWhiteSpace(originalUrl))
+        {
+            var link = ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url");
+            if (!string.IsNullOrWhiteSpace(link)) { await OpenExternalLinkAsync(link); return; }
+            throw new InvalidOperationException("Schoology did not provide a download link for this attachment.");
+        }
+
+        var previewUrl = convertedReady ? convertedUrl! : originalUrl;
+        var previewMime = convertedReady ? "application/pdf" : mime;
+        var extension = MaterialExtension(name, previewMime);
+        var isPdf = previewMime.Contains("pdf", StringComparison.OrdinalIgnoreCase) || extension == ".pdf" ||
+            Uri.TryCreate(previewUrl, UriKind.Absolute, out var previewUri) &&
+            Path.GetExtension(previewUri.AbsolutePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
+        var isImage = !isPdf && (previewMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+            extension is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".svg" or ".heic" or ".heif" or ".avif" ||
+            !string.IsNullOrWhiteSpace(thumbnail));
+        if (!isPdf && !isImage && !convertedReady)
+        {
+            await SaveOriginalMaterialAsync(originalUrl, name, mime, openAfterSave: true);
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "View or Download",
+            Content = Text(name, 14, true),
+            PrimaryButtonText = "View",
+            SecondaryButtonText = "Download",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot
+        };
+        var choice = await dialog.ShowAsync();
+        if (choice == ContentDialogResult.Primary)
+            await OpenNativeMaterialFileAsync(previewUrl, previewMime, originalUrl, name, mime, name, onBack);
+        else if (choice == ContentDialogResult.Secondary)
+            await SaveOriginalMaterialAsync(originalUrl, name, mime);
+    }
+
+    private StackPanel BuildAttachmentControls(JsonElement attachmentRoot, Action onBack)
+    {
+        var panel = new StackPanel { Spacing = 4 };
+        foreach (var (attachment, kind) in ReadAttachmentItems(attachmentRoot))
+        {
+            var name = ProfileValue(attachment, "filename", "fileName", "file_title", "fileTitle",
+                "title", "name", "link_title", "linkTitle") ?? (kind == "link" ? "Open link" : "Attachment");
+            var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ?? "";
+            var originalUrl = ProfileValue(attachment, "file_download_url", "fileDownloadURL", "download_path",
+                "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url");
+            var convertedUrl = ProfileValue(attachment, "file_converted_download_url", "fileConvertedDownloadURL",
+                "converted_download_path", "convertedDownloadPath");
+            var thumbnail = ProfileValue(attachment, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
+            var url = kind == "link"
+                ? ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url")
+                : originalUrl ?? convertedUrl ?? ProfileValue(attachment, "url", "href", "video_url", "videoURL", "videoUrl") ?? thumbnail;
+
+            if (kind == "embed" && ProfileValue(attachment, "embed_code", "embedCode") is { Length: > 0 } embedCode)
+            {
+                var embedButton = new Button
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Background = new SolidColorBrush(Colors.Transparent),
+                    BorderThickness = new Thickness(0),
+                    Padding = new Thickness(4, 6, 4, 6)
+                };
+                var embedContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                embedContent.Children.Add(new SymbolIcon(Symbol.OpenWith) { Foreground = ThemeBrush("SchoologyBlueBrush") });
+                embedContent.Children.Add(Text(name, 13, true));
+                embedButton.Content = embedContent;
+                AutomationProperties.SetName(embedButton, $"Open embedded content {name}");
+                embedButton.Click += async (_, _) =>
+                {
+                    var dataUrl = "data:text/html;charset=utf-8," + Uri.EscapeDataString(embedCode);
+                    await OpenSharedWebViewAsync(dataUrl, name, allowLtiExternal: false, requiresBrowserSession: false);
+                };
+                panel.Children.Add(embedButton);
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(url)) continue;
+
+            var declaredType = ProfileValue(attachment, "type", "attachment_type", "attachmentType")?.ToLowerInvariant() ?? "";
+            var isImage = declaredType == "image" || mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+                MaterialExtension(name, mime) is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".svg" or ".heic" or ".heif" or ".avif" ||
+                !string.IsNullOrWhiteSpace(thumbnail);
+            if (isImage && kind == "video" && !string.IsNullOrWhiteSpace(thumbnail))
+            {
+                var videoPreview = new Image
+                {
+                    MaxHeight = 240, MaxWidth = 520,
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                _ = LoadPostImageAsync(videoPreview, thumbnail);
+                panel.Children.Add(videoPreview);
+            }
+            if (isImage && kind == "file")
+            {
+                var preview = new Image
+                {
+                    MaxHeight = 300,
+                    MaxWidth = 680,
+                    Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                var imageButton = new Button
+                {
+                    Content = preview,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Background = new SolidColorBrush(Colors.Transparent),
+                    BorderThickness = new Thickness(0),
+                    Padding = new Thickness(0)
+                };
+                AutomationProperties.SetName(imageButton, $"View image attachment {name}");
+                _ = LoadPostImageAsync(preview, thumbnail ?? url);
+                imageButton.Click += async (_, _) => await ShowAttachmentOptionsAsync(attachment, onBack);
+                panel.Children.Add(imageButton);
+                continue;
+            }
+
+            var row = new Grid { ColumnSpacing = 8 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.Children.Add(new FontIcon
+            {
+                Glyph = kind == "link" ? ((char)0xE71B).ToString() : MaterialGlyph(attachment),
+                FontSize = 18,
+                Foreground = ThemeBrush("SchoologyBlueBrush")
+            });
+            var label = new StackPanel { Spacing = 2 };
+            label.Children.Add(Text(name, 13, true));
+            label.Children.Add(Text(kind == "link" ? "Link" : string.IsNullOrWhiteSpace(mime) ? "File" : mime.ToUpperInvariant(), 11));
+            Grid.SetColumn(label, 1);
+            row.Children.Add(label);
+            var button = new Button
+            {
+                Content = row,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(4, 7, 4, 7)
+            };
+            button.Click += async (_, _) =>
+            {
+                if (kind == "link" || kind == "video") await OpenExternalLinkAsync(url);
+                else await ShowAttachmentOptionsAsync(attachment, onBack);
+            };
+            AutomationProperties.SetName(button, kind == "link" ? $"Open link {name}" : $"Open attachment {name}");
+            panel.Children.Add(button);
+        }
+        return panel;
+    }
+
     private static string MaterialGlyph(System.Text.Json.JsonElement data)
     {
         if (IsFolderRecord(data)) return "\uE8B7";
@@ -4471,11 +4817,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return "\uE8A5";
     }
 
-    private UIElement CreateRichContent(string? markup, double fontSize)
+    private RichTextBlock CreateRichContent(string? markup, double fontSize)
     {
         return SchoologyRichContent.Create(markup, fontSize, async uri =>
         {
-            await OpenSharedWebViewAsync(uri.AbsoluteUri, uri.Host, allowLtiExternal: true);
+            await OpenExternalLinkAsync(uri.AbsoluteUri);
         });
     }
 
@@ -4523,106 +4869,40 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         {
             card.Children.Add(CreateRichContent(postBody, 14));
         }
-        if (update.Data.ValueKind == System.Text.Json.JsonValueKind.Object)
+        if (update.Data.ValueKind == JsonValueKind.Object)
         {
-            JsonElement attachmentRoot = default;
-            if (!update.Data.TryGetProperty("attachments", out attachmentRoot) &&
-                !update.Data.TryGetProperty("attachment", out attachmentRoot) &&
-                !update.Data.TryGetProperty("files", out attachmentRoot))
-                update.Data.TryGetProperty("file-attachment", out attachmentRoot);
-
-            var attachmentPanel = new StackPanel { Spacing = 8 };
-            void RenderAttachment(JsonElement attachment, bool fileModel = false)
+        var attachmentRoot = FindJsonPropertyRecursive(update.Data, "attachments", "attachment", "files", "file-attachment");
+        if (attachmentRoot.ValueKind is JsonValueKind.Array or JsonValueKind.Object)
+        {
+            var returnToPost = () =>
             {
-                if (attachment.ValueKind != JsonValueKind.Object) return;
-                var name = ProfileValue(attachment, "title", "name", "filename", "file_name", "converted_filename") ?? "Attachment";
-                var mime = ProfileValue(attachment, "filemime", "converted_filemime", "mime_type", "mimeType", "type") ?? "";
-                var extension = (ProfileValue(attachment, "extension", "converted_extension") ?? "").TrimStart('.').ToLowerInvariant();
-                var thumbnail = ProfileValue(attachment, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl");
-                var url = thumbnail ?? ProfileValue(attachment, "converted_download_path", "convertedDownloadPath",
-                    "download_path", "downloadPath", "download_url", "downloadUrl", "url", "file_url", "fileUrl");
-                var isImage = !string.IsNullOrWhiteSpace(thumbnail) || mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
-                    new[] { "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic" }.Contains(extension, StringComparer.OrdinalIgnoreCase) ||
-                    (ProfileValue(attachment, "type") ?? "").Equals("image", StringComparison.OrdinalIgnoreCase);
-                if (isImage && !string.IsNullOrWhiteSpace(url))
+                if (kind == "Recent") ShowHome("Recent Activity");
+                else
                 {
-                    try
-                    {
-                        var image = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
-                            MaxHeight = 360, MaxWidth = 720, HorizontalAlignment = HorizontalAlignment.Left };
-                        attachmentPanel.Children.Add(image);
-                        _ = LoadPostImageAsync(image, url);
-                    }
-                    catch { attachmentPanel.Children.Add(Text(name, 12)); }
-                    return;
+                    var entity = kind == "Courses" ? _courses.FirstOrDefault(item => item.Id == entityId) :
+                        kind == "Groups" ? _groups.FirstOrDefault(item => item.Id == entityId) :
+                        kind == "School Profile" ? GetSchoolProfileEntities().FirstOrDefault(item => item.Id == entityId) : null;
+                    if (entity is not null) ShowThreePane(kind, entity);
+                    else ShowHome("Recent Activity");
                 }
-                var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                line.Children.Add(new FontIcon { Glyph = fileModel ? "\uE8A5" : "\uE8A9", FontSize = 17,
-                    Foreground = ThemeBrush("SchoologyBlueBrush") });
-                line.Children.Add(Text(string.IsNullOrWhiteSpace(mime) ? name : $"{name} · {mime}", 12, true));
-                var attachmentButton = new Button
-                {
-                    Content = line,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    HorizontalContentAlignment = HorizontalAlignment.Left,
-                    Background = new SolidColorBrush(Colors.Transparent),
-                    BorderThickness = new Thickness(0),
-                    Padding = new Thickness(8, 6, 8, 6)
-                };
-                attachmentButton.Click += async (_, _) =>
-                {
-                    if (string.IsNullOrWhiteSpace(url)) return;
-                    await OpenSharedWebViewAsync(NormalizeSchoologyWebUrl(url), name, allowLtiExternal: true);
-                };
-                attachmentPanel.Children.Add(attachmentButton);
-            }
-            void RenderCollection(JsonElement container, params string[] keys)
-            {
-                if (container.ValueKind != JsonValueKind.Object) return;
-                foreach (var key in keys)
-                {
-                    if (!container.TryGetProperty(key, out var collection)) continue;
-                    if (collection.ValueKind == JsonValueKind.Array)
-                        foreach (var item in collection.EnumerateArray()) RenderAttachment(item, key.Equals("file", StringComparison.OrdinalIgnoreCase));
-                    else if (collection.ValueKind == JsonValueKind.Object)
-                    {
-                        var nestedKey = key.Equals("files", StringComparison.OrdinalIgnoreCase) ? "file" :
-                            key.Equals("links", StringComparison.OrdinalIgnoreCase) ? "link" :
-                            key.Equals("videos", StringComparison.OrdinalIgnoreCase) ? "video" :
-                            key.Equals("embeds", StringComparison.OrdinalIgnoreCase) ? "embed" :
-                            key.Equals("external_tools", StringComparison.OrdinalIgnoreCase) ? "external_tool" : "";
-                        if (nestedKey.Length > 0 && collection.TryGetProperty(nestedKey, out var nestedItems))
-                        {
-                            if (nestedItems.ValueKind == JsonValueKind.Array)
-                                foreach (var item in nestedItems.EnumerateArray()) RenderAttachment(item, key.Equals("files", StringComparison.OrdinalIgnoreCase));
-                            else if (nestedItems.ValueKind == JsonValueKind.Object) RenderAttachment(nestedItems, key.Equals("files", StringComparison.OrdinalIgnoreCase));
-                        }
-                        else RenderAttachment(collection, key.Equals("file", StringComparison.OrdinalIgnoreCase));
-                    }
-                }
-            }
-            if (attachmentRoot.ValueKind == JsonValueKind.Array)
-                foreach (var item in attachmentRoot.EnumerateArray()) RenderAttachment(item);
-            else if (attachmentRoot.ValueKind == JsonValueKind.Object)
-            {
-                RenderCollection(attachmentRoot, "attachment", "file", "files", "links", "videos", "embeds", "external_tools");
-            }
-            if (attachmentPanel.Children.Count > 0)
-                card.Children.Add(Surface(attachmentPanel, new Thickness(10)));
-            JsonElement poll = default;
-            foreach (var key in new[] { "pollUpdateModel", "poll_update_model", "poll", "poll_update", "pollUpdate" })
-                if (update.Data.TryGetProperty(key, out poll)) break;
+            };
+            var attachmentPanel = BuildAttachmentControls(attachmentRoot, returnToPost);
+            if (attachmentPanel.Children.Count > 0) card.Children.Add(attachmentPanel);
+        }
+            var poll = FindJsonPropertyRecursive(update.Data,
+                "pollUpdateModel", "poll_update_model", "poll", "poll_update", "pollUpdate");
             if (poll.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
             {
                 var pollPanel = new StackPanel { Spacing = 6 };
                 pollPanel.Children.Add(Text("Poll", 13, true));
-                JsonElement options = poll;
-                if (poll.ValueKind == JsonValueKind.Object)
-                    foreach (var key in new[] { "options", "pollOptionsList", "poll_options", "pollOptions", "pollList", "poll_list" })
-                        if (poll.TryGetProperty(key, out var nested)) { options = nested; break; }
+                var options = FindJsonPropertyRecursive(poll,
+                    "options", "pollOptionsList", "poll_options", "pollOptions", "pollList", "poll_list",
+                    "option", "poll_option");
                 if (options.ValueKind == JsonValueKind.Object)
-                    foreach (var key in new[] { "option", "options", "poll_option", "poll_options", "pollList", "poll_list" })
-                        if (options.TryGetProperty(key, out var nested)) { options = nested; break; }
+                {
+                    var nestedOptions = FindJsonPropertyRecursive(options, "option", "poll_option", "options");
+                    if (nestedOptions.ValueKind is JsonValueKind.Array or JsonValueKind.Object) options = nestedOptions;
+                }
                 if (options.ValueKind == JsonValueKind.Array)
                 {
                     var pollList = new ListView
@@ -4697,7 +4977,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     pollPanel.Children.Add(pollList);
                 }
                 else pollPanel.Children.Add(Text("Poll options are not available.", 12));
-                card.Children.Add(Surface(pollPanel, new Thickness(10)));
+                card.Children.Add(pollPanel);
             }
         }
 
@@ -4779,8 +5059,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         inlineCommentActions.Children.Add(inlinePostButton);
         inlineComposer.Children.Add(inlineCommentInput);
         inlineComposer.Children.Add(inlineCommentActions);
-        var commentSplit = new SplitButton { Content = "Comment", Padding = new Thickness(12, 7, 12, 7),
-            Background = ThemeBrush("SchoologySubtleBrush"), BorderBrush = ThemeBrush("SchoologyDividerBrush") };
+        var commentSplit = new SplitButton { Content = "Comment", Padding = new Thickness(8, 5, 8, 5),
+            Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0) };
         var commentMenu = new MenuFlyout();
         commentCountItem.Click += async (_, _) =>
             await ShowUpdateCommentsDialogAsync(commentRealm, commentRealmId, updateId, () =>
@@ -4800,8 +5080,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 inlineCommentInput.Focus(FocusState.Programmatic);
         };
         AutomationProperties.SetAutomationId(commentSplit, $"UpdateComment_{updateId}");
-        var likeSplit = new SplitButton { Content = liked ? "Unlike" : "Like", Padding = new Thickness(12, 7, 12, 7),
-            Background = ThemeBrush("SchoologySubtleBrush"), BorderBrush = ThemeBrush("SchoologyDividerBrush") };
+        var likeSplit = new SplitButton { Content = liked ? "Unlike" : "Like", Padding = new Thickness(8, 5, 8, 5),
+            Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0) };
         var likeMenu = new MenuFlyout();
         var likeCountItem = new MenuFlyoutItem { Text = likeCount > 0 ? $"View {likeCount} likes" : "No likes yet", IsEnabled = likeCount > 0 };
         likeCountItem.Click += async (_, _) => await ShowUpdateLikesDialogAsync(updateId);
@@ -5466,30 +5746,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     if (!string.IsNullOrWhiteSpace(messageBodyText))
                         messageCard.Children.Add(CreateRichContent(messageBodyText, 14));
                     else messageCard.Children.Add(Text("No message text was returned.", 12));
-                    var attachmentRoot = message.ValueKind == System.Text.Json.JsonValueKind.Object && message.TryGetProperty("attachments", out var attachments)
-                        ? attachments : default;
-                    if (attachmentRoot.ValueKind == System.Text.Json.JsonValueKind.Object)
+                    var attachmentRoot = FindJsonPropertyRecursive(message, "attachments", "attachment", "files", "file-attachment");
+                    if (attachmentRoot.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
                     {
-                        foreach (var groupKey in new[] { "files", "links", "videos", "embeds" })
-                        {
-                            if (!attachmentRoot.TryGetProperty(groupKey, out var group)) continue;
-                            var items = group.ValueKind == System.Text.Json.JsonValueKind.Array ? group :
-                                group.ValueKind == System.Text.Json.JsonValueKind.Object && group.TryGetProperty(groupKey == "files" ? "file" : groupKey.TrimEnd('s'), out var nestedItems) ? nestedItems : default;
-                            if (items.ValueKind == System.Text.Json.JsonValueKind.Array)
-                                foreach (var attachment in items.EnumerateArray())
-                                {
-                                    var attachmentName = ProfileValue(attachment, "title", "filename", "file_name", "name") ?? "Attachment";
-                                    var attachmentUrl = ProfileValue(attachment, "thumbnail", "download_path", "converted_download_path", "url", "href");
-                                    var attachmentMime = ProfileValue(attachment, "filemime", "mime_type", "type") ?? "";
-                                    if (!string.IsNullOrWhiteSpace(attachmentUrl) && (attachmentMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(ProfileValue(attachment, "thumbnail"))))
-                                    {
-                                        var image = new Image { MaxHeight = 320, MaxWidth = 640, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left };
-                                        messageCard.Children.Add(image);
-                                        _ = LoadPostImageAsync(image, attachmentUrl);
-                                    }
-                                    else messageCard.Children.Add(Text(attachmentName, 12));
-                                }
-                        }
+                        var attachmentControls = BuildAttachmentControls(attachmentRoot,
+                            () => NavigateShellFrame(detailFrame, detailContent, SlideNavigationTransitionEffect.FromRight));
+                        if (attachmentControls.Children.Count > 0) messageCard.Children.Add(attachmentControls);
                     }
                     body.Children.Add(Surface(messageCard));
                 }
@@ -5693,7 +5955,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (_sharedWebView?.Parent is not null) return;
         if (_activeNativeFileViewerRoot is not null)
         {
-            _activeNativeFileViewerRoot.Background = ThemeBrush("SchoologySubtleBrush");
+            _refreshNativeFileViewer?.Invoke();
             return;
         }
         if (_lastRenderedPage == "splash") return;

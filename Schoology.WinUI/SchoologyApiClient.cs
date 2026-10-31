@@ -274,6 +274,13 @@ internal sealed class SchoologyApiClient
             new { comment, parent_id = 0 }, ct);
 
     // Official Android uses the section realm, grade-item ID, and current user ID.
+    internal Task<JsonDocument> GetAssignmentGradesAsync(
+        SchoologyAuthService.Session session, long sectionId, long gradeItemId,
+        CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/grades",
+            new Dictionary<string, string> { ["assignment_id"] = gradeItemId.ToString(CultureInfo.InvariantCulture) },
+            cancellationToken);
+
     internal Task<JsonDocument> GetAssignmentSubmissionAsync(
         SchoologyAuthService.Session session, long sectionId, long gradeItemId, long userId,
         CancellationToken ct = default) =>

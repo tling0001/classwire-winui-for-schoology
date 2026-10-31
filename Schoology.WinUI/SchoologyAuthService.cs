@@ -20,8 +20,8 @@ internal sealed partial class SchoologyAuthService
     internal async Task<byte[]> GetSchoologyFileBytesAsync(
         Session session,
         string rawUrl,
-        CancellationToken cancellationToken = default,
-        IProgress<(long Received, long? Total)>? progress = null)
+        IProgress<(long Received, long? Total)>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
         if (string.IsNullOrWhiteSpace(rawUrl))

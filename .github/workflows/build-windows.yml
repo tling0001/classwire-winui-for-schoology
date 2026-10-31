@@ -29,15 +29,23 @@ jobs:
             rid: win-arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
-      - name: Setup Visual Studio MSBuild
-        uses: microsoft/setup-msbuild@v2
+      - name: Locate Visual Studio MSBuild
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path "${env:ProgramFiles(x86)}" "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (!(Test-Path $vswhere)) { throw "Visual Studio Installer vswhere.exe was not found." }
+          $msbuild = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if (!$msbuild -or !(Test-Path $msbuild)) { throw "Visual Studio MSBuild was not found." }
+          $msbuildDir = Split-Path -Parent $msbuild
+          Add-Content -Path $env:GITHUB_PATH -Value $msbuildDir
+          Write-Host "Using MSBuild: $msbuild"
 
       - name: Restore and build WinUI app
         shell: pwsh
@@ -107,7 +115,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload installer and published files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Schoology-WinUI-${{ matrix.rid }}
           path: |
@@ -122,7 +130,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Read version and matching release notes
         id: release_meta
         shell: bash
@@ -145,7 +153,7 @@ jobs:
           Path(destination).write_text("\n\n".join(selected).strip() + "\n", encoding="utf-8")
           PY
       - name: Download architecture installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: Schoology-WinUI-*
           path: release-assets
