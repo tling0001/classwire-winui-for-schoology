@@ -1,5 +1,13 @@
 # Release notes
 
+## [2026.10.0-port.29] - 2026-10-31
+
+- Use Schoology's `for_domain` session-start parameter and recognize SESS-prefixed cookie names.
+- Post update, discussion, and event comments as JSON request bodies with numeric parent IDs, matching classic Tauri port.28.
+- Launch v2 course apps without requiring a separate browser SESS cookie because their launch URLs already contain authorization.
+- Load profile and comment avatars through the authenticated image pipeline, including Schoology CDN hosts.
+- Narrow the update-card builder return type to eliminate the remaining CA1859 warning.
+
 ## [2026.10.0-port.28] - 2026-10-31
 
 - Resolve the reported CA1822 and CA1859 analyzer warnings by narrowing private helper return types and marking stateless helpers static.

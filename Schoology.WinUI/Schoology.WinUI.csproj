@@ -16,10 +16,10 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.28</Version>
-    <AssemblyVersion>2026.10.0.28</AssemblyVersion>
-    <FileVersion>2026.10.0.28</FileVersion>
-    <InformationalVersion>2026.10.0-port.28</InformationalVersion>
+    <Version>2026.10.0-port.29</Version>
+    <AssemblyVersion>2026.10.0.29</AssemblyVersion>
+    <FileVersion>2026.10.0.29</FileVersion>
+    <InformationalVersion>2026.10.0-port.29</InformationalVersion>
     <Title>Schoology</Title>
     <Product>Schoology</Product>
     <AssemblyName>Schoology.WinUI</AssemblyName>

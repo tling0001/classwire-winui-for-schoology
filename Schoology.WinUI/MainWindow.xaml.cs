@@ -1649,7 +1649,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         Grid.SetRow(narrowFrame, 2); narrow.Children.Add(narrowFrame);
         void ShowNarrowTab(SelectorBarItem item)
         {
-            var content = item == narrowDashboard ? BuildCourseDashboardContent() :
+            UIElement content = item == narrowDashboard ? BuildCourseDashboardContent() :
                 item == narrowUpcoming ? BuildUpcomingContent() : BuildRecentActivityContent();
             NavigateShellFrame(narrowFrame, content, SlideNavigationTransitionEffect.FromRight);
         }
@@ -2968,7 +2968,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (string.IsNullOrWhiteSpace(launchUrl))
                 throw new InvalidOperationException("Schoology did not return a course-app launch URL.");
             await OpenSharedWebViewAsync(launchUrl, title, allowLtiExternal: true,
-                onBack: () => ShowThreePane("Courses", course));
+                onBack: () => ShowThreePane("Courses", course), requiresBrowserSession: false);
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to open course app", ex.Message); }
     }
@@ -3943,8 +3943,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill };
         if (!string.IsNullOrWhiteSpace(picture))
         {
-            try { image.Source = new BitmapImage(new Uri(NormalizeSchoologyImageUrl(picture))); }
-            catch { if (userId > 0) _ = LoadMemberAvatarAsync(userId, image); }
+            _ = LoadPostImageAsync(image, picture);
         }
         else if (userId > 0) _ = LoadMemberAvatarAsync(userId, image);
         else image.Source = null;
@@ -4056,7 +4055,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return "\uE8A5";
     }
 
-    private UIElement BuildUpdateCard(string kind, long entityId, SchoologyApiRecord update, JsonElement? authorProfile = null)
+    private Border BuildUpdateCard(string kind, long entityId, SchoologyApiRecord update, JsonElement? authorProfile = null)
     {
         var updateId = JsonLong(update.Data, "id", "update_id");
         var card = new StackPanel { Spacing = 10 };
@@ -4074,8 +4073,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Background = ThemeBrush("SchoologySubtleBrush") };
         if (!string.IsNullOrWhiteSpace(picture))
         {
-            try { avatar.Child = new Image { Source = new BitmapImage(new Uri(NormalizeSchoologyImageUrl(picture))),
-                Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill }; } catch { }
+            var avatarImage = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill };
+            avatar.Child = avatarImage;
+            _ = LoadPostImageAsync(avatarImage, picture);
         }
         else avatar.Child = new FontIcon { Glyph = "\uE77B", FontSize = 19,
             Foreground = ThemeBrush("SchoologyMutedTextBrush"), HorizontalAlignment = HorizontalAlignment.Center,
@@ -5201,7 +5201,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     }
 
     private async Task OpenSharedWebViewAsync(string rawUrl, string title, bool allowLtiExternal = false,
-        System.Action? onBack = null)
+        System.Action? onBack = null, bool requiresBrowserSession = true)
     {
         try
         {
@@ -5238,9 +5238,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             _sharedWebViewInitialized = false;
             _sharedWebViewSessionUserId = _session.UserId;
         }
-        // Refresh the OAuth-backed browser session before each embedded launch so
-        // the persistent WebView never silently reuses an expired SESS cookie.
-        var cookies = await _auth.GetWebSessionCookiesAsync(_session);
+        if (requiresBrowserSession)
+        {
+            // Refresh the OAuth-backed browser session before each embedded launch so
+            // the persistent WebView never silently reuses an expired SESS cookie.
+            var cookies = await _auth.GetWebSessionCookiesAsync(_session);
         foreach (var item in cookies)
         {
             var cookie = _sharedWebView.CoreWebView2.CookieManager.CreateCookie(
@@ -5250,10 +5252,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             _sharedWebView.CoreWebView2.CookieManager.AddOrUpdateCookie(cookie);
         }
         var installedCookies = await _sharedWebView.CoreWebView2.CookieManager.GetCookiesAsync(_auth.WebSessionUrl);
-        if (!installedCookies.Any(cookie => cookie.Name.Equals("SESS", StringComparison.OrdinalIgnoreCase) &&
+        if (!installedCookies.Any(cookie => cookie.Name.StartsWith("SESS", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(cookie.Value)))
             throw new InvalidOperationException("The shared Schoology WebView did not receive a usable SESS cookie. Sign in again and retry.");
-        _sharedWebViewInitialized = true;
+        }
+        else
+        {
+            // The v2 launch URL is already authorized; do not require a browser SESS cookie.
+            _sharedWebViewInitialized = true;
+        }
         _sharedWebViewAllowLti = allowLtiExternal;
         if (!_sharedWebViewInitialized) throw new InvalidOperationException("The Schoology browser session could not be initialized.");
 

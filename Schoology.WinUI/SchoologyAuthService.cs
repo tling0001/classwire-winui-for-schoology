@@ -39,8 +39,9 @@ internal sealed partial class SchoologyAuthService
             uri = new UriBuilder(uri) { Host = ApiHost }.Uri;
 
         var isApi = uri.Host.Equals(ApiHost, StringComparison.OrdinalIgnoreCase);
+        var isSchoologyHost = IsSchoologyOrLausdHost(uri.Host);
         var isStorage = IsTrustedSignedStorageUrl(uri);
-        if (!isApi && !isStorage)
+        if (!isApi && !isSchoologyHost && !isStorage)
             throw new InvalidOperationException("Schoology returned an attachment URL on an untrusted host.");
 
         HttpResponseMessage response;
@@ -54,7 +55,9 @@ internal sealed partial class SchoologyAuthService
         else
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.TryAddWithoutValidation("User-Agent", "okhttp/4.8.0");
+            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36");
+            request.Headers.TryAddWithoutValidation("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8");
+            request.Headers.Referrer = new Uri($"https://{WebHost}/");
             response = await OAuthHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
 

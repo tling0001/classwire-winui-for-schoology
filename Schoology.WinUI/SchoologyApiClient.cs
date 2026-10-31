@@ -178,8 +178,8 @@ internal sealed class SchoologyApiClient
     {
         var realm = kind == "Groups" ? "groups" : kind == "School Profile" ? "schools" :
             kind == "Profile" ? "users" : "sections";
-        return _auth.SendApiJsonAsync(session, HttpMethod.Post, $"{realm}/{entityId}/updates/{updateId}/comments",
-            new Dictionary<string, string> { ["comment"] = comment, ["parent_id"] = "0" }, cancellationToken);
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, $"{realm}/{entityId}/updates/{updateId}/comments",
+            new { comment, parent_id = 0 }, cancellationToken);
     }
 
     internal Task<JsonDocument> GetNotificationsAsync(SchoologyAuthService.Session session, CancellationToken ct = default) =>
@@ -235,13 +235,9 @@ internal sealed class SchoologyApiClient
         string comment, long parentCommentId, CancellationToken ct = default)
     {
         var collection = isEvent ? "events" : "discussions";
-        return _auth.SendApiJsonAsync(session, HttpMethod.Post,
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post,
             $"{EntityRealm(kind)}/{entityId}/{collection}/{itemId}/comments",
-            new Dictionary<string, string>
-            {
-                ["comment"] = comment,
-                ["parent_id"] = parentCommentId.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            }, ct);
+            new { comment, parent_id = parentCommentId }, ct);
     }
 
     internal Task<JsonDocument> CreateDiscussionAsync(SchoologyAuthService.Session session, string kind, long entityId, string title, string body, CancellationToken ct = default) =>
@@ -465,7 +461,7 @@ internal sealed partial class SchoologyAuthService
     {
         var defaultDomain = WebHost.EndsWith("schoologyca.com", StringComparison.OrdinalIgnoreCase) ? ".schoologyca.com" : ".schoology.com";
         // Android CSOAssignment.startSession(domain) sends the bare app host (for example app.schoology.com), not a URL with a scheme.
-        var url = $"https://{ApiHost}/v1/sessionstart?domain={Uri.EscapeDataString(WebHost)}";
+        var url = $"https://{ApiHost}/v1/sessionstart?for_domain={Uri.EscapeDataString(WebHost)}";
         var redirectCookies = new List<string>();
         using var response = await SendSignedRequestAsync(HttpMethod.Get, url, () => null,
             session.Token, session.Secret, null, ct, redirectSetCookieHeaders: redirectCookies);
@@ -535,7 +531,8 @@ internal sealed partial class SchoologyAuthService
         catch (JsonException) { }
         var mobilePair = MobileCookie.Split('=', 2);
         if (mobilePair.Length == 2) Add(mobilePair[0], mobilePair[1], defaultDomain, "/", false, true);
-        if (!cookies.TryGetValue("SESS", out var sessCookie) || string.IsNullOrWhiteSpace(sessCookie.Value))
+        var sessCookie = cookies.Values.FirstOrDefault(cookie => cookie.Name.StartsWith("SESS", StringComparison.OrdinalIgnoreCase));
+        if (sessCookie is null || string.IsNullOrWhiteSpace(sessCookie.Value))
             throw new InvalidOperationException("Schoology did not return a usable SESS browser cookie. The session-start response contained no SESS Set-Cookie header or cookie object.");
         if (cookies.Count == 0) throw new InvalidOperationException("Schoology did not return browser session cookies.");
         return cookies.Values.ToArray();
