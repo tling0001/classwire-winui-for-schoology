@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.35] - 2026-10-31
+
+- Enable the Windows SDK's MSIX tooling explicitly in the WinUI project so WinApp CLI project packaging generates the package manifest and MSIX payload for x64 and ARM64.
+
 ## [2026.10.0-port.34] - 2026-10-31
 
 - Use the WinApp CLI's supported project-packaging command to generate signed x64 and ARM64 MSIX packages; the previous MSBuild Build target only compiled the app and did not create packages.
