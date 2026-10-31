@@ -1,5 +1,13 @@
 # Release notes
 
+## [2026.10.0-port.30] - 2026-10-31
+
+- Render Schoology post, comment, and message HTML as native selectable WinUI rich text, preserving basic emphasis, paragraphs, lists, and clickable HTTP(S) links.
+- Add an inline top-level post comment composer and support threaded replies from comment rows using numeric parent IDs.
+- Place the post preview's View more comments action before its two-comment preview, matching the classic desktop layout.
+- Make non-image post attachments clickable and route them through the authenticated shared WebView.
+- Improve the Grades tree's native scrolling configuration and refine the NavigationView profile row with a compact-compatible avatar and single-line profile label.
+
 ## [2026.10.0-port.29] - 2026-10-31
 
 - Use Schoology's `for_domain` session-start parameter and recognize SESS-prefixed cookie names.

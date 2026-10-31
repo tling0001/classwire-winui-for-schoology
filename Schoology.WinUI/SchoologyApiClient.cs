@@ -174,12 +174,12 @@ internal sealed class SchoologyApiClient
 
     internal Task<JsonDocument> AddUpdateCommentAsync(
         SchoologyAuthService.Session session, string kind, long entityId, long updateId,
-        string comment, CancellationToken cancellationToken = default)
+        string comment, long parentCommentId = 0, CancellationToken cancellationToken = default)
     {
         var realm = kind == "Groups" ? "groups" : kind == "School Profile" ? "schools" :
             kind == "Profile" ? "users" : "sections";
         return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, $"{realm}/{entityId}/updates/{updateId}/comments",
-            new { comment, parent_id = 0 }, cancellationToken);
+            new { comment, parent_id = parentCommentId }, cancellationToken);
     }
 
     internal Task<JsonDocument> GetNotificationsAsync(SchoologyAuthService.Session session, CancellationToken ct = default) =>

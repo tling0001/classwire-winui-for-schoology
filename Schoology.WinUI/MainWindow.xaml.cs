@@ -1278,10 +1278,19 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var profileName = _session is null ? "Profile" :
             ProfileValue(_session.User, "name_display", "display_name", "name") ?? "My Profile";
         IconElement profileIcon = new SymbolIcon(Symbol.Contact);
-        var profilePicture = _session is null ? null : ProfileValue(_session.User, "picture_url", "pictureUrl", "picture", "photo_url");
+        var profilePicture = _session is null ? null : ProfileValue(_session.User,
+            "picture_url", "pictureUrl", "picture", "photo_url", "avatar_url");
         if (!string.IsNullOrWhiteSpace(profilePicture))
             try { profileIcon = new ImageIcon { Source = new BitmapImage(new Uri(NormalizeSchoologyImageUrl(profilePicture))) }; } catch { }
-        var profileItem = new NavigationViewItem { Content = profileName, Icon = profileIcon, Tag = "Profile" };
+        var profileLabel = Text(profileName, 13, true);
+        profileLabel.TextTrimming = TextTrimming.CharacterEllipsis;
+        var profileItem = new NavigationViewItem
+        {
+            Content = profileLabel,
+            Icon = profileIcon,
+            Tag = "Profile",
+            MinHeight = 44
+        };
         AutomationProperties.SetName(profileItem, profileName + " profile");
         nav.MenuItems.Add(profileItem);
         nav.MenuItems.Add(new NavigationViewItemSeparator());
@@ -3977,13 +3986,19 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             date.Foreground = ThemeBrush("SchoologyMutedTextBrush");
             details.Children.Add(date);
         }
-        var body = StripMarkup(ProfileValue(data, "comment", "body", "text", "message") ?? comment.Subtitle);
-        if (!string.IsNullOrWhiteSpace(body)) details.Children.Add(Text(body, 12));
+        var body = ProfileValue(data, "comment", "body", "text", "message") ?? comment.Subtitle;
+        if (!string.IsNullOrWhiteSpace(body)) details.Children.Add(CreateRichContent(body, 12));
         var commentId = JsonLong(data, "id", "comment_id", "commentId");
         if (parentEntityId > 0 && commentId > 0)
         {
+            var commentActions = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
             if (onReply is not null)
-                details.Children.Add(Action("Reply", (_, _) => onReply(commentId, author)));
+                commentActions.Children.Add(Action("Reply", (_, _) => onReply(commentId, author)));
             var liked = JsonBoolean(data, "user_like_action", "user_liked", "userLiked", "liked", "is_liked", "isLiked");
             var likes = JsonLong(data, "likes", "like_count", "likeCount");
             var likeSplit = new SplitButton
@@ -4019,7 +4034,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 catch (Exception ex) { await ShowApiErrorAsync("Unable to update comment like", ex.Message); }
                 finally { likeSplit.IsEnabled = true; }
             };
-            details.Children.Add(likeSplit);
+            commentActions.Children.Add(likeSplit);
+            details.Children.Add(commentActions);
         }
         Grid.SetColumn(details, 1);
         row.Children.Add(details);
@@ -4053,6 +4069,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (type.Contains("discussion")) return "\uE8BD";
         if (type.Contains("event")) return "\uE787";
         return "\uE8A5";
+    }
+
+    private UIElement CreateRichContent(string? markup, double fontSize)
+    {
+        return SchoologyRichContent.Create(markup, fontSize, async uri =>
+        {
+            await OpenSharedWebViewAsync(uri.AbsoluteUri, uri.Host, allowLtiExternal: true);
+        });
     }
 
     private Border BuildUpdateCard(string kind, long entityId, SchoologyApiRecord update, JsonElement? authorProfile = null)
@@ -4097,9 +4121,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             "richtext_body", "richtextBody", "text") ?? update.Subtitle;
         if (!string.IsNullOrWhiteSpace(postBody))
         {
-            var body = Text(StripMarkup(postBody), 14);
-            body.TextWrapping = TextWrapping.WrapWholeWords;
-            card.Children.Add(body);
+            card.Children.Add(CreateRichContent(postBody, 14));
         }
         if (update.Data.ValueKind == System.Text.Json.JsonValueKind.Object)
         {
@@ -4138,7 +4160,21 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 line.Children.Add(new FontIcon { Glyph = fileModel ? "\uE8A5" : "\uE8A9", FontSize = 17,
                     Foreground = ThemeBrush("SchoologyBlueBrush") });
                 line.Children.Add(Text(string.IsNullOrWhiteSpace(mime) ? name : $"{name} · {mime}", 12, true));
-                attachmentPanel.Children.Add(line);
+                var attachmentButton = new Button
+                {
+                    Content = line,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Background = new SolidColorBrush(Colors.Transparent),
+                    BorderThickness = new Thickness(0),
+                    Padding = new Thickness(8, 6, 8, 6)
+                };
+                attachmentButton.Click += async (_, _) =>
+                {
+                    if (string.IsNullOrWhiteSpace(url)) return;
+                    await OpenSharedWebViewAsync(NormalizeSchoologyWebUrl(url), name, allowLtiExternal: true);
+                };
+                attachmentPanel.Children.Add(attachmentButton);
             }
             void RenderCollection(JsonElement container, params string[] keys)
             {
@@ -4182,10 +4218,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 pollPanel.Children.Add(Text("Poll", 13, true));
                 JsonElement options = poll;
                 if (poll.ValueKind == JsonValueKind.Object)
-                    foreach (var key in new[] { "options", "pollOptionsList", "poll_options", "pollOptions" })
+                    foreach (var key in new[] { "options", "pollOptionsList", "poll_options", "pollOptions", "pollList", "poll_list" })
                         if (poll.TryGetProperty(key, out var nested)) { options = nested; break; }
                 if (options.ValueKind == JsonValueKind.Object)
-                    foreach (var key in new[] { "option", "options", "poll_option", "poll_options" })
+                    foreach (var key in new[] { "option", "options", "poll_option", "poll_options", "pollList", "poll_list" })
                         if (options.TryGetProperty(key, out var nested)) { options = nested; break; }
                 if (options.ValueKind == JsonValueKind.Array)
                 {
@@ -4202,12 +4238,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     {
                         pollList.Items.Clear();
                         if (pollOptions.ValueKind != JsonValueKind.Array) return;
-                        foreach (var option in pollOptions.EnumerateArray())
+                        var optionItems = pollOptions.EnumerateArray().ToArray();
+                        var totalVotes = optionItems.Sum(option =>
+                            JsonLong(option, "count", "votes", "vote_count", "voteCount", "total_votes", "totalVotes", "num_votes", "numVotes"));
+                        foreach (var option in optionItems)
                         {
-                            var optionId = JsonLong(option, "id", "poll_option_id", "pollOptionId");
-                            var selected = JsonBoolean(option, "selected");
+                            var optionId = JsonLong(option, "id", "poll_option_id", "pollOptionId", "pollOptionID");
+                            var selected = JsonBoolean(option, "selected", "is_selected", "isSelected");
                             var optionTitle = ProfileValue(option, "title", "name", "text") ?? "Poll option";
-                            var votes = ProfileValue(option, "count", "votes", "vote_count", "voteCount", "total_votes") ?? "0";
+                            var voteCount = JsonLong(option, "count", "votes", "vote_count", "voteCount", "total_votes", "totalVotes", "num_votes", "numVotes");
+                            var votes = voteCount.ToString(System.Globalization.CultureInfo.CurrentCulture);
+                            var percentage = totalVotes > 0 ? (int)Math.Round(voteCount * 100d / totalVotes) : 0;
                             var optionRow = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 7, 8, 7) };
                             optionRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                             optionRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -4215,7 +4256,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                                 VerticalAlignment = VerticalAlignment.Center });
                             var labels = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
                             labels.Children.Add(Text(optionTitle, 13, true));
-                            labels.Children.Add(Text($"{votes} votes", 11));
+                            labels.Children.Add(Text($"{votes} votes · {percentage}%", 11));
                             Grid.SetColumn(labels, 1);
                             optionRow.Children.Add(labels);
                             var item = new ListViewItem { Content = optionRow, Tag = optionId, IsEnabled = optionId > 0,
@@ -4234,7 +4275,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                                             if (updated.TryGetProperty(modelKey, out var model)) { updated = model; break; }
                                     }
                                     if (updated.ValueKind == JsonValueKind.Object)
-                                        foreach (var key in new[] { "options", "pollOptionsList", "poll_options", "pollOptions" })
+                                        foreach (var key in new[] { "options", "pollOptionsList", "poll_options", "pollOptions", "pollList", "poll_list" })
                                             if (updated.TryGetProperty(key, out var updatedOptions))
                                             {
                                                 if (updatedOptions.ValueKind == JsonValueKind.Object && updatedOptions.TryGetProperty("option", out var optionArray)) updatedOptions = optionArray;
@@ -4282,20 +4323,81 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         StackPanel previewPanel = new() { Spacing = 6, Visibility = Visibility.Collapsed };
         Button viewMoreButton = null!;
+        var commentCountItem = new MenuFlyoutItem
+        {
+            Text = commentCount > 0 ? $"View {commentCount} comments" : "No comments yet",
+            IsEnabled = commentCount > 0
+        };
+        var inlineComposer = new StackPanel
+        {
+            Spacing = 8,
+            Visibility = Visibility.Collapsed,
+            Margin = new Thickness(0, 2, 0, 2)
+        };
+        var inlineCommentInput = new TextBox
+        {
+            PlaceholderText = "Write a comment…",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 72,
+            MaxHeight = 160
+        };
+        AutomationProperties.SetAutomationId(inlineCommentInput, $"UpdateInlineComment_{updateId}");
+        var inlineCommentActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8
+        };
+        inlineCommentActions.Children.Add(Action("Cancel", (_, _) =>
+        {
+            inlineCommentInput.Text = string.Empty;
+            inlineComposer.Visibility = Visibility.Collapsed;
+        }));
+        Button inlinePostButton = null!;
+        inlinePostButton = Action("Post comment", async (_, _) =>
+        {
+            var value = inlineCommentInput.Text.Trim();
+            if (value.Length == 0 || _session is null || updateId <= 0) return;
+            inlinePostButton.IsEnabled = false;
+            try
+            {
+                using var posted = await _api.AddUpdateCommentAsync(_session, commentRealm, commentRealmId, updateId, value);
+                using var refreshed = await _api.GetUpdateCommentsAsync(_session, commentRealm, commentRealmId, updateId);
+                var refreshedComments = SchoologyApiClient.ReadRecords(refreshed.RootElement, "comment", "comments");
+                await ResolveCommentAuthorsAsync(refreshedComments, _session);
+                commentCount = refreshedComments.Count;
+                commentCountItem.Text = commentCount > 0 ? $"View {commentCount} comments" : "No comments yet";
+                commentCountItem.IsEnabled = commentCount > 0;
+                inlineCommentInput.Text = string.Empty;
+                inlineComposer.Visibility = Visibility.Collapsed;
+                _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
+            }
+            catch (Exception ex) { await ShowApiErrorAsync("Unable to post comment", ex.Message); }
+            finally { inlinePostButton.IsEnabled = true; }
+        }, primary: true);
+        inlineCommentActions.Children.Add(inlinePostButton);
+        inlineComposer.Children.Add(inlineCommentInput);
+        inlineComposer.Children.Add(inlineCommentActions);
         var commentSplit = new SplitButton { Content = "Comment", Padding = new Thickness(12, 7, 12, 7),
             Background = ThemeBrush("SchoologySubtleBrush"), BorderBrush = ThemeBrush("SchoologyDividerBrush") };
         var commentMenu = new MenuFlyout();
-        var commentCountItem = new MenuFlyoutItem { Text = commentCount > 0 ? $"View {commentCount} comments" : "No comments yet", IsEnabled = commentCount > 0 };
-        commentCountItem.Click += async (_, _) => await ShowUpdateCommentsDialogAsync(commentRealm, commentRealmId, updateId);
-        commentMenu.Items.Add(commentCountItem); commentSplit.Flyout = commentMenu;
-        commentSplit.Click += async (_, _) =>
-        {
-            if (updateId <= 0 || commentRealmId <= 0 || _session is null) return;
-            await ShowUpdateCommentComposerAsync(commentRealm, commentRealmId, updateId, () =>
+        commentCountItem.Click += async (_, _) =>
+            await ShowUpdateCommentsDialogAsync(commentRealm, commentRealmId, updateId, () =>
             {
-                commentCount++; commentCountItem.Text = $"View {commentCount} comments"; commentCountItem.IsEnabled = true;
+                commentCount++;
+                commentCountItem.Text = $"View {commentCount} comments";
+                commentCountItem.IsEnabled = true;
                 _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
             });
+        commentMenu.Items.Add(commentCountItem); commentSplit.Flyout = commentMenu;
+        commentSplit.Click += (_, _) =>
+        {
+            if (updateId <= 0 || commentRealmId <= 0 || _session is null) return;
+            inlineComposer.Visibility = inlineComposer.Visibility == Visibility.Visible
+                ? Visibility.Collapsed : Visibility.Visible;
+            if (inlineComposer.Visibility == Visibility.Visible)
+                inlineCommentInput.Focus(FocusState.Programmatic);
         };
         AutomationProperties.SetAutomationId(commentSplit, $"UpdateComment_{updateId}");
         var likeSplit = new SplitButton { Content = liked ? "Unlike" : "Like", Padding = new Thickness(12, 7, 12, 7),
@@ -4320,6 +4422,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         AutomationProperties.SetAutomationId(likeSplit, $"UpdateLike_{updateId}");
         actions.Children.Add(commentSplit); actions.Children.Add(likeSplit); card.Children.Add(actions);
+        card.Children.Add(inlineComposer);
 
         viewMoreButton = Action("View more comments", async (_, _) =>
             await ShowUpdateCommentsDialogAsync(commentRealm, commentRealmId, updateId, () =>
@@ -4416,15 +4519,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 return;
             }
 
-            foreach (var comment in comments.TakeLast(2))
-            {
-                preview.Children.Add(BuildCommentRow(comment, updateId));
-            }
-
             if (comments.Count > 2)
             {
                 viewMore.Content = $"View more comments ({comments.Count})";
                 preview.Children.Add(viewMore);
+            }
+
+            foreach (var comment in comments.TakeLast(2))
+            {
+                preview.Children.Add(BuildCommentRow(comment, updateId, (parentId, author) =>
+                    _ = ShowUpdateCommentComposerAsync(kind, entityId, updateId,
+                        () => _ = LoadRecentPostCommentsAsync(kind, entityId, updateId, preview, viewMore),
+                        parentId)));
             }
             preview.Visibility = Visibility.Visible;
         }
@@ -4437,7 +4543,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     }
 
     private async Task ShowUpdateCommentComposerAsync(
-        string kind, long entityId, long updateId, Action? onPosted = null)
+        string kind, long entityId, long updateId, Action? onPosted = null, long parentCommentId = 0)
     {
         if (_session is null || entityId <= 0 || updateId <= 0) return;
         var input = new TextBox
@@ -4453,7 +4559,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         content.Children.Add(input);
         var dialog = new ContentDialog
         {
-            Title = "Add comment",
+            Title = parentCommentId > 0 ? "Reply to comment" : "Add comment",
             Content = content,
             CloseButtonText = "Cancel",
             XamlRoot = _root.XamlRoot
@@ -4466,7 +4572,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             post.IsEnabled = false;
             try
             {
-                using var result = await _api.AddUpdateCommentAsync(_session, kind, entityId, updateId, value);
+                using var result = await _api.AddUpdateCommentAsync(_session, kind, entityId, updateId, value, parentCommentId);
                 dialog.Hide();
                 onPosted?.Invoke();
             }
@@ -4501,7 +4607,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             content.Children.Clear();
             if (comments.Count == 0) content.Children.Add(Text("No comments yet.", 13));
             foreach (var comment in comments)
-                content.Children.Add(BuildCommentRow(comment, updateId));
+                content.Children.Add(BuildCommentRow(comment, updateId, (parentId, author) =>
+                    _ = ShowUpdateCommentComposerAsync(kind, entityId, updateId, onPosted, parentId)));
             dialog.Title = comments.Count == 0 ? "Comments" : $"Comments ({comments.Count})";
         }
         catch (Exception ex)
@@ -4957,11 +5064,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     messageCard.Children.Add(messageHeader);
                     var messageBodyText = ProfileValue(message, "message", "body", "text", "message_body", "content");
                     if (!string.IsNullOrWhiteSpace(messageBodyText))
-                    {
-                        var messageText = Text(StripMarkup(messageBodyText), 14);
-                        messageText.TextWrapping = TextWrapping.WrapWholeWords;
-                        messageCard.Children.Add(messageText);
-                    }
+                        messageCard.Children.Add(CreateRichContent(messageBodyText, 14));
                     else messageCard.Children.Add(Text("No message text was returned.", 12));
                     var attachmentRoot = message.ValueKind == System.Text.Json.JsonValueKind.Object && message.TryGetProperty("attachments", out var attachments)
                         ? attachments : default;
@@ -5123,8 +5226,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.Children.Add(Text("Grades", 24, true));
-        var tree = new TreeView { HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch };
+        var tree = new TreeView
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            MinHeight = 0
+        };
+        ScrollViewer.SetVerticalScrollBarVisibility(tree, ScrollBarVisibility.Auto);
+        ScrollViewer.SetHorizontalScrollBarVisibility(tree, ScrollBarVisibility.Disabled);
         AutomationProperties.SetAutomationId(tree, "SchoologyGradesTree");
         Grid.SetRow(tree, 1); root.Children.Add(tree);
         var courses = new Dictionary<TreeViewNode, SchoologyEntity>();
