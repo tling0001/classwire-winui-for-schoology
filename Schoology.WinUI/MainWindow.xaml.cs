@@ -45,6 +45,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private string _titleBarCreateContext = string.Empty;
     private readonly SchoologyAuthService _auth = new(false);
     private readonly AccessibilitySettings _accessibilitySettings = new();
+    private bool _highContrastReadAvailable = true;
     private readonly SchoologyApiClient _api;
     private readonly ObservableCollection<SchoologyEntity> _courses = new();
     private readonly ObservableCollection<SchoologyEntity> _groups = new();
@@ -110,7 +111,16 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             _ => ElementTheme.Default
         };
         _root.ActualThemeChanged += (_, _) => RefreshThemeSurfaces();
-        _accessibilitySettings.HighContrastChanged += (_, _) => RefreshThemeSurfaces();
+        try
+        {
+            _accessibilitySettings.HighContrastChanged += (_, _) => RefreshThemeSurfaces();
+        }
+        catch (Exception ex)
+        {
+            // Some Windows environments do not expose this COM event source.
+            // High Contrast must never prevent the main window from launching.
+            App.WriteStartupLog("High Contrast change notifications are unavailable; continuing without live notifications.", ex);
+        }
         Title = "Schoology";
         ExtendsContentIntoTitleBar = true;
         AppWindow.TitleBar.ExtendsContentIntoTitleBar = true;
@@ -393,7 +403,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         // These brushes live in ThemeDictionaries, so looking them up directly in
         // Application.Resources throws at runtime. Resolve against the active
         // Window theme and keep a safe fallback so startup cannot fail on a lookup.
-        var themeName = _accessibilitySettings.HighContrast ? "HighContrast" : _root.ActualTheme switch
+        var highContrast = false;
+        if (_highContrastReadAvailable)
+        {
+            try { highContrast = _accessibilitySettings.HighContrast; }
+            catch (Exception ex)
+            {
+                _highContrastReadAvailable = false;
+                App.WriteStartupLog("Could not read the current High Contrast setting; using the app theme.", ex);
+            }
+        }
+
+        var themeName = highContrast ? "HighContrast" : _root.ActualTheme switch
         {
             ElementTheme.Dark => "Dark",
             ElementTheme.Light => "Light",

@@ -1,5 +1,12 @@
 # Release notes
 
+## [2026.10.0-port.33] - 2026-10-31
+
+- Make MSIX the default Windows deployment format and publish signed x64 and ARM64 packages instead of per-user Inno Setup EXE installers.
+- Include the Windows App SDK runtime in the MSIX packages and distribute the matching publisher certificate for first-time installation; users must trust the certificate in Current User > Trusted People before installing the MSIX.
+- Add the required full-trust desktop package capability and align the package identity version with the app release.
+- Prevent unsupported High Contrast COM event registration or property access from crashing application startup; retain theme refresh notifications when Windows exposes the event.
+
 ## [2026.10.0-port.32] - 2026-10-31
 
 - Remove Discussions from the course sidebar while retaining it for groups and schools; refine the course navigation glyphs with WinUI-native equivalents and Schoology theme colors.

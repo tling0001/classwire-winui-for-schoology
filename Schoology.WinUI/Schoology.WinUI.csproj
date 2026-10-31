@@ -8,18 +8,18 @@
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
-    <WindowsPackageType>None</WindowsPackageType>
-    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <Nullable>enable</Nullable>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.32</Version>
-    <AssemblyVersion>2026.10.0.32</AssemblyVersion>
-    <FileVersion>2026.10.0.32</FileVersion>
-    <InformationalVersion>2026.10.0-port.32</InformationalVersion>
+    <Version>2026.10.0-port.33</Version>
+    <AssemblyVersion>2026.10.0.33</AssemblyVersion>
+    <FileVersion>2026.10.0.33</FileVersion>
+    <InformationalVersion>2026.10.0-port.33</InformationalVersion>
     <Title>Schoology</Title>
     <Product>Schoology</Product>
     <AssemblyName>Schoology.WinUI</AssemblyName>
@@ -31,18 +31,6 @@
     <PackageReference Include="ZXing.Net" Version="0.16.11" />
   </ItemGroup>
 
-  <!-- Unpackaged WinUI apps resolve compiled XAML through the PRI resource
-       index. Preserve that index beside the executable when publishing. -->
-  <Target Name="CopyWinUIResourceIndexToPublish" AfterTargets="Publish">
-    <ItemGroup>
-      <_WinUIResourceIndex Include="$(TargetDir)*.pri" />
-    </ItemGroup>
-    <Copy
-      SourceFiles="@(_WinUIResourceIndex)"
-      DestinationFolder="$(PublishDir)"
-      SkipUnchangedFiles="true"
-      Condition="'@(_WinUIResourceIndex)' != ''" />
-  </Target>
   <ItemGroup>
     <EmbeddedResource Include="Assets\\logo_schoology.png" />
     <EmbeddedResource Include="Assets\\ic_school.svg" />
