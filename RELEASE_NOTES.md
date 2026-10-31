@@ -1,5 +1,14 @@
 # Release notes
 
+## [2026.10.0-port.31] - 2026-10-31
+
+- Fix the rich-content compiler errors by composing native WinUI Italic and Underline inline spans.
+- Refresh theme-dependent shell surfaces when the effective theme changes and preserve the selected course/group tab.
+- Use the existing course-material/discussion WinUI glyph mapping in Upcoming, and use a message icon for Requests.
+- Recreate the WebView2 visual control for each course-app/web-content launch while retaining its persistent browser profile.
+- Add authenticated native PDF and image previews for course files, including page navigation, zoom, original-file save, download progress, cancellation, retry, and temporary-preview cleanup.
+- Recognize converted PDF attachments for Office-file previews and route unsupported file types through the Windows save/open flow.
+
 ## [2026.10.0-port.30] - 2026-10-31
 
 - Render Schoology post, comment, and message HTML as native selectable WinUI rich text, preserving basic emphasis, paragraphs, lists, and clickable HTTP(S) links.

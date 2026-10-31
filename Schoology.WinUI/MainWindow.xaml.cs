@@ -5,8 +5,11 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Web;
+using Windows.Data.Pdf;
 using Windows.Graphics;
 using Windows.Media.Playback;
+using Windows.Storage;
+using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
 using Windows.System;
 using Windows.UI.ViewManagement;
@@ -51,7 +54,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private bool _activeAssignmentAllowsSubmission;
     private WebView2? _sharedWebView;
     private CoreWebView2Environment? _sharedWebViewEnvironment;
+    private readonly SemaphoreSlim _sharedWebViewGate = new(1, 1);
     private bool _sharedWebViewInitialized;
+    private Grid? _activeNativeFileViewerRoot;
     private DispatcherTimer? _notificationTimer;
     private bool _notificationPollInProgress;
     private bool _allowExit;
@@ -67,9 +72,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private const int GwlWndProc = -4;
     private const uint WmLButtonDoubleClick = 0x0203;
     private const uint WmRButtonUp = 0x0205;
-    private bool _sharedWebViewAllowLti;
     private long _sharedWebViewSessionUserId;
-    private TextBlock? _sharedWebViewStatus;
     private SchoologyAuthService.Session? _session;
     private QrCameraScanner? _qrScanner;
     private MediaPlayer? _qrPlayer;
@@ -104,7 +107,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             "Dark" => ElementTheme.Dark,
             _ => ElementTheme.Default
         };
-        _root.ActualThemeChanged += (_, _) => UpdateSharedWebViewTheme();
+        _root.ActualThemeChanged += (_, _) => RefreshThemeSurfaces();
         Title = "Schoology";
         ExtendsContentIntoTitleBar = true;
         AppWindow.TitleBar.ExtendsContentIntoTitleBar = true;
@@ -1297,7 +1300,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
         var items = new (string Name, Symbol Icon)[]
         {
-            ("Messages", Symbol.Mail), ("Notifications", Symbol.Mail), ("Requests", Symbol.People),
+            ("Messages", Symbol.Mail), ("Notifications", Symbol.Mail), ("Requests", Symbol.Message),
             ("Home", Symbol.Home), ("Courses", Symbol.Library), ("Groups", Symbol.People),
             ("Resources", Symbol.Folder), ("Grades", Symbol.Page), ("Upcoming", Symbol.Calendar),
             ("Settings", Symbol.Setting)
@@ -1985,10 +1988,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(12, 9, 12, 9) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                var upcomingType = (ProfileValue(entry.Record.Data, "type", "event_type", "eventType") ?? "").ToLowerInvariant();
-                var upcomingGlyph = upcomingType == "discussion" ? "\\uE8BD" :
-                    upcomingType == "assignment" ? "\\uE70F" : "\\uE787";
-                row.Children.Add(new FontIcon { Glyph = upcomingGlyph, FontSize = 19,
+                // Reuse the WinUI glyph mapping already used by course materials and discussions.
+                row.Children.Add(new FontIcon { Glyph = MaterialGlyph(entry.Record.Data), FontSize = 22,
                     Foreground = ThemeBrush("SchoologyBlueBrush"), VerticalAlignment = VerticalAlignment.Center });
                 var details = new StackPanel { Spacing = 3 };
                 details.Children.Add(Text(entry.Record.Title, 14, true));
@@ -2663,11 +2664,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private void ShowThreePane(string kind, SchoologyEntity? initialEntity = null)
     {
+        var previousPage = _page;
         _page = kind;
         _section = kind;
         if (initialEntity is not null)
         {
-            if (_selectedEntityId != initialEntity.Id || _page != kind) _selectedEntityTab = string.Empty;
+            if (_selectedEntityId != initialEntity.Id || previousPage != kind) _selectedEntityTab = string.Empty;
             _selectedEntity = initialEntity.Name;
             _selectedEntityId = initialEntity.Id;
         }
@@ -2842,9 +2844,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         NavigateShellFrame(upcomingFrame, BuildEntityUpcomingContent(kind, entityId), SlideNavigationTransitionEffect.FromRight);
         if (entityId > 0)
         {
-            navigation.SelectedIndex = 0;
-            ShowTab(tabs[0]);
-            compactSelector.SelectedItem = compactSelector.Items.FirstOrDefault();
+            var initialTab = tabs.Contains(_selectedEntityTab, StringComparer.Ordinal) ? _selectedEntityTab : tabs[0];
+            navigation.SelectedIndex = Math.Max(0, Array.IndexOf(tabs, initialTab));
+            ShowTab(initialTab);
+            compactSelector.SelectedItem = compactSelector.Items
+                .OfType<SelectorBarItem>()
+                .FirstOrDefault(item => item.Text == initialTab);
         }
         root.Children.Add(wide);
         root.Children.Add(narrow);
@@ -3614,6 +3619,365 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
 
 
+    private static JsonElement FirstFileAttachment(JsonElement data)
+    {
+        if (data.ValueKind != JsonValueKind.Object) return default;
+        JsonElement attachments = default;
+        if (!data.TryGetProperty("attachments", out attachments) &&
+            !data.TryGetProperty("attachment", out attachments)) return default;
+        if (attachments.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in attachments.EnumerateArray())
+            {
+                var found = FirstFileAttachment(item);
+                if (found.ValueKind == JsonValueKind.Object) return found;
+            }
+            return default;
+        }
+        if (attachments.ValueKind != JsonValueKind.Object) return default;
+        if (!attachments.TryGetProperty("files", out var files))
+            attachments.TryGetProperty("file", out files);
+        if (files.ValueKind == JsonValueKind.Array)
+            return files.GetArrayLength() > 0 ? files[0] : default;
+        if (files.ValueKind == JsonValueKind.Object)
+        {
+            if (files.TryGetProperty("file", out var nested))
+            {
+                if (nested.ValueKind == JsonValueKind.Array) return nested.GetArrayLength() > 0 ? nested[0] : default;
+                if (nested.ValueKind == JsonValueKind.Object) return nested;
+            }
+            return files;
+        }
+        return default;
+    }
+
+    private static string SafeMaterialFileName(string? value, string fallback = "Schoology file")
+    {
+        var name = string.IsNullOrWhiteSpace(value) ? fallback : Path.GetFileName(value.Trim());
+        foreach (var invalid in Path.GetInvalidFileNameChars()) name = name.Replace(invalid, '_');
+        name = name.Trim().Trim('.');
+        return string.IsNullOrWhiteSpace(name) ? fallback : name;
+    }
+
+    private static string MaterialExtension(string filename, string mime)
+    {
+        var extension = Path.GetExtension(filename);
+        if (!string.IsNullOrWhiteSpace(extension)) return extension.ToLowerInvariant();
+        return mime.ToLowerInvariant().Split(';')[0].Trim() switch
+        {
+            "application/pdf" => ".pdf",
+            "image/jpeg" => ".jpg",
+            "image/png" => ".png",
+            "image/gif" => ".gif",
+            "image/webp" => ".webp",
+            "text/plain" => ".txt",
+            "text/csv" => ".csv",
+            _ => ".bin"
+        };
+    }
+
+    private static string FormatFileSize(long bytes) => bytes < 1024 * 1024
+        ? $"{bytes / 1024d:0.#} KB"
+        : $"{bytes / (1024d * 1024d):0.##} MB";
+
+    private async Task<byte[]?> DownloadSchoologyBytesWithProgressAsync(string url, string filename)
+    {
+        while (true)
+        {
+            using var cancellation = new CancellationTokenSource();
+            var progressBar = new ProgressBar { IsIndeterminate = true, Minimum = 0, Maximum = 100 };
+            var status = Text("Connecting to Schoology…", 12);
+            status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+            var content = new StackPanel { Spacing = 10, MinWidth = 320 };
+            content.Children.Add(status);
+            content.Children.Add(progressBar);
+            var dialog = new ContentDialog
+            {
+                Title = $"Downloading {filename}",
+                Content = content,
+                PrimaryButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = _root.XamlRoot
+            };
+            var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var finished = false;
+            dialog.PrimaryButtonClick += (_, _) =>
+            {
+                cancellation.Cancel();
+                cancelled.TrySetResult(true);
+            };
+            dialog.Closed += (_, _) =>
+            {
+                if (!finished)
+                {
+                    cancellation.Cancel();
+                    cancelled.TrySetResult(true);
+                }
+            };
+            var showOperation = dialog.ShowAsync();
+            var progress = new Progress<(long Received, long? Total)>(value =>
+            {
+                if (value.Total is > 0)
+                {
+                    progressBar.IsIndeterminate = false;
+                    progressBar.Maximum = value.Total.Value;
+                    progressBar.Value = Math.Min(value.Received, value.Total.Value);
+                    status.Text = $"{FormatFileSize(value.Received)} of {FormatFileSize(value.Total.Value)}";
+                }
+                else
+                {
+                    progressBar.IsIndeterminate = true;
+                    status.Text = $"Downloaded {FormatFileSize(value.Received)}";
+                }
+            });
+            var download = _auth.GetSchoologyFileBytesAsync(
+                _session ?? throw new InvalidOperationException("Sign in to download Schoology files."),
+                url, cancellation.Token, progress);
+            var completed = await Task.WhenAny(download, cancelled.Task);
+            if (completed == cancelled.Task)
+            {
+                try { await download; } catch { }
+                await showOperation;
+                return null;
+            }
+
+            finished = true;
+            dialog.Hide();
+            await showOperation;
+            try
+            {
+                return await download;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+            catch (Exception ex)
+            {
+                var retry = new ContentDialog
+                {
+                    Title = "Download failed",
+                    Content = Text($"{ex.Message}\n\nWould you like to try again?", 13),
+                    PrimaryButtonText = "Retry",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = _root.XamlRoot
+                };
+                if (await retry.ShowAsync() != ContentDialogResult.Primary) throw;
+            }
+        }
+    }
+
+    private async Task SaveOriginalMaterialAsync(string url, string filename, string mime, bool openAfterSave = false)
+    {
+        var safeName = SafeMaterialFileName(filename);
+        var extension = MaterialExtension(safeName, mime);
+        var picker = new FileSavePicker
+        {
+            SuggestedStartLocation = PickerLocationId.Downloads,
+            SuggestedFileName = Path.GetFileNameWithoutExtension(safeName)
+        };
+        picker.FileTypeChoices.Add("Schoology file", new List<string> { extension });
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, Win32Interop.GetWindowFromWindowId(AppWindow.Id));
+        var destination = await picker.PickSaveFileAsync();
+        if (destination is null) return;
+        var bytes = await DownloadSchoologyBytesWithProgressAsync(url, safeName);
+        if (bytes is null) return;
+        await File.WriteAllBytesAsync(destination.Path, bytes);
+        if (openAfterSave)
+        {
+            var opened = await Windows.System.Launcher.LaunchFileAsync(destination);
+            if (!opened) await ShowApiErrorAsync("Unable to open downloaded file", "Windows could not find an application for this file type.");
+        }
+    }
+
+    private async Task OpenNativeMaterialFileAsync(
+        string previewUrl, string previewMime, string originalUrl, string filename, string originalMime,
+        string title, Action onBack)
+    {
+        try
+        {
+            var extension = MaterialExtension(filename, previewMime);
+            if (string.IsNullOrWhiteSpace(Path.GetExtension(filename)) &&
+                Uri.TryCreate(previewUrl, UriKind.Absolute, out var previewUri))
+            {
+                var urlExtension = Path.GetExtension(previewUri.AbsolutePath).ToLowerInvariant();
+                if (urlExtension.Length > 0) extension = urlExtension;
+            }
+            var previewIsPdf = previewMime.Contains("pdf", StringComparison.OrdinalIgnoreCase) ||
+                extension == ".pdf" || previewUrl.Contains(".pdf", StringComparison.OrdinalIgnoreCase);
+            var previewIsImage = previewMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+                extension is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp";
+            if (!previewIsPdf && !previewIsImage)
+            {
+                await SaveOriginalMaterialAsync(originalUrl, filename, originalMime, openAfterSave: true);
+                return;
+            }
+
+            var previewName = previewIsPdf
+                ? Path.GetFileNameWithoutExtension(SafeMaterialFileName(filename)) + ".pdf"
+                : SafeMaterialFileName(filename);
+            var bytes = await DownloadSchoologyBytesWithProgressAsync(previewUrl, previewName);
+            if (bytes is null) return;
+            var cache = Path.Combine(Path.GetTempPath(), "Schoology", "MaterialPreviews");
+            Directory.CreateDirectory(cache);
+            var previewPath = Path.Combine(cache, Guid.NewGuid().ToString("N") + "_" + SafeMaterialFileName(previewName));
+            await File.WriteAllBytesAsync(previewPath, bytes);
+            await ShowNativeFileViewerAsync(previewPath, title, previewIsPdf, originalUrl, filename, originalMime, onBack);
+        }
+        catch (Exception ex)
+        {
+            await ShowApiErrorAsync("Unable to open material", ex.Message);
+        }
+    }
+
+    private async Task ShowNativeFileViewerAsync(
+        string previewPath, string title, bool isPdf, string originalUrl, string originalFilename,
+        string originalMime, Action onBack)
+    {
+        var viewer = new Grid { Background = ThemeBrush("SchoologySubtleBrush"), RowSpacing = 8 };
+        viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        viewer.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var toolbar = new Grid { ColumnSpacing = 8 };
+        for (var i = 0; i < 8; i++)
+            toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = i == 1 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
+
+        var viewerScroll = new ScrollViewer
+        {
+            ZoomMode = ZoomMode.Enabled,
+            MinZoomFactor = 0.5f,
+            MaxZoomFactor = 4f,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Background = ThemeBrush("SchoologySubtleBrush")
+        };
+        var image = new Image
+        {
+            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MaxWidth = 1500,
+            Margin = new Thickness(12)
+        };
+        viewerScroll.Content = image;
+
+        PdfDocument? pdf = null;
+        uint currentPage = 0;
+        var status = Text("", 12);
+        status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        var back = Action("‹ Back", (_, _) =>
+        {
+            _activeNativeFileViewerRoot = null;
+            try { File.Delete(previewPath); } catch { }
+            onBack();
+        });
+        var heading = Text(title, 16, true);
+        heading.TextTrimming = TextTrimming.CharacterEllipsis;
+        heading.VerticalAlignment = VerticalAlignment.Center;
+        var pageLabel = Text(isPdf ? "Loading PDF…" : "Image", 12);
+        pageLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        pageLabel.VerticalAlignment = VerticalAlignment.Center;
+        Button previous = null!;
+        Button next = null!;
+        previous = Action("‹", async (_, _) =>
+        {
+            if (pdf is null || currentPage == 0) return;
+            currentPage--;
+            await RenderPdfPageAsync(pdf, currentPage, image, pageLabel, status);
+            previous.IsEnabled = currentPage > 0;
+            next.IsEnabled = currentPage + 1 < pdf.PageCount;
+        });
+        next = Action("›", async (_, _) =>
+        {
+            if (pdf is null || currentPage + 1 >= pdf.PageCount) return;
+            currentPage++;
+            await RenderPdfPageAsync(pdf, currentPage, image, pageLabel, status);
+            previous.IsEnabled = currentPage > 0;
+            next.IsEnabled = currentPage + 1 < pdf.PageCount;
+        });
+        var zoomOut = Action("−", (_, _) => viewerScroll.ChangeView(null, null, Math.Max(0.5f, viewerScroll.ZoomFactor - 0.2f)));
+        var zoomIn = Action("+", (_, _) => viewerScroll.ChangeView(null, null, Math.Min(4f, viewerScroll.ZoomFactor + 0.2f)));
+        var download = Action("Download original", async (_, _) =>
+            await SaveOriginalMaterialAsync(originalUrl, originalFilename, originalMime));
+        Grid.SetColumn(back, 0); toolbar.Children.Add(back);
+        Grid.SetColumn(heading, 1); toolbar.Children.Add(heading);
+        Grid.SetColumn(pageLabel, 2); toolbar.Children.Add(pageLabel);
+        Grid.SetColumn(previous, 3); toolbar.Children.Add(previous);
+        Grid.SetColumn(next, 4); toolbar.Children.Add(next);
+        Grid.SetColumn(zoomOut, 5); toolbar.Children.Add(zoomOut);
+        Grid.SetColumn(zoomIn, 6); toolbar.Children.Add(zoomIn);
+        Grid.SetColumn(download, 7); toolbar.Children.Add(download);
+        if (!isPdf)
+        {
+            previous.Visibility = Visibility.Collapsed;
+            next.Visibility = Visibility.Collapsed;
+        }
+
+        Grid.SetRow(toolbar, 0); viewer.Children.Add(toolbar);
+        Grid.SetRow(viewerScroll, 1); viewer.Children.Add(viewerScroll);
+        Grid.SetRow(status, 2); viewer.Children.Add(status);
+
+        if (isPdf)
+        {
+            try
+            {
+                var storageFile = await StorageFile.GetFileFromPathAsync(previewPath);
+                pdf = await PdfDocument.LoadFromFileAsync(storageFile);
+                if (pdf.PageCount == 0) throw new InvalidOperationException("The PDF does not contain any pages.");
+                await RenderPdfPageAsync(pdf, currentPage, image, pageLabel, status);
+                previous.IsEnabled = false;
+                next.IsEnabled = pdf.PageCount > 1;
+            }
+            catch (Exception ex)
+            {
+                status.Text = $"Unable to render this PDF: {ex.Message}";
+                pageLabel.Text = "Preview unavailable";
+            }
+        }
+        else
+        {
+            try
+            {
+                var storageFile = await StorageFile.GetFileFromPathAsync(previewPath);
+                using var stream = await storageFile.OpenAsync(FileAccessMode.Read);
+                var bitmap = new BitmapImage();
+                await bitmap.SetSourceAsync(stream);
+                image.Source = bitmap;
+            }
+            catch (Exception ex)
+            {
+                status.Text = $"Unable to render this image: {ex.Message}";
+            }
+        }
+
+        _activeNativeFileViewerRoot = viewer;
+        if (_sectionFrame is not null) NavigateMainSection(viewer, title);
+        else Reset(BuildApplicationShell(title, viewer));
+    }
+
+    private static async Task RenderPdfPageAsync(
+        PdfDocument pdf, uint pageIndex, Image image, TextBlock pageLabel, TextBlock status)
+    {
+        try
+        {
+            var page = pdf.GetPage(pageIndex);
+            using var stream = new InMemoryRandomAccessStream();
+            await page.RenderToStreamAsync(stream);
+            stream.Seek(0);
+            var bitmap = new BitmapImage();
+            await bitmap.SetSourceAsync(stream);
+            image.Source = bitmap;
+            pageLabel.Text = $"{pageIndex + 1} / {pdf.PageCount}";
+            status.Text = "";
+            page.Dispose();
+        }
+        catch (Exception ex)
+        {
+            status.Text = $"Unable to render PDF page {pageIndex + 1}: {ex.Message}";
+        }
+    }
+
     private StackPanel BuildMaterialsList(long sectionId, IReadOnlyList<SchoologyApiRecord> initialRecords)
     {
         var panel = new StackPanel { Spacing = 8 };
@@ -3702,6 +4066,33 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     onBack: () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
                 return;
             }
+            var fileAttachment = FirstFileAttachment(record.Data);
+            var originalFileUrl = ProfileValue(fileAttachment, "file_download_url", "fileDownloadURL",
+                "download_path", "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "url") ??
+                ProfileValue(record.Data, "file_download_url", "fileDownloadURL", "download_path", "downloadPath");
+            var convertedFileUrl = ProfileValue(fileAttachment, "file_converted_download_url", "fileConvertedDownloadURL",
+                "converted_download_path", "convertedDownloadPath") ??
+                ProfileValue(record.Data, "file_converted_download_url", "fileConvertedDownloadURL", "converted_download_path", "convertedDownloadPath");
+            var convertedStatus = ProfileValue(fileAttachment, "converted_status", "convertedStatus")?.ToLowerInvariant() ?? "";
+            var originalFileName = ProfileValue(fileAttachment, "filename", "fileName", "title") ??
+                ProfileValue(record.Data, "filename", "file_name", "fileName", "title", "name") ?? title;
+            var originalFileMime = ProfileValue(fileAttachment, "filemime", "fileMIME", "mime", "mime_type") ??
+                ProfileValue(record.Data, "filemime", "fileMIME", "mime_type") ?? "application/octet-stream";
+            var documentType = ProfileValue(record.Data, "document_type", "documentType",
+                "template_document_type", "templateDocumentType")?.ToLowerInvariant() ?? "";
+            if (!string.IsNullOrWhiteSpace(originalFileUrl) &&
+                (materialType is "file" or "document" || documentType == "file" || fileAttachment.ValueKind == JsonValueKind.Object))
+            {
+                var useConverted = !string.IsNullOrWhiteSpace(convertedFileUrl) &&
+                    (convertedStatus.Length == 0 || convertedStatus is "success" or "converted" or "1");
+                await OpenNativeMaterialFileAsync(
+                    useConverted ? convertedFileUrl! : originalFileUrl!,
+                    useConverted ? "application/pdf" : originalFileMime,
+                    originalFileUrl!, originalFileName, originalFileMime, title,
+                    () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
+                return;
+            }
+
             var rawUrl = ProfileValue(record.Data, "web_url", "webUrl", "launch_url", "launchUrl",
                 "external_url", "externalUrl", "url", "href", "link", "location", "download_url", "downloadUrl",
                 "file_download_url", "fileDownloadURL", "download_path", "downloadPath", "file_url", "fileUrl");
@@ -4058,16 +4449,25 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private static string MaterialGlyph(System.Text.Json.JsonElement data)
     {
         if (IsFolderRecord(data)) return "\uE8B7";
-        var type = ProfileValue(data, "type", "document_type", "mime_type", "mimeType", "extension")?.ToLowerInvariant() ?? "";
-        if (type.Contains("pdf")) return "\uEA90";
-        if (type.Contains("image") || type is "png" or "jpg" or "jpeg") return "\uEB9F";
-        if (type.Contains("video")) return "\uE714";
-        if (type.Contains("audio")) return "\uE8D6";
-        if (type.Contains("link") || type.Contains("url")) return "\uE71B";
-        if (type.Contains("spreadsheet") || type.Contains("xls")) return "\uE9F9";
-        if (type.Contains("assignment")) return "\uE70F";
-        if (type.Contains("discussion")) return "\uE8BD";
-        if (type.Contains("event")) return "\uE787";
+        var attachment = FirstFileAttachment(data);
+        var type = ProfileValue(data, "type", "template_type", "resource_type", "document_type",
+            "documentType", "mime_type", "mimeType", "filemime", "fileMIME", "extension",
+            "file_extension", "fileExtension")?.ToLowerInvariant() ?? "";
+        var name = ProfileValue(data, "filename", "file_name", "fileName", "title", "name")?.ToLowerInvariant() ??
+            ProfileValue(attachment, "filename", "fileName", "filemime", "fileMIME")?.ToLowerInvariant() ?? "";
+        var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime_type")?.ToLowerInvariant() ?? "";
+        var kind = type + " " + name + " " + mime;
+        if (kind.Contains("assignment")) return "\uE70F";
+        if (kind.Contains("discussion")) return "\uE8BD";
+        if (kind.Contains("assessment") || kind.Contains("quiz") || kind.Contains("test")) return "\uE9D5";
+        if (kind.Contains("event") || kind.Contains("calendar")) return "\uE787";
+        if (kind.Contains("external_tool") || kind.Contains("lti") || kind.Contains("scorm")) return "\uE71B";
+        if (kind.Contains("pdf") || name.EndsWith(".pdf", StringComparison.Ordinal)) return "\uEA90";
+        if (kind.Contains("image") || Regex.IsMatch(name, @"\.(png|jpe?g|gif|bmp|webp|svg)$")) return "\uEB9F";
+        if (kind.Contains("video") || Regex.IsMatch(name, @"\.(mp4|mov|avi|webm|mkv)$")) return "\uE714";
+        if (kind.Contains("audio") || Regex.IsMatch(name, @"\.(mp3|wav|m4a|aac|ogg|flac)$")) return "\uE8D6";
+        if (kind.Contains("link") || kind.Contains("url") || kind.Contains("web_content")) return "\uE71B";
+        if (kind.Contains("spreadsheet") || Regex.IsMatch(name, @"\.(xls|xlsx|csv|ods)$")) return "\uE9F9";
         return "\uE8A5";
     }
 
@@ -5287,6 +5687,37 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return new Uri(new Uri("https://app.schoology.com/"), raw.TrimStart('/')).AbsoluteUri;
     }
 
+    private void RefreshThemeSurfaces()
+    {
+        UpdateSharedWebViewTheme();
+        if (_sharedWebView?.Parent is not null) return;
+        if (_activeNativeFileViewerRoot is not null)
+        {
+            _activeNativeFileViewerRoot.Background = ThemeBrush("SchoologySubtleBrush");
+            return;
+        }
+        if (_lastRenderedPage == "splash") return;
+        if (_page == "login")
+        {
+            ShowLogin();
+            return;
+        }
+        if (_page == "home")
+        {
+            ShowHome(_section);
+            return;
+        }
+        if (_page is "Courses" or "Groups" or "School Profile")
+        {
+            var selected = _page == "Courses"
+                ? _courses.FirstOrDefault(entity => entity.Id == _selectedEntityId)
+                : _page == "Groups"
+                    ? _groups.FirstOrDefault(entity => entity.Id == _selectedEntityId)
+                    : GetSchoolProfileEntities().FirstOrDefault(entity => entity.Id == _selectedEntityId);
+            ShowThreePane(_page, selected);
+        }
+    }
+
     private void UpdateSharedWebViewTheme()
     {
         if (_sharedWebView is null) return;
@@ -5312,70 +5743,75 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private async Task OpenSharedWebViewAsync(string rawUrl, string title, bool allowLtiExternal = false,
         System.Action? onBack = null, bool requiresBrowserSession = true)
     {
+        await _sharedWebViewGate.WaitAsync();
         try
         {
+            if (_session is null) throw new InvalidOperationException("Sign in to open Schoology web content.");
+            if (!Uri.TryCreate(NormalizeSchoologyWebUrl(rawUrl), UriKind.Absolute, out var uri) ||
+                uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo))
+                throw new InvalidOperationException("Only secure HTTPS links can be opened in the shared Schoology view.");
+            if (!IsSchoologyWebHost(uri.Host) && !allowLtiExternal)
+            {
+                await Windows.System.Launcher.LaunchUriAsync(uri);
+                return;
+            }
 
-        if (_session is null) throw new InvalidOperationException("Sign in to open Schoology web content.");
-        if (!Uri.TryCreate(NormalizeSchoologyWebUrl(rawUrl), UriKind.Absolute, out var uri) ||
-            uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo))
-            throw new InvalidOperationException("Only secure HTTPS links can be opened in the shared Schoology view.");
-        if (!IsSchoologyWebHost(uri.Host) && !allowLtiExternal)
-        {
-            await Windows.System.Launcher.LaunchUriAsync(uri);
-            return;
-        }
+            var dataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Schoology", "WebView2");
+            Directory.CreateDirectory(dataFolder);
+            _sharedWebViewEnvironment ??= await CoreWebView2Environment.CreateWithOptionsAsync(
+                null, dataFolder, new CoreWebView2EnvironmentOptions());
 
-        _sharedWebView ??= new WebView2
-        {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            MinWidth = 400,
-            MinHeight = 320
-        };
-        var webViewDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Schoology", "WebView2");
-        Directory.CreateDirectory(webViewDataFolder);
-        _sharedWebViewEnvironment ??= await CoreWebView2Environment.CreateWithOptionsAsync(null, webViewDataFolder, new CoreWebView2EnvironmentOptions());
-        await _sharedWebView.EnsureCoreWebView2Async(_sharedWebViewEnvironment);
-        UpdateSharedWebViewTheme();
-        _sharedWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
-        _sharedWebView.CoreWebView2.Settings.IsWebMessageEnabled = false;
-        _sharedWebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
-        if (!_sharedWebViewInitialized || _sharedWebViewSessionUserId != _session.UserId)
-        {
-            _sharedWebView.CoreWebView2.CookieManager.DeleteAllCookies();
-            _sharedWebViewInitialized = false;
-            _sharedWebViewSessionUserId = _session.UserId;
-        }
-        if (requiresBrowserSession)
-        {
-            // Refresh the OAuth-backed browser session before each embedded launch so
-            // the persistent WebView never silently reuses an expired SESS cookie.
-            var cookies = await _auth.GetWebSessionCookiesAsync(_session);
-        foreach (var item in cookies)
-        {
-            var cookie = _sharedWebView.CoreWebView2.CookieManager.CreateCookie(
-                item.Name, item.Value, item.Domain, item.Path);
-            cookie.IsHttpOnly = item.HttpOnly;
-            cookie.IsSecure = item.Secure;
-            _sharedWebView.CoreWebView2.CookieManager.AddOrUpdateCookie(cookie);
-        }
-        var installedCookies = await _sharedWebView.CoreWebView2.CookieManager.GetCookiesAsync(_auth.WebSessionUrl);
-        if (!installedCookies.Any(cookie => cookie.Name.StartsWith("SESS", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(cookie.Value)))
-            throw new InvalidOperationException("The shared Schoology WebView did not receive a usable SESS cookie. Sign in again and retry.");
-        }
-        else
-        {
-            // The v2 launch URL is already authorized; do not require a browser SESS cookie.
-            _sharedWebViewInitialized = true;
-        }
-        _sharedWebViewAllowLti = allowLtiExternal;
-        if (!_sharedWebViewInitialized) throw new InvalidOperationException("The Schoology browser session could not be initialized.");
+            // Recreate the visual control while retaining the persistent browser profile.
+            // This avoids reusing a CoreWebView2 after its previous Frame host was unloaded.
+            var webView = new WebView2
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                MinWidth = 400,
+                MinHeight = 320
+            };
+            await webView.EnsureCoreWebView2Async(_sharedWebViewEnvironment);
+            var core = webView.CoreWebView2 ?? throw new InvalidOperationException(
+                "The Microsoft Edge WebView2 runtime did not initialize. Repair or install the WebView2 Runtime and retry.");
+            _sharedWebView = webView;
+            UpdateSharedWebViewTheme();
+            core.Settings.AreDevToolsEnabled = false;
+            core.Settings.IsWebMessageEnabled = false;
+            core.Settings.IsStatusBarEnabled = false;
 
-        if (_sharedWebViewStatus is null)
-        {
-            _sharedWebView.CoreWebView2.NavigationStarting += async (_, args) =>
+            if (!_sharedWebViewInitialized || _sharedWebViewSessionUserId != _session.UserId)
+            {
+                core.CookieManager.DeleteAllCookies();
+                _sharedWebViewInitialized = false;
+                _sharedWebViewSessionUserId = _session.UserId;
+            }
+
+            if (requiresBrowserSession)
+            {
+                var cookies = await _auth.GetWebSessionCookiesAsync(_session);
+                foreach (var item in cookies)
+                {
+                    var cookie = core.CookieManager.CreateCookie(item.Name, item.Value, item.Domain, item.Path);
+                    cookie.IsHttpOnly = item.HttpOnly;
+                    cookie.IsSecure = item.Secure;
+                    core.CookieManager.AddOrUpdateCookie(cookie);
+                }
+                var installedCookies = await core.CookieManager.GetCookiesAsync(_auth.WebSessionUrl);
+                if (!installedCookies.Any(cookie => cookie.Name.StartsWith("SESS", StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(cookie.Value)))
+                    throw new InvalidOperationException("The shared Schoology WebView did not receive a usable SESS cookie. Sign in again and retry.");
+                _sharedWebViewInitialized = true;
+            }
+            else
+            {
+                // v2 course-app launch URLs carry their own single-use authorization.
+                _sharedWebViewInitialized = true;
+            }
+
+            var status = Text("Loading…", 11);
+            status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+            core.NavigationStarting += async (_, args) =>
             {
                 if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out var destination)) return;
                 if (destination.Scheme != Uri.UriSchemeHttps)
@@ -5383,65 +5819,62 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     args.Cancel = true;
                     return;
                 }
-                if (!_sharedWebViewAllowLti && !IsSchoologyWebHost(destination.Host))
+                if (!allowLtiExternal && !IsSchoologyWebHost(destination.Host))
                 {
                     args.Cancel = true;
                     await Windows.System.Launcher.LaunchUriAsync(destination);
                     return;
                 }
-                if (_sharedWebViewStatus is not null) _sharedWebViewStatus.Text = "Loading…";
+                status.Text = "Loading…";
             };
-            _sharedWebView.CoreWebView2.NavigationCompleted += (_, args) =>
-            {
-                if (_sharedWebViewStatus is not null)
-                    _sharedWebViewStatus.Text = args.IsSuccess ? " " : "Unable to load this page. Use Reload to try again.";
-            };
-            _sharedWebView.CoreWebView2.NewWindowRequested += async (_, args) =>
+            core.NavigationCompleted += (_, args) =>
+                status.Text = args.IsSuccess ? " " : "Unable to load this page. Use Reload to try again.";
+            core.NewWindowRequested += async (_, args) =>
             {
                 args.Handled = true;
                 if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out var popup) ||
                     popup.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(popup.UserInfo)) return;
-                if (_sharedWebViewAllowLti || IsSchoologyWebHost(popup.Host))
-                    _sharedWebView.CoreWebView2.Navigate(popup.AbsoluteUri);
+                if (allowLtiExternal || IsSchoologyWebHost(popup.Host))
+                    core.Navigate(popup.AbsoluteUri);
                 else
                     await Windows.System.Launcher.LaunchUriAsync(popup);
             };
-        }
 
-        var host = new Grid { RowSpacing = 8, Margin = new Thickness(12) };
-        host.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var toolbar = new Grid { ColumnSpacing = 10 };
-        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var back = Action("‹ Back", (_, _) => (onBack ?? (() => ShowHome(_section)))());
-        back.HorizontalAlignment = HorizontalAlignment.Left;
-        toolbar.Children.Add(back);
-        var heading = Text(title, 16, true);
-        Grid.SetColumn(heading, 1); toolbar.Children.Add(heading);
-        _sharedWebViewStatus = Text("Loading…", 11);
-        _sharedWebViewStatus.Foreground = ThemeBrush("SchoologyMutedTextBrush");
-        Grid.SetColumn(_sharedWebViewStatus, 2); toolbar.Children.Add(_sharedWebViewStatus);
-        var reload = Action("Reload", (_, _) => _sharedWebView?.CoreWebView2?.Reload());
-        reload.HorizontalAlignment = HorizontalAlignment.Right;
-        Grid.SetColumn(reload, 3); toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        toolbar.Children.Add(reload);
-        host.Children.Add(toolbar);
-
-        if (_sharedWebView.Parent is Panel oldParent) oldParent.Children.Remove(_sharedWebView);
-        Grid.SetRow(_sharedWebView, 1);
-        host.Children.Add(_sharedWebView);
-        Grid.SetRow(host, 0);
-        if (_sectionFrame is not null) NavigateMainSection(host, title);
-        else Reset(BuildApplicationShell(title, host));
-        _sharedWebView.CoreWebView2.Navigate(uri.AbsoluteUri);
+            var host = new Grid { RowSpacing = 8, Margin = new Thickness(12) };
+            host.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            host.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            var toolbar = new Grid { ColumnSpacing = 10 };
+            toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var back = Action("‹ Back", (_, _) => (onBack ?? (() => ShowHome(_section)))());
+            toolbar.Children.Add(back);
+            var heading = Text(title, 16, true);
+            Grid.SetColumn(heading, 1);
+            toolbar.Children.Add(heading);
+            Grid.SetColumn(status, 2);
+            toolbar.Children.Add(status);
+            var reload = Action("Reload", (_, _) => core.Reload());
+            Grid.SetColumn(reload, 3);
+            toolbar.Children.Add(reload);
+            host.Children.Add(toolbar);
+            Grid.SetRow(webView, 1);
+            host.Children.Add(webView);
+            if (_sectionFrame is not null) NavigateMainSection(host, title);
+            else Reset(BuildApplicationShell(title, host));
+            core.Navigate(uri.AbsoluteUri);
         }
         catch (Exception ex)
         {
             await ShowApiErrorAsync("Unable to open Schoology web content", ex.Message);
         }
+        finally
+        {
+            _sharedWebViewGate.Release();
+        }
     }
+
     private StackPanel BuildProfilePage()
     {
         var panel = new StackPanel { Spacing = 12, Margin = new Thickness(24) };

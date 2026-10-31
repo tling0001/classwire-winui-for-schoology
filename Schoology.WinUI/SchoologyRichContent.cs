@@ -46,16 +46,26 @@ internal static class SchoologyRichContent
         void AddRun(string value)
         {
             if (value.Length == 0) return;
-            var run = new Run
+            Inline inline = new Run
             {
                 Text = WebUtility.HtmlDecode(value),
                 FontSize = fontSize,
-                FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
-                FontStyle = italic ? FontStyle.Italic : FontStyle.Normal,
-                TextDecorations = underline ? TextDecorations.Underline : TextDecorations.None
+                FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal
             };
-            if (activeLink is not null) activeLink.Inlines.Add(run);
-            else paragraph.Inlines.Add(run);
+            if (italic)
+            {
+                var italicSpan = new Italic();
+                italicSpan.Inlines.Add(inline);
+                inline = italicSpan;
+            }
+            if (underline)
+            {
+                var underlineSpan = new Underline();
+                underlineSpan.Inlines.Add(inline);
+                inline = underlineSpan;
+            }
+            if (activeLink is not null) activeLink.Inlines.Add(inline);
+            else paragraph.Inlines.Add(inline);
         }
 
         foreach (Match match in Tokens.Matches(markup))

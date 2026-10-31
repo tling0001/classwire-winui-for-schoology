@@ -17,7 +17,11 @@ internal sealed partial class SchoologyAuthService
         return Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
     }
 
-    internal async Task<byte[]> GetSchoologyFileBytesAsync(Session session, string rawUrl, CancellationToken cancellationToken = default)
+    internal async Task<byte[]> GetSchoologyFileBytesAsync(
+        Session session,
+        string rawUrl,
+        CancellationToken cancellationToken = default,
+        IProgress<(long Received, long? Total)>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         if (string.IsNullOrWhiteSpace(rawUrl))
@@ -28,7 +32,7 @@ internal sealed partial class SchoologyAuthService
         if (candidate.StartsWith('/'))
             uri = new Uri($"https://{ApiHost}{candidate}");
         else if (!Uri.TryCreate(candidate, UriKind.Absolute, out uri!))
-            throw new InvalidOperationException("Schoology returned an invalid attachment URL.");
+            uri = new Uri($"https://{ApiHost}/{candidate.TrimStart('/')}");
 
         if (uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo))
             throw new InvalidOperationException("Schoology attachment URLs must use HTTPS.");
@@ -87,10 +91,26 @@ internal sealed partial class SchoologyAuthService
                 throw new InvalidOperationException($"Schoology attachment download failed (HTTP {(int)response.StatusCode}).");
             if (response.Content.Headers.ContentLength is long length && length > 60 * 1024 * 1024)
                 throw new InvalidOperationException("The attachment exceeds the 60 MB safety limit.");
-            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-            if (bytes.Length > 60 * 1024 * 1024)
+            var total = response.Content.Headers.ContentLength;
+            if (total is > 60 * 1024 * 1024)
                 throw new InvalidOperationException("The attachment exceeds the 60 MB safety limit.");
-            return bytes;
+
+            await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var destination = new MemoryStream(total is > 0 and <= int.MaxValue ? (int)total.Value : 0);
+            var buffer = new byte[64 * 1024];
+            long received = 0;
+            while (true)
+            {
+                var count = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+                if (count == 0) break;
+                received += count;
+                if (received > 60 * 1024 * 1024)
+                    throw new InvalidOperationException("The attachment exceeds the 60 MB safety limit.");
+                await destination.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+                progress?.Report((received, total));
+            }
+            progress?.Report((received, total));
+            return destination.ToArray();
         }
         finally { response.Dispose(); }
     }
