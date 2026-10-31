@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.34] - 2026-10-31
+
+- Use the WinApp CLI's supported project-packaging command to generate signed x64 and ARM64 MSIX packages; the previous MSBuild Build target only compiled the app and did not create packages.
+- Include both the self-contained .NET runtime and Windows App SDK runtime in the MSIX deployment.
+- Resolve the remaining CA1826 and CA1859 warnings in assignment grade lookup and attachment parsing.
+
 ## [2026.10.0-port.33] - 2026-10-31
 
 - Make MSIX the default Windows deployment format and publish signed x64 and ARM64 packages instead of per-user Inno Setup EXE installers.

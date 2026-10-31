@@ -27,53 +27,91 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Locate Visual Studio MSBuild
+      - name: Install WinApp CLI
         shell: pwsh
         run: |
-          $vswhere = Join-Path "${env:ProgramFiles(x86)}" "Microsoft Visual Studio\Installer\vswhere.exe"
-          if (!(Test-Path $vswhere)) { throw "Visual Studio Installer vswhere.exe was not found." }
-          $msbuild = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
-          if (!$msbuild -or !(Test-Path $msbuild)) { throw "Visual Studio MSBuild was not found." }
-          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path -Parent $msbuild)
-          Write-Host "Using MSBuild: $msbuild"
+          winget install --id Microsoft.WinAppCli --exact --silent --accept-package-agreements --accept-source-agreements
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+                      [Environment]::GetEnvironmentVariable('Path', 'User')
+          $winapp = Get-Command winapp -ErrorAction SilentlyContinue
+          if (!$winapp) { throw "WinApp CLI was installed but its command alias is not available on PATH." }
+          winapp --version
 
-      - name: Build signed x64 and ARM64 MSIX packages
+      - name: Generate matching MSIX signing certificate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Push-Location $env:GITHUB_WORKSPACE
+          try {
+            winapp cert generate --manifest .\Schoology.WinUI\Package.appxmanifest
+            if ($LASTEXITCODE -ne 0) { throw "WinApp CLI could not generate a signing certificate." }
+            $pfxFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "devcert.pfx" -File |
+              Select-Object -First 1
+            if (!$pfxFile) { throw "WinApp CLI did not create its development certificate." }
+            $pfx = $pfxFile.FullName
+            $password = ConvertTo-SecureString "password" -AsPlainText -Force
+            $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation "Cert:\CurrentUser\My" -Password $password
+            if (!$certificate) { throw "Could not import the generated signing certificate." }
+            New-Item -ItemType Directory -Path (Join-Path $env:GITHUB_WORKSPACE "msix-output") -Force | Out-Null
+            Export-Certificate -Cert $certificate -FilePath (Join-Path $env:GITHUB_WORKSPACE "msix-output\Schoology-MSIX-Signing.cer") | Out-Null
+          }
+          finally { Pop-Location }
+
+      - name: Package x64 and ARM64 MSIX
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $project = Join-Path $env:GITHUB_WORKSPACE "Schoology.WinUI\Schoology.WinUI.csproj"
+          $projectDirectory = Split-Path -Parent $project
+          $pfxFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "devcert.pfx" -File |
+            Select-Object -First 1
+          if (!$pfxFile) { throw "The generated MSIX signing certificate is missing." }
+          $pfx = $pfxFile.FullName
           $output = Join-Path $env:GITHUB_WORKSPACE "msix-output"
-          New-Item -ItemType Directory -Path $output -Force | Out-Null
 
-          # Create one short-lived development signing certificate for both architectures.
-          # The public .cer is distributed with the MSIX files so users can trust the
-          # publisher before installing. The private key never leaves this runner.
-          $password = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
-          Write-Output "::add-mask::$password"
-          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-          $certificate = New-SelfSignedCertificate -Type Custom -Subject "CN=Schoology" -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyExportPolicy Exportable -KeyUsage DigitalSignature -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
-          $pfx = Join-Path $env:RUNNER_TEMP "Schoology-MSIX-Signing.pfx"
-          Export-PfxCertificate -Cert $certificate -FilePath $pfx -Password $securePassword | Out-Null
-          Export-Certificate -Cert $certificate -FilePath (Join-Path $output "Schoology-MSIX-Signing.cer") | Out-Null
-
-          foreach ($target in @(@{ Architecture = "x64"; Rid = "win-x64" }, @{ Architecture = "ARM64"; Rid = "win-arm64" })) {
+          foreach ($target in @(@{ Architecture = "x64"; Rid = "win-x64" }, @{ Architecture = "arm64"; Rid = "win-arm64" })) {
             $architecture = $target.Architecture
             $rid = $target.Rid
-            $packageDirectory = Join-Path $env:RUNNER_TEMP "Schoology-MSIX-$rid"
-            if (Test-Path $packageDirectory) { Remove-Item $packageDirectory -Recurse -Force }
-            New-Item -ItemType Directory -Path $packageDirectory -Force | Out-Null
 
-            Write-Host "Building packaged $architecture application..."
-            & msbuild $project /restore /t:Build "/p:Configuration=Release" "/p:Platform=$architecture" "/p:RuntimeIdentifier=$rid" "/p:WindowsPackageType=MSIX" "/p:WindowsAppSDKSelfContained=true" "/p:SelfContained=true" "/p:GenerateAppxPackageOnBuild=true" "/p:AppxBundle=Never" "/p:UapAppxPackageBuildMode=SideloadOnly" "/p:AppxPackageSigningEnabled=true" "/p:PackageCertificateKeyFile=$pfx" "/p:PackageCertificatePassword=$password" "/p:AppxPackageDir=$packageDirectory\"
-            if ($LASTEXITCODE -ne 0) { throw "MSIX build failed for $architecture (exit code $LASTEXITCODE)." }
+            # Remove only package outputs from the previous architecture so the
+            # artifact discovered below must have been produced by this invocation.
+            Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Extension -in @(".msix", ".msixbundle") -and
+                !$_.FullName.StartsWith($output, [StringComparison]::OrdinalIgnoreCase)
+              } |
+              Remove-Item -Force
 
-            $package = Get-ChildItem -Path $packageDirectory -Recurse -Filter "*.msix" -File | Select-Object -First 1
-            if (!$package) { throw "MSBuild completed without producing an MSIX for $architecture." }
-            Copy-Item -LiteralPath $package.FullName -Destination (Join-Path $output "Schoology-WinUI-$rid.msix") -Force
-            Write-Host "Created $($package.Name) for $architecture."
+            Write-Host "Packaging Schoology for $architecture..."
+            Push-Location $env:GITHUB_WORKSPACE
+            try {
+              winapp package $project --arch $architecture --cert $pfx --self-contained
+              if ($LASTEXITCODE -ne 0) { throw "WinApp CLI packaging failed for $architecture." }
+            }
+            finally { Pop-Location }
+
+            $package = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Extension -in @(".msix", ".msixbundle") -and
+                !$_.FullName.StartsWith($output, [StringComparison]::OrdinalIgnoreCase)
+              } |
+              Sort-Object LastWriteTimeUtc -Descending |
+              Select-Object -First 1
+            if (!$package) {
+              Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match "AppPackages|Packages|publish" } |
+                ForEach-Object { Write-Host "Package output directory: $($_.FullName)" }
+              throw "WinApp CLI completed without producing an MSIX for $architecture."
+            }
+
+            $destination = Join-Path $output "Schoology-WinUI-$rid$($package.Extension)"
+            Copy-Item -LiteralPath $package.FullName -Destination $destination -Force
+            Write-Host "Created package: $($package.FullName)"
+            Write-Host "Release artifact: $destination"
           }
 
-          $signtool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+          $signtool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
           if (!$signtool) { throw "Windows SDK SignTool was not found; cannot verify the MSIX signatures." }
           Get-ChildItem -Path $output -Filter "*.msix" | ForEach-Object {
             & $signtool.FullName verify /pa /v $_.FullName
@@ -128,7 +166,7 @@ jobs:
           VERSION: ${{ steps.release_meta.outputs.version }}
         shell: bash
         run: |
-          mapfile -d '' packages < <(find release-assets -type f \( -name '*.msix' -o -name '*.cer' \) -print0)
+          mapfile -d '' packages < <(find release-assets -type f \( -name '*.msix' -o -name '*.msixbundle' -o -name '*.cer' \) -print0)
           if [ "${#packages[@]}" -lt 3 ]; then
             echo "Expected x64 and ARM64 MSIX packages plus the publisher certificate." >&2
             exit 1

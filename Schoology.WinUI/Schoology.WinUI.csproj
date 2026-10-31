@@ -10,16 +10,17 @@
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>MSIX</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
     <Nullable>enable</Nullable>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.33</Version>
-    <AssemblyVersion>2026.10.0.33</AssemblyVersion>
-    <FileVersion>2026.10.0.33</FileVersion>
-    <InformationalVersion>2026.10.0-port.33</InformationalVersion>
+    <Version>2026.10.0-port.34</Version>
+    <AssemblyVersion>2026.10.0.34</AssemblyVersion>
+    <FileVersion>2026.10.0.34</FileVersion>
+    <InformationalVersion>2026.10.0-port.34</InformationalVersion>
     <Title>Schoology</Title>
     <Product>Schoology</Product>
     <AssemblyName>Schoology.WinUI</AssemblyName>

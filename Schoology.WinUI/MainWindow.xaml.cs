@@ -3193,8 +3193,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 try
                 {
                     using var gradeDocument = await _api.GetAssignmentGradesAsync(session, sectionId, gradeItemId);
-                    submissionGrade = SchoologyApiClient.ReadRecords(gradeDocument.RootElement, "grade", "grades")
-                        .FirstOrDefault()?.Data ?? default;
+                    var gradeRecords = SchoologyApiClient.ReadRecords(gradeDocument.RootElement, "grade", "grades");
+                    if (gradeRecords.Count > 0) submissionGrade = gradeRecords[0].Data;
                 }
                 catch (Exception ex) { App.WriteStartupLog("Could not load the assignment's overall grade for its submission view.", ex); }
             }
@@ -4565,7 +4565,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return default;
     }
 
-    private static IReadOnlyList<(JsonElement Item, string Kind)> ReadAttachmentItems(JsonElement root)
+    private static List<(JsonElement Item, string Kind)> ReadAttachmentItems(JsonElement root)
     {
         var result = new List<(JsonElement Item, string Kind)>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
