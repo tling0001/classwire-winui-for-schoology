@@ -291,7 +291,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 {
                     _highContrastEnabled = ReadHighContrastSetting();
                     // Defer XAML tree changes until Windows has completed native message dispatch.
-                    DispatcherQueue.GetForCurrentThread()?.TryEnqueue(() =>
+                    Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()?.TryEnqueue(() =>
                     {
                         try { RefreshThemeSurfaces(); }
                         catch (Exception refreshException)
