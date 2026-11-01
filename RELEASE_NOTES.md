@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.48] - 2026-10-31
+
+- Replace the unsupported WinRT High Contrast change-event subscription with native Windows accessibility/theme notifications, preventing the COM event-source failure during startup while preserving live High Contrast theme updates.
+
+
 ## [2026.10.0-port.47] - 2026-10-31
 
 - Fix unpackaged startup by constructing the empty main-window and shell-page roots without loading missing standalone XAML resources.
