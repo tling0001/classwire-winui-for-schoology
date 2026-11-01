@@ -139,7 +139,7 @@ public partial class App : Application
             }
         }
         catch { /* Never throw from a native exception filter. */ }
-        return 1; // EXCEPTION_EXECUTE_HANDLER; Windows Error Reporting writes the dump.
+        return 0; // EXCEPTION_CONTINUE_SEARCH; allow Windows Error Reporting to create the configured dump.
     }
 
     private void OnNotificationInvoked(AppNotificationManager sender, AppNotificationActivatedEventArgs args)
