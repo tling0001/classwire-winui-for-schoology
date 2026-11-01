@@ -13,10 +13,6 @@ public partial class App : Application
     private Window? _window;
     private DispatcherQueue? _dispatcherQueue;
     private static Mutex? _instanceMutex;
-    private delegate int NativeCrashFilter(IntPtr exceptionPointers);
-    private static readonly NativeCrashFilter CrashFilter = HandleNativeCrash;
-    [DllImport("kernel32.dll", EntryPoint = "SetUnhandledExceptionFilter")]
-    private static extern IntPtr SetUnhandledExceptionFilter(NativeCrashFilter filter);
     [DllImport("user32.dll", EntryPoint = "FindWindowW", CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindow(string? className, string? windowName);
     [DllImport("user32.dll", EntryPoint = "PostMessageW")]
@@ -28,13 +24,13 @@ public partial class App : Application
 
     public App()
     {
-        // Install native crash diagnostics before WinUI initialization. Native/XAML
-        // failures can bypass the managed UnhandledException event.
+        // Configure WER LocalDumps without replacing the CLR's native exception
+        // filter. WinUI and the CLR own that filter chain; overriding it can
+        // interfere with stowed-XAML exception reporting.
         try
         {
             ConfigureWindowsCrashDumps();
-            SetUnhandledExceptionFilter(CrashFilter);
-            WriteStartupLog("Native unhandled-exception filter and per-user crash dumps configured.");
+            WriteStartupLog("Per-user Windows Error Reporting crash dumps configured; CLR exception handling left intact.");
         }
         catch (Exception ex)
         {
@@ -122,24 +118,6 @@ public partial class App : Application
         key.SetValue("DumpFolder", dumpDirectory, RegistryValueKind.ExpandString);
         key.SetValue("DumpCount", 5, RegistryValueKind.DWord);
         key.SetValue("DumpType", 2, RegistryValueKind.DWord);
-    }
-
-    private static int HandleNativeCrash(IntPtr exceptionPointers)
-    {
-        try
-        {
-            if (exceptionPointers == IntPtr.Zero)
-                WriteStartupLog("Native unhandled exception received without EXCEPTION_POINTERS.");
-            else
-            {
-                var record = Marshal.ReadIntPtr(exceptionPointers);
-                var code = unchecked((uint)Marshal.ReadInt32(record));
-                var address = Marshal.ReadIntPtr(record, IntPtr.Size * 2);
-                WriteStartupLog($"Native unhandled exception: code=0x{code:X8}, address=0x{address.ToInt64():X}.");
-            }
-        }
-        catch { /* Never throw from a native exception filter. */ }
-        return 0; // EXCEPTION_CONTINUE_SEARCH; allow Windows Error Reporting to create the configured dump.
     }
 
     private void OnNotificationInvoked(AppNotificationManager sender, AppNotificationActivatedEventArgs args)

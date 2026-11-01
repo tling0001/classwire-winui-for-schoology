@@ -101,49 +101,50 @@
           <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="#FF29445C" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="HighContrast">
-          <StaticResource x:Key="SchoologyBlueBrush" ResourceKey="SystemColorHighlightColorBrush" />
-          <StaticResource x:Key="SchoologyBlueDarkBrush" ResourceKey="SystemColorHighlightColorBrush" />
-          <StaticResource x:Key="SchoologySurfaceBrush" ResourceKey="SystemColorWindowColorBrush" />
-          <StaticResource x:Key="SchoologySubtleBrush" ResourceKey="SystemColorWindowColorBrush" />
-          <StaticResource x:Key="SchoologyDividerBrush" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="SchoologyTextBrush" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="SchoologyMutedTextBrush" ResourceKey="SystemColorGrayTextColorBrush" />
-          <StaticResource x:Key="SchoologyWarningTextBrush" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="SchoologySuccessTextBrush" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="SystemControlForegroundBaseHighBrush" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="SystemControlForegroundBaseMediumBrush" ResourceKey="SystemColorGrayTextColorBrush" />
-          <StaticResource x:Key="TextControlBackground" ResourceKey="SystemColorWindowColorBrush" />
-          <StaticResource x:Key="TextControlBackgroundPointerOver" ResourceKey="SystemColorWindowColorBrush" />
-          <StaticResource x:Key="TextControlBackgroundFocused" ResourceKey="SystemColorWindowColorBrush" />
-          <StaticResource x:Key="TextControlBackgroundDisabled" ResourceKey="SystemColorWindowColorBrush" />
-          <StaticResource x:Key="TextControlBorderBrush" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="TextControlBorderBrushPointerOver" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="TextControlBorderBrushFocused" ResourceKey="SystemColorHighlightColorBrush" />
-          <StaticResource x:Key="TextControlForeground" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="TextControlForegroundPointerOver" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="TextControlForegroundDisabled" ResourceKey="SystemColorGrayTextColorBrush" />
-          <StaticResource x:Key="TextControlPlaceholderForeground" ResourceKey="SystemColorGrayTextColorBrush" />
-          <StaticResource x:Key="TextControlPlaceholderForegroundPointerOver" ResourceKey="SystemColorGrayTextColorBrush" />
-          <StaticResource x:Key="ComboBoxBackground" ResourceKey="SystemColorWindowColorBrush" />
-          <StaticResource x:Key="ComboBoxForeground" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="ComboBoxBorderBrush" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="ComboBoxItemForeground" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="ComboBoxItemForegroundPointerOver" ResourceKey="SystemColorHighlightTextColorBrush" />
-          <StaticResource x:Key="ComboBoxItemBackgroundPointerOver" ResourceKey="SystemColorHighlightColorBrush" />
-          <StaticResource x:Key="ComboBoxItemForegroundSelected" ResourceKey="SystemColorHighlightTextColorBrush" />
-          <StaticResource x:Key="ComboBoxItemBackgroundSelected" ResourceKey="SystemColorHighlightColorBrush" />
-          <StaticResource x:Key="ListViewItemForeground" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="ListViewItemForegroundSelected" ResourceKey="SystemColorHighlightTextColorBrush" />
-          <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="SystemColorHighlightColorBrush" />
-          <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="SystemColorHighlightColorBrush" />
-          <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="SystemColorHighlightColorBrush" />
-          <StaticResource x:Key="ButtonForeground" ResourceKey="SystemColorButtonTextColorBrush" />
-          <StaticResource x:Key="ButtonForegroundPointerOver" ResourceKey="SystemColorButtonTextColorBrush" />
-          <StaticResource x:Key="NavigationViewItemForeground" ResourceKey="SystemColorWindowTextColorBrush" />
-          <StaticResource x:Key="NavigationViewItemForegroundPointerOver" ResourceKey="SystemColorHighlightTextColorBrush" />
-          <StaticResource x:Key="NavigationViewItemForegroundSelected" ResourceKey="SystemColorHighlightTextColorBrush" />
-          <StaticResource x:Key="NavigationViewItemBackgroundPointerOver" ResourceKey="SystemColorHighlightColorBrush" />
-          <StaticResource x:Key="NavigationViewItemBackgroundSelected" ResourceKey="SystemColorHighlightColorBrush" />
+          <!-- Use system color resources rather than StaticResource brush aliases. -->
+          <SolidColorBrush x:Key="SchoologyBlueBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+          <SolidColorBrush x:Key="SchoologyBlueDarkBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+          <SolidColorBrush x:Key="SchoologySurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+          <SolidColorBrush x:Key="SchoologySubtleBrush" Color="{ThemeResource SystemColorWindowColor}" />
+          <SolidColorBrush x:Key="SchoologyDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="SchoologyTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="SchoologyMutedTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="SchoologyWarningTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="SchoologySuccessTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="SystemControlForegroundBaseHighBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="SystemControlForegroundBaseMediumBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource SystemColorWindowColor}" />
+          <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource SystemColorWindowColor}" />
+          <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource SystemColorWindowColor}" />
+          <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource SystemColorWindowColor}" />
+          <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource SystemColorHighlightColor}" />
+          <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="ComboBoxBackground" Color="{ThemeResource SystemColorWindowColor}" />
+          <SolidColorBrush x:Key="ComboBoxForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="ComboBoxItemForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="ComboBoxItemForegroundPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+          <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+          <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
+          <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{ThemeResource SystemColorHighlightColor}" />
+          <SolidColorBrush x:Key="ListViewItemForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
+          <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+          <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource SystemColorHighlightColor}" />
+          <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+          <SolidColorBrush x:Key="ButtonForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="NavigationViewItemForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
+          <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+          <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
+          <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+          <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="{ThemeResource SystemColorHighlightColor}" />
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
     </ResourceDictionary>

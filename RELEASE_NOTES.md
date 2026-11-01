@@ -1,5 +1,13 @@
 # Release notes
 
+## [2026.10.0-port.50] - 2026-10-31
+
+- Restore the original WinUI system-color-based High Contrast theme resources instead of resolving system brush aliases through StaticResource.
+- Defer theme surface rebuilding until after native Windows theme/accessibility messages have returned, avoiding XAML tree mutations inside the window procedure.
+- Preserve the CLR's native exception filter while retaining per-user Windows Error Reporting LocalDumps configuration.
+- Add precise login-page and window-destruction breadcrumbs to distinguish dispatcher/XAML failures from an actual native window close.
+
+
 ## [2026.10.0-port.49] - 2026-10-31
 
 - Add native crash diagnostics and per-user Windows Error Reporting full-memory dumps for startup failures that bypass managed exception handlers.

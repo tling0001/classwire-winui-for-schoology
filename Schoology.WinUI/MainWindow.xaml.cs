@@ -16,6 +16,7 @@ using Windows.Storage.Streams;
 using Windows.System;
 using Windows.UI.ViewManagement;
 using Microsoft.UI;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -121,7 +122,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         ConfigureStartupRegistration();
         Closed += async (_, _) =>
         {
+            App.WriteStartupLog("MainWindow.Closed event received; beginning window disposal.");
             await DisposeAsync();
+            App.WriteStartupLog("MainWindow disposal completed.");
             DestroyTrayIcon();
             try { AppNotificationManager.Default.Unregister(); } catch (Exception ex) { App.WriteStartupLog("Could not unregister app notifications during shutdown.", ex); }
         };
@@ -268,6 +271,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private IntPtr HandleWindowMessageCore(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
     {
+        if (message is 0x0002 or 0x0082)
+            App.WriteStartupLog($"Native window destruction message received: 0x{message:X4}.");
+        if (message == WmClose)
+            App.WriteStartupLog($"Native WM_CLOSE received; background-mode={BackgroundModeEnabled}, allow-exit={_allowExit}.");
         if (message is WmSettingChange or WmThemeChanged or WmSysColorChange)
         {
             var result = _previousWindowProc == IntPtr.Zero
@@ -283,7 +290,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 try
                 {
                     _highContrastEnabled = ReadHighContrastSetting();
-                    RefreshThemeSurfaces();
+                    // Defer XAML tree changes until Windows has completed native message dispatch.
+                    DispatcherQueue.GetForCurrentThread()?.TryEnqueue(() =>
+                    {
+                        try { RefreshThemeSurfaces(); }
+                        catch (Exception refreshException)
+                        {
+                            App.WriteStartupLog("Deferred theme refresh failed.", refreshException);
+                        }
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -667,11 +682,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private void ShowLogin()
     {
+        App.WriteStartupLog("ShowLogin entered.");
         _notificationTimer?.Stop();
         _page = "login";
         _sectionFrame = null;
         _ = StopQrScannerAsync();
+        App.WriteStartupLog("Login page QR scanner shutdown requested.");
         var dark = _root.ActualTheme == ElementTheme.Dark;
+        App.WriteStartupLog($"Building login page; actual theme={_root.ActualTheme}, high contrast={_highContrastEnabled}.");
         var scroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -697,8 +715,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         stack.Children.Add(logo);
         stack.Children.Add(LoginActionButton("Sign in through my school", "ic_school.svg", ShowSchoolSignInPage));
+        App.WriteStartupLog("Login school sign-in button created.");
         stack.Children.Add(LoginActionButton("Sign in with my account", "ic_sgy_logo.svg", ShowAccountSignInPage));
+        App.WriteStartupLog("Login account sign-in button created.");
         stack.Children.Add(LoginActionButton("Sign in with a QR code", "ic_qr_code.svg", ShowQrSignInPage));
+        App.WriteStartupLog("Login QR sign-in button created.");
         var help = new Button
         {
             Content = "I need help signing in",
@@ -752,6 +773,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             logo.Width = Math.Min(265, Math.Max(140, stack.Width - 40));
         };
         Reset(page);
+        App.WriteStartupLog("Login visual tree attached to the window.");
         _ = SetEmbeddedImageAsync(logo, "Schoology.WinUI.Assets.logo_schoology.png");
     }
 
