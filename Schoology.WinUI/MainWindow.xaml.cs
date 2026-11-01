@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -83,16 +85,30 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private static readonly string ReleaseNotesStatePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Schoology", "release-notes-version.txt");
     private static readonly string AppSettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Schoology", "settings.json");
     private static readonly string NotificationSeenStatePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Schoology", "notification-seen.json");
+    private static readonly string UpdateStatePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Schoology", "update-state.json");
     private static readonly HttpClient ReleaseNotesClient = new();
+    private static readonly HttpClient UpdateMetadataClient = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private static readonly HttpClient UpdateDownloadClient = new() { Timeout = TimeSpan.FromMinutes(10) };
+    private static readonly TimeSpan UpdateCheckInterval = TimeSpan.FromHours(12);
+    private static readonly TimeSpan UpdateRetryInterval = TimeSpan.FromMinutes(5);
+    private readonly SemaphoreSlim _updateCheckGate = new(1, 1);
+    private bool _automaticUpdateChecksStarted;
+    private bool _updateDialogOpen;
+    private UpdateReleaseInfo? _pendingUpdateInfo;
     private bool _restoringWindowState;
+
+    private sealed record UpdateReleaseInfo(string Tag, string Version, string AssetName, Uri DownloadUri, long Size, string? Digest);
+    private sealed record UpdateCheckState(long LastSuccessfulCheckUnixMilliseconds, string LastRemoteTag);
 
     public MainWindow()
     {
         App.WriteStartupLog("MainWindow constructor entered.");
-        InitializeComponent();
-        App.WriteStartupLog("MainWindow.InitializeComponent completed.");
-
-        _root = Root;
+        // The unpackaged publish can omit this empty window's standalone ms-appx
+        // XAML resource. Construct the root directly so startup does not depend
+        // on a resource that is not present in the installed EXE layout.
+        _root = new Grid();
+        Content = _root;
+        App.WriteStartupLog("MainWindow visual root created programmatically.");
         _api = new SchoologyApiClient(_auth);
         _windowProcDelegate = HandleWindowMessage;
         var windowHandle = Win32Interop.GetWindowFromWindowId(AppWindow.Id);
@@ -150,7 +166,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 await RestoreSavedSessionAsync();
                 if (_isBackgroundHidden) _releaseNotesPending = true;
                 else await CheckAndShowReleaseNotesAsync();
-                App.WriteStartupLog("Startup session restoration and release-notes sequence completed.");
+                StartAutomaticUpdateChecks();
+                App.WriteStartupLog("Startup session restoration, release-notes, and update-check sequence completed.");
             }
             catch (Exception ex)
             {
@@ -300,9 +317,25 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (_releaseNotesPending)
         {
             _releaseNotesPending = false;
-            _ = CheckAndShowReleaseNotesAsync();
+            _ = ShowPendingStartupDialogsAsync();
+        }
+        else if (_pendingUpdateInfo is { } pendingUpdate)
+        {
+            _pendingUpdateInfo = null;
+            _ = ShowUpdateAvailableDialogAsync(pendingUpdate);
         }
     }
+
+    private async Task ShowPendingStartupDialogsAsync()
+    {
+        await CheckAndShowReleaseNotesAsync();
+        if (_pendingUpdateInfo is { } pendingUpdate)
+        {
+            _pendingUpdateInfo = null;
+            await ShowUpdateAvailableDialogAsync(pendingUpdate);
+        }
+    }
+
     private void SetWindowSize(int widthDip, int heightDip)
     {
         try
@@ -2597,6 +2630,336 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { await ShowApiErrorAsync("Unable to open resource", ex.Message); }
     }
 
+
+    private void StartAutomaticUpdateChecks()
+    {
+        if (_automaticUpdateChecksStarted) return;
+        _automaticUpdateChecksStarted = true;
+        _ = RunAutomaticUpdateChecksAsync();
+    }
+
+    private async Task RunAutomaticUpdateChecksAsync()
+    {
+        try
+        {
+            var initialDelay = GetInitialUpdateCheckDelay();
+            if (initialDelay > TimeSpan.Zero) await Task.Delay(initialDelay);
+            while (!_allowExit)
+            {
+                try
+                {
+                    var update = await CheckForUpdatesAsync();
+                    if (update is not null)
+                    {
+                        if (_isBackgroundHidden) _pendingUpdateInfo = update;
+                        else await ShowUpdateAvailableDialogAsync(update);
+                    }
+                    await Task.Delay(UpdateCheckInterval);
+                }
+                catch (Exception ex)
+                {
+                    App.WriteStartupLog("Automatic update check failed; it will retry later.", ex);
+                    await Task.Delay(UpdateRetryInterval);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteStartupLog("Automatic update-check loop stopped unexpectedly.", ex);
+        }
+    }
+
+    private static TimeSpan GetInitialUpdateCheckDelay()
+    {
+        try
+        {
+            if (File.Exists(UpdateStatePath))
+            {
+                var state = JsonSerializer.Deserialize<UpdateCheckState>(File.ReadAllText(UpdateStatePath));
+                if (state is { LastSuccessfulCheckUnixMilliseconds: > 0 })
+                {
+                    var last = DateTimeOffset.FromUnixTimeMilliseconds(state.LastSuccessfulCheckUnixMilliseconds);
+                    var remaining = UpdateCheckInterval - (DateTimeOffset.UtcNow - last);
+                    return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromSeconds(8);
+                }
+            }
+        }
+        catch (Exception ex) { App.WriteStartupLog("Could not read update-check state; checking after startup delay.", ex); }
+        return TimeSpan.FromSeconds(8);
+    }
+
+    private static void SaveUpdateCheckState(string tag)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(UpdateStatePath)!);
+            var state = new UpdateCheckState(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), tag);
+            var temporary = UpdateStatePath + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(state));
+            File.Move(temporary, UpdateStatePath, overwrite: true);
+        }
+        catch (Exception ex) { App.WriteStartupLog("Could not save update-check state.", ex); }
+    }
+
+    private async Task<UpdateReleaseInfo?> CheckForUpdatesAsync()
+    {
+        await _updateCheckGate.WaitAsync();
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                "https://api.github.com/repos/tling0001/schoology-winui/releases/latest");
+            request.Headers.TryAddWithoutValidation("User-Agent", "Schoology-WinUI-Updater");
+            request.Headers.Accept.ParseAdd("application/vnd.github+json");
+            using var response = await UpdateMetadataClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"GitHub update check failed (HTTP {(int)response.StatusCode}).");
+
+            using var release = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = release.RootElement;
+            if ((root.TryGetProperty("draft", out var draft) && draft.ValueKind == JsonValueKind.True) ||
+                (root.TryGetProperty("prerelease", out var prerelease) && prerelease.ValueKind == JsonValueKind.True))
+            {
+                SaveUpdateCheckState(string.Empty);
+                return null;
+            }
+
+            var tag = root.TryGetProperty("tag_name", out var tagValue) ? tagValue.GetString() ?? string.Empty : string.Empty;
+            var localVersion = typeof(MainWindow).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? typeof(MainWindow).Assembly.GetName().Version?.ToString()
+                ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(tag) || !IsNewerReleaseVersion(tag, localVersion))
+            {
+                SaveUpdateCheckState(tag);
+                return null;
+            }
+
+            if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("The latest GitHub release does not contain downloadable installer assets.");
+
+            var architecture = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? "ARM64" : "x64";
+            var expectedAssetName = $"Schoology-WinUI-{tag}-{architecture}-Setup.exe";
+            var asset = assets.EnumerateArray().FirstOrDefault(item =>
+                item.ValueKind == JsonValueKind.Object &&
+                item.TryGetProperty("name", out var name) &&
+                string.Equals(name.GetString(), expectedAssetName, StringComparison.OrdinalIgnoreCase));
+            if (asset.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException($"The latest release does not include the {architecture} installer.");
+
+            var assetUrl = asset.TryGetProperty("browser_download_url", out var urlValue) ? urlValue.GetString() : null;
+            if (!Uri.TryCreate(assetUrl, UriKind.Absolute, out var downloadUri) ||
+                downloadUri.Scheme != Uri.UriSchemeHttps ||
+                !string.Equals(downloadUri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The update download URL is not a valid GitHub HTTPS URL.");
+
+            var size = asset.TryGetProperty("size", out var sizeValue) && sizeValue.TryGetInt64(out var parsedSize)
+                ? parsedSize : 0;
+            var digest = asset.TryGetProperty("digest", out var digestValue) && digestValue.ValueKind == JsonValueKind.String
+                ? digestValue.GetString() : null;
+            SaveUpdateCheckState(tag);
+            return new UpdateReleaseInfo(tag, tag.TrimStart('v', 'V'), expectedAssetName, downloadUri, size, digest);
+        }
+        finally { _updateCheckGate.Release(); }
+    }
+
+    private static bool IsNewerReleaseVersion(string remoteTag, string localVersion)
+    {
+        static (Version BaseVersion, int Port)? Parse(string value)
+        {
+            var normalized = value.Trim().TrimStart('v', 'V').Split('+', 2)[0];
+            var match = Regex.Match(normalized,
+                @"^(?<base>\d+(?:\.\d+){2})-port\.(?<port>\d+)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!match.Success || !Version.TryParse(match.Groups["base"].Value, out var baseVersion) ||
+                !int.TryParse(match.Groups["port"].Value, out var port)) return null;
+            return (baseVersion, port);
+        }
+
+        var remote = Parse(remoteTag);
+        var local = Parse(localVersion);
+        if (remote is null || local is null)
+            throw new InvalidDataException($"Could not compare Schoology release versions ('{localVersion}' and '{remoteTag}').");
+        var baseComparison = remote.Value.BaseVersion.CompareTo(local.Value.BaseVersion);
+        return baseComparison > 0 || (baseComparison == 0 && remote.Value.Port > local.Value.Port);
+    }
+
+    private async Task CheckForUpdatesManuallyAsync(Button button)
+    {
+        if (!button.IsEnabled) return;
+        var previousContent = button.Content;
+        button.IsEnabled = false;
+        button.Content = "Checking…";
+        try
+        {
+            var update = await CheckForUpdatesAsync();
+            if (update is null)
+                await ShowApiErrorAsync("Up to date", "You are using the latest version of Schoology.");
+            else
+                await ShowUpdateAvailableDialogAsync(update);
+        }
+        catch (Exception ex)
+        {
+            App.WriteStartupLog("Manual update check failed.", ex);
+            await ShowApiErrorAsync("Unable to check for updates", ex.Message);
+        }
+        finally
+        {
+            button.Content = previousContent;
+            button.IsEnabled = true;
+        }
+    }
+
+    private async Task ShowUpdateAvailableDialogAsync(UpdateReleaseInfo update)
+    {
+        if (_isBackgroundHidden)
+        {
+            _pendingUpdateInfo = update;
+            return;
+        }
+        if (_updateDialogOpen) return;
+
+        _updateDialogOpen = true;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Update available",
+                Content = $"Schoology {update.Version} is available. The update will download only after you choose Install update.",
+                PrimaryButtonText = "Install update",
+                CloseButtonText = "Later",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = _root.XamlRoot
+            };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                await DownloadAndInstallUpdateAsync(update);
+        }
+        finally { _updateDialogOpen = false; }
+    }
+
+    private async Task DownloadAndInstallUpdateAsync(UpdateReleaseInfo update)
+    {
+        var status = Text("Downloading update…", 13);
+        var progressBar = new ProgressBar
+        {
+            Minimum = 0,
+            Maximum = 100,
+            IsIndeterminate = update.Size <= 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var content = new StackPanel { Spacing = 12, MinWidth = 320 };
+        content.Children.Add(status);
+        content.Children.Add(progressBar);
+        var progressDialog = new ContentDialog
+        {
+            Title = $"Downloading Schoology {update.Version}",
+            Content = content,
+            XamlRoot = _root.XamlRoot
+        };
+        var dialogOperation = progressDialog.ShowAsync();
+        try
+        {
+            var progress = new Progress<double>(percent =>
+            {
+                progressBar.IsIndeterminate = false;
+                progressBar.Value = Math.Clamp(percent, 0, 100);
+                status.Text = $"Downloading update… {Math.Round(percent):0}%";
+            });
+            var installerPath = await DownloadAndVerifyInstallerAsync(update, progress);
+            progressDialog.Hide();
+            await dialogOperation;
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = installerPath,
+                Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS /RESTARTAPP=1",
+                WorkingDirectory = Path.GetDirectoryName(installerPath)!,
+                UseShellExecute = true
+            };
+            var installer = Process.Start(startInfo);
+            if (installer is null) throw new InvalidOperationException("Windows could not start the downloaded Schoology installer.");
+            App.WriteStartupLog($"Started silent Schoology update to {update.Version} using {update.AssetName}.");
+            _allowExit = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            try { progressDialog.Hide(); } catch { }
+            try { await dialogOperation; } catch { }
+            App.WriteStartupLog("Could not download or start the Schoology update.", ex);
+            await ShowApiErrorAsync("Unable to install update", ex.Message);
+        }
+    }
+
+    private static bool IsAllowedGitHubDownloadHost(Uri uri) =>
+        uri.Scheme == Uri.UriSchemeHttps &&
+        (string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(uri.Host, "objects.githubusercontent.com", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(uri.Host, "release-assets.githubusercontent.com", StringComparison.OrdinalIgnoreCase));
+
+    private static async Task<string> DownloadAndVerifyInstallerAsync(UpdateReleaseInfo update, IProgress<double>? progress)
+    {
+        if (!IsAllowedGitHubDownloadHost(update.DownloadUri))
+            throw new InvalidDataException("Updates must be downloaded from GitHub over HTTPS.");
+
+        var directory = Path.Combine(Path.GetTempPath(), "Schoology", "Updates");
+        Directory.CreateDirectory(directory);
+        var safeName = Path.GetFileName(update.AssetName);
+        if (string.IsNullOrWhiteSpace(safeName) || !string.Equals(safeName, update.AssetName, StringComparison.Ordinal))
+            throw new InvalidDataException("The update installer filename is invalid.");
+        var target = Path.Combine(directory, safeName);
+        var temporary = target + ".download";
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, update.DownloadUri);
+            request.Headers.TryAddWithoutValidation("User-Agent", "Schoology-WinUI-Updater");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            using var response = await UpdateDownloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"Update download failed (HTTP {(int)response.StatusCode}).");
+            var finalUri = response.RequestMessage?.RequestUri;
+            if (finalUri is null || !IsAllowedGitHubDownloadHost(finalUri))
+                throw new InvalidDataException("The update download redirected to an untrusted host.");
+
+            var total = update.Size > 0 ? update.Size : response.Content.Headers.ContentLength ?? 0;
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            long received = 0;
+            {
+                await using var input = await response.Content.ReadAsStreamAsync(timeout.Token);
+                await using var output = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+                var buffer = new byte[81920];
+                while (true)
+                {
+                    var read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), timeout.Token);
+                    if (read == 0) break;
+                    await output.WriteAsync(buffer.AsMemory(0, read), timeout.Token);
+                    hash.AppendData(buffer, 0, read);
+                    received += read;
+                    if (total > 0) progress?.Report(Math.Min(100, received * 100d / total));
+                }
+                await output.FlushAsync(timeout.Token);
+            }
+
+            if (total > 0 && received != total)
+                throw new InvalidDataException($"The downloaded installer was incomplete ({received}/{total} bytes).");
+            if (!string.IsNullOrWhiteSpace(update.Digest) && update.Digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+            {
+                var expected = update.Digest["sha256:".Length..].Trim();
+                var actual = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+                if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("The downloaded installer failed its SHA-256 integrity check.");
+            }
+
+            File.Move(temporary, target, overwrite: true);
+            progress?.Report(100);
+            return target;
+        }
+        catch
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+            throw;
+        }
+    }
+
     private ScrollViewer BuildSettingsPage()
     {
         var panel = new StackPanel { Spacing = 14, Margin = new Thickness(24), MaxWidth = 760,
@@ -2639,6 +3002,25 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         reduceMotion.Unchecked += (_, _) => WriteAppSetting("ReduceMotion", "false");
         behavior.Children.Add(reduceMotion);
         panel.Children.Add(Surface(behavior, new Thickness(14)));
+
+        var updates = new StackPanel { Spacing = 8 };
+        updates.Children.Add(Text("Updates", 18, true));
+        updates.Children.Add(Text("Check for the latest Schoology version. Updates download only after you confirm installation.", 13));
+        var checkUpdates = new Button
+        {
+            Content = "Check for updates",
+            Padding = new Thickness(14, 9, 14, 9),
+            Margin = new Thickness(0, 3, 0, 3),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = ThemeBrush("SchoologyBlueDarkBrush"),
+            Foreground = Brush("#FFFFFFFF")
+        };
+        checkUpdates.Click += async (_, _) => await CheckForUpdatesManuallyAsync(checkUpdates);
+        AutomationProperties.SetAutomationId(checkUpdates, "CheckForUpdatesButton");
+        AutomationProperties.SetName(checkUpdates, "Check for updates");
+        updates.Children.Add(checkUpdates);
+        panel.Children.Add(Surface(updates, new Thickness(14)));
+
         panel.Children.Add(Text("About", 18, true));
         panel.Children.Add(Surface(Text($"Schoology · {GetType().Assembly.GetName().Version}", 13)));
         panel.Children.Add(Action("Open Schoology website", (_, _) =>

@@ -2,7 +2,7 @@
   #define Architecture "x64"
 #endif
 #ifndef AppVersion
-  #define AppVersion "2026.10.0-port.46"
+  #define AppVersion "2026.10.0-port.47"
 #endif
 #ifndef SourceDir
   #define SourceDir "publish\win-x64"
@@ -45,4 +45,13 @@ Name: "{group}\Schoology WinUI"; Filename: "{app}\{#AppExeName}"
 Name: "{autodesktop}\Schoology WinUI"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "Launch Schoology WinUI"; Flags: postinstall nowait skipifsilent
+; Normal interactive installs offer the usual post-install launch checkbox.
+Filename: "{app}\{#AppExeName}"; Description: "Launch Schoology WinUI"; Flags: postinstall nowait skipifsilent; Check: not IsUpdateRestart
+; Updates pass /RESTARTAPP=1 so the updated app is relaunched after silent installation.
+Filename: "{app}\{#AppExeName}"; Flags: nowait; Check: IsUpdateRestart
+
+[Code]
+function IsUpdateRestart: Boolean;
+begin
+  Result := ExpandConstant('{param:RESTARTAPP|0}') = '1';
+end;

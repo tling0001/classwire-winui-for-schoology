@@ -23,6 +23,8 @@ GitHub Actions publishes self-contained x64 and ARM64 builds and packages each a
 
 The WinUI executable and shortcut are installed alongside the existing Tauri app; the installer does not replace the Tauri executable. The uninstaller removes the WinUI files it installed without intentionally removing unrelated Tauri-owned files. The Windows App SDK runtime is bundled with the application. Build, publish, installer creation, and release publishing are performed by GitHub Actions; local builds and installer tests are intentionally not part of this repository workflow.
 
+The installer supports unattended per-user installation and updates with Inno Setup's `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-` switches. The app checks GitHub Releases at launch (after the startup UI is ready) and every 12 hours, and Settings includes a manual **Check for updates** action. When an update is available, the app asks for confirmation, downloads the architecture-matched installer, verifies its size and SHA-256 digest when provided by GitHub, then launches it with silent-update switches and restarts Schoology after installation. No administrator elevation or certificate import is requested.
+
 The installer is currently unsigned. Windows SmartScreen may therefore show an unknown-publisher warning; this is separate from the MSIX publisher-trust error and does not require importing the old MSIX certificate.
 
 ## Development notes

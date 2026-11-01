@@ -8,7 +8,7 @@ public sealed partial class SchoologyShellContentPage : Page
 {
     public SchoologyShellContentPage()
     {
-        InitializeComponent();
+        // This page has no XAML content; avoid loading a standalone ms-appx resource in unpackaged installs.
         NavigationCacheMode = NavigationCacheMode.Disabled;
     }
 
