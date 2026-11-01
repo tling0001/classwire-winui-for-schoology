@@ -53,7 +53,16 @@ jobs:
             $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation "Cert:\CurrentUser\My" -Password $password
             if (!$certificate) { throw "Could not import the generated signing certificate." }
             New-Item -ItemType Directory -Path (Join-Path $env:GITHUB_WORKSPACE "msix-output") -Force | Out-Null
-            Export-Certificate -Cert $certificate -FilePath (Join-Path $env:GITHUB_WORKSPACE "msix-output\Schoology-MSIX-Signing.cer") | Out-Null
+            $cerPath = Join-Path $env:GITHUB_WORKSPACE "msix-output\Schoology-MSIX-Signing.cer"
+            Export-Certificate -Cert $certificate -FilePath $cerPath | Out-Null
+
+            # SignTool's Authenticode policy verifies the chain against trusted roots.
+            # This certificate is generated for this CI run only; trust it on the
+            # ephemeral runner, not on users' machines.
+            $trustedCertificate = Import-Certificate -FilePath $cerPath -CertStoreLocation "Cert:\CurrentUser\Root"
+            if (!$trustedCertificate -or $trustedCertificate.Thumbprint -ne $certificate.Thumbprint) {
+              throw "Could not trust the generated MSIX signing certificate for CI verification."
+            }
           }
           finally { Pop-Location }
 

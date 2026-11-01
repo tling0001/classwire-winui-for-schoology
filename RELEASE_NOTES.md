@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.38] - 2026-10-31
+
+- Trust the per-run self-signed MSIX certificate in the ephemeral GitHub Actions runner's CurrentUser root store before SignTool verification, while continuing to verify package signatures and exporting the public certificate for end users.
+
 ## [2026.10.0-port.37] - 2026-10-31
 
 - Fix MSIX capability ordering by declaring the required `runFullTrust` restricted capability before the webcam device capability, as required by the package manifest schema.
