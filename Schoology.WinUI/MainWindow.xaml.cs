@@ -153,10 +153,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         _splashTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
         _splashTimer.Tick += async (_, _) =>
         {
-            _splashTimer.Stop();
+            App.WriteStartupLog("Splash timer Tick event entered.");
             try
             {
-                App.WriteStartupLog("Splash timer tick; switching to login.");
+                _splashTimer.Stop();
+                App.WriteStartupLog("Splash timer stopped; switching to login.");
                 ShowLogin();
                 App.WriteStartupLog("Login screen created; beginning saved-session restoration.");
                 await RestoreSavedSessionAsync();
@@ -242,6 +243,30 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { App.WriteStartupLog("Could not configure the current-user Windows startup entry.", ex); }
     }
     private IntPtr HandleWindowMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
+    {
+        try
+        {
+            return HandleWindowMessageCore(hwnd, message, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            // Never allow a managed exception to cross the unmanaged WndProc boundary.
+            App.WriteStartupLog($"Exception in native window-message callback (message=0x{message:X4}).", ex);
+            try
+            {
+                return _previousWindowProc == IntPtr.Zero
+                    ? IntPtr.Zero
+                    : CallWindowProc(_previousWindowProc, hwnd, message, wParam, lParam);
+            }
+            catch (Exception fallbackException)
+            {
+                App.WriteStartupLog("The previous native window procedure also failed.", fallbackException);
+                return IntPtr.Zero;
+            }
+        }
+    }
+
+    private IntPtr HandleWindowMessageCore(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
     {
         if (message is WmSettingChange or WmThemeChanged or WmSysColorChange)
         {
@@ -833,6 +858,20 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     }
 
     private async Task SetEmbeddedImageAsync(Image image, string resourceName)
+    {
+        try
+        {
+            await SetEmbeddedImageCoreAsync(image, resourceName);
+        }
+        catch (Exception ex)
+        {
+            // Page builders intentionally fire-and-forget image loads; contain
+            // failures here instead of leaving unobserved startup task faults.
+            App.WriteStartupLog($"Could not load embedded image resource {resourceName}.", ex);
+        }
+    }
+
+    private async Task SetEmbeddedImageCoreAsync(Image image, string resourceName)
     {
         var assembly = typeof(MainWindow).Assembly;
         var resolvedName = assembly.GetManifestResourceNames()
