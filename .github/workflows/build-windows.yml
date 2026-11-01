@@ -41,30 +41,40 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Push-Location $env:GITHUB_WORKSPACE
-          try {
-            winapp cert generate --manifest .\Schoology.WinUI\Package.appxmanifest
-            if ($LASTEXITCODE -ne 0) { throw "WinApp CLI could not generate a signing certificate." }
-            $pfxFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "devcert.pfx" -File |
-              Select-Object -First 1
-            if (!$pfxFile) { throw "WinApp CLI did not create its development certificate." }
-            $pfx = $pfxFile.FullName
-            $password = ConvertTo-SecureString "password" -AsPlainText -Force
-            $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation "Cert:\CurrentUser\My" -Password $password
-            if (!$certificate) { throw "Could not import the generated signing certificate." }
-            New-Item -ItemType Directory -Path (Join-Path $env:GITHUB_WORKSPACE "msix-output") -Force | Out-Null
-            $cerPath = Join-Path $env:GITHUB_WORKSPACE "msix-output\Schoology-MSIX-Signing.cer"
-            Export-Certificate -Cert $certificate -FilePath $cerPath | Out-Null
-
-            # SignTool's Authenticode policy verifies the chain against trusted roots.
-            # This certificate is generated for this CI run only; trust it on the
-            # ephemeral runner, not on users' machines.
-            $trustedCertificate = Import-Certificate -FilePath $cerPath -CertStoreLocation "Cert:\CurrentUser\Root"
-            if (!$trustedCertificate -or $trustedCertificate.Thumbprint -ne $certificate.Thumbprint) {
-              throw "Could not trust the generated MSIX signing certificate for CI verification."
-            }
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "Schoology.WinUI\Package.appxmanifest"
+          [xml]$manifest = Get-Content -LiteralPath $manifestPath -Raw
+          $identity = $manifest.SelectSingleNode("/*[local-name()='Package']/*[local-name()='Identity']")
+          $publisher = $identity.GetAttribute("Publisher")
+          if ([string]::IsNullOrWhiteSpace($publisher)) {
+            throw "Could not read the package publisher from Package.appxmanifest."
           }
-          finally { Pop-Location }
+          Write-Host "Creating an ephemeral code-signing certificate for publisher $publisher..."
+
+          # Generate the certificate directly with Windows certificate APIs.
+          # This avoids the WinApp CLI certificate wizard's lingering process
+          # behavior while preserving the exact manifest publisher identity.
+          $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisher -CertStoreLocation "Cert:\CurrentUser\My" -KeyExportPolicy Exportable -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddYears(1)
+          if (!$certificate) { throw "Windows could not create the MSIX code-signing certificate." }
+          Write-Host "Created signing certificate: $($certificate.Thumbprint)"
+
+          $output = Join-Path $env:GITHUB_WORKSPACE "msix-output"
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          $pfx = Join-Path $env:GITHUB_WORKSPACE "devcert.pfx"
+          $cer = Join-Path $output "Schoology-MSIX-Signing.cer"
+          $password = ConvertTo-SecureString "password" -AsPlainText -Force
+          Export-PfxCertificate -Cert $certificate -FilePath $pfx -Password $password -Force | Out-Null
+          if (!(Test-Path -LiteralPath $pfx)) { throw "The MSIX signing PFX was not exported." }
+          Export-Certificate -Cert $certificate -FilePath $cer -Force | Out-Null
+          if (!(Test-Path -LiteralPath $cer)) { throw "The MSIX publisher certificate was not exported." }
+          Write-Host "Exported the signing PFX and public publisher certificate."
+
+          # SignTool verifies the chain against trusted roots. Trust this
+          # per-run certificate only on the ephemeral GitHub Actions runner.
+          $trustedCertificate = Import-Certificate -FilePath $cer -CertStoreLocation "Cert:\CurrentUser\Root"
+          if (!$trustedCertificate -or $trustedCertificate.Thumbprint -ne $certificate.Thumbprint) {
+            throw "Could not trust the generated MSIX signing certificate for CI verification."
+          }
+          Write-Host "Signing certificate is installed and trusted for this CI run."
 
       - name: Package x64 and ARM64 MSIX
         shell: pwsh
@@ -72,10 +82,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           $project = Join-Path $env:GITHUB_WORKSPACE "Schoology.WinUI\Schoology.WinUI.csproj"
           $projectDirectory = Split-Path -Parent $project
-          $pfxFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "devcert.pfx" -File |
-            Select-Object -First 1
-          if (!$pfxFile) { throw "The generated MSIX signing certificate is missing." }
-          $pfx = $pfxFile.FullName
+          $pfxFile = $pfx = Join-Path $env:GITHUB_WORKSPACE "devcert.pfx"
+          if (!(Test-Path -LiteralPath $pfx)) { throw "The generated MSIX signing certificate is missing: $pfx" }
           $output = Join-Path $env:GITHUB_WORKSPACE "msix-output"
 
           foreach ($target in @(@{ Architecture = "x64"; Rid = "win-x64" }, @{ Architecture = "arm64"; Rid = "win-arm64" })) {

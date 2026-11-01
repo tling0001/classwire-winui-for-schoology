@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.39] - 2026-10-31
+
+- Replace the hanging WinApp CLI certificate-generation step with a deterministic Windows code-signing certificate created from the MSIX manifest publisher; export the signing PFX and public certificate directly, trust the certificate on the ephemeral runner, and use a fixed PFX path for packaging.
+
 ## [2026.10.0-port.38] - 2026-10-31
 
 - Trust the per-run self-signed MSIX certificate in the ephemeral GitHub Actions runner's CurrentUser root store before SignTool verification, while continuing to verify package signatures and exporting the public certificate for end users.
