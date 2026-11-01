@@ -1,5 +1,16 @@
 # Release notes
 
+## [2026.10.0-port.54] - 2026-11-01
+
+- Restore the generated WinUI PRI resource index beside the unpackaged executable so WinUI can resolve its built-in theme dictionaries during application startup.
+- Make the publish fail clearly if the WinUI resource index is missing, and verify it is present before producing either architecture's installer.
+
+## [2026.10.0-port.53] - 2026-11-01
+
+- Remove conflicting global overrides for built-in WinUI control resources while retaining the Schoology Light, Dark, and High Contrast palettes.
+- Correct the theme-brush helper's concrete return type.
+
+
 ## [2026.10.0-port.52] - 2026-11-01
 
 - Capture first-chance WinUI/XAML and WinRT exceptions during the first 20 seconds of startup, before they can be surfaced as an opaque Windows STATUS_STOWED_EXCEPTION crash.

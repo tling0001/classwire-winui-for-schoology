@@ -17,10 +17,10 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.53</Version>
-    <AssemblyVersion>2026.10.0.53</AssemblyVersion>
-    <FileVersion>2026.10.0.53</FileVersion>
-    <InformationalVersion>2026.10.0-port.53</InformationalVersion>
+    <Version>2026.10.0-port.54</Version>
+    <AssemblyVersion>2026.10.0.54</AssemblyVersion>
+    <FileVersion>2026.10.0.54</FileVersion>
+    <InformationalVersion>2026.10.0-port.54</InformationalVersion>
     <Title>Schoology</Title>
     <Product>Schoology</Product>
     <AssemblyName>Schoology.WinUI</AssemblyName>
@@ -32,6 +32,15 @@
     <PackageReference Include="ZXing.Net" Version="0.16.11" />
   </ItemGroup>
 
+  <!-- Unpackaged WinUI resolves framework/theme XAML through the generated PRI resource index.
+       Keep the index beside the executable so ms-appx theme dictionaries can be resolved. -->
+  <Target Name="CopyWinUIResourceIndexToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_WinUIResourceIndex Include="$(TargetDir)*.pri" />
+    </ItemGroup>
+    <Error Condition="'@(_WinUIResourceIndex)' == ''" Text="The WinUI resource index (.pri) was not generated in the build output." />
+    <Copy SourceFiles="@(_WinUIResourceIndex)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
   <ItemGroup>
     <EmbeddedResource Include="Assets\\logo_schoology.png" />
     <EmbeddedResource Include="Assets\\ic_school.svg" />

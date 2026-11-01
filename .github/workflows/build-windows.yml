@@ -50,6 +50,14 @@ jobs:
           dotnet publish Schoology.WinUI/Schoology.WinUI.csproj --configuration Release --no-restore --runtime ${{ matrix.rid }} --self-contained true -p:Platform=${{ matrix.architecture }} -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true -o $output
           if ($LASTEXITCODE -ne 0) { throw "Publish failed for ${{ matrix.architecture }}." }
 
+      - name: Verify WinUI resource index
+        shell: pwsh
+        run: |
+          $output = "publish/${{ matrix.rid }}"
+          $resourceIndexes = @(Get-ChildItem -LiteralPath $output -Filter "*.pri" -File)
+          if ($resourceIndexes.Count -eq 0) { throw "No WinUI PRI resource index was published to $output." }
+          $resourceIndexes | ForEach-Object { Write-Host "Verified WinUI resource index: $($_.Name)" }
+
       - name: Verify published executable
         shell: pwsh
         run: |
