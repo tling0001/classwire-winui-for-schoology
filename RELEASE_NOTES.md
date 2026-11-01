@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.40] - 2026-10-31
+
+- Use noninteractive `certutil` to add the per-run MSIX signing certificate to the ephemeral runner's current-user root store, then verify its thumbprint before packaging.
+
 ## [2026.10.0-port.39] - 2026-10-31
 
 - Replace the hanging WinApp CLI certificate-generation step with a deterministic Windows code-signing certificate created from the MSIX manifest publisher; export the signing PFX and public certificate directly, trust the certificate on the ephemeral runner, and use a fixed PFX path for packaging.

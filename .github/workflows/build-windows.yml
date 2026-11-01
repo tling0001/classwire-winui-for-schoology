@@ -70,11 +70,20 @@ jobs:
 
           # SignTool verifies the chain against trusted roots. Trust this
           # per-run certificate only on the ephemeral GitHub Actions runner.
-          $trustedCertificate = Import-Certificate -FilePath $cer -CertStoreLocation "Cert:\CurrentUser\Root"
-          if (!$trustedCertificate -or $trustedCertificate.Thumbprint -ne $certificate.Thumbprint) {
-            throw "Could not trust the generated MSIX signing certificate for CI verification."
+          # certutil's -f flag makes the store import noninteractive in CI.
+          Write-Host "Adding the generated certificate to the current-user Root store..."
+          & certutil.exe -user -addstore -f Root $cer
+          if ($LASTEXITCODE -ne 0) {
+            throw "certutil could not add the MSIX signing certificate to the current-user Root store (exit $LASTEXITCODE)."
           }
-          Write-Host "Signing certificate is installed and trusted for this CI run."
+          Write-Host "Verifying the trusted root certificate thumbprint..."
+          $trustedCertificate = Get-ChildItem -Path "Cert:\CurrentUser\Root" |
+            Where-Object { $_.Thumbprint -eq $certificate.Thumbprint } |
+            Select-Object -First 1
+          if (!$trustedCertificate) {
+            throw "The generated MSIX signing certificate is not present in the current-user Root store."
+          }
+          Write-Host "Signing certificate is installed and trusted for this CI run: $($trustedCertificate.Thumbprint)"
 
       - name: Package x64 and ARM64 MSIX
         shell: pwsh
