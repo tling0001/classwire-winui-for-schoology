@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.36] - 2026-10-31
+
+- Correct MSIX manifest logo asset paths to use valid single-backslash package-relative separators, resolving MakeAppx manifest schema validation failure.
+
 ## [2026.10.0-port.35] - 2026-10-31
 
 - Enable the Windows SDK's MSIX tooling explicitly in the WinUI project so WinApp CLI project packaging generates the package manifest and MSIX payload for x64 and ARM64.
