@@ -70,28 +70,48 @@ jobs:
 
           # SignTool verifies the chain against trusted roots. Trust this
           # per-run certificate only on the ephemeral GitHub Actions runner.
-          # -silent suppresses certutil's interactive root-certificate prompt.
-          # Run it as a child process with a hard timeout so a Windows trust
-          # dialog or certificate-store lock cannot stall the whole Actions job.
-          Write-Host "Adding the generated certificate to the current-user Root store (silent, 30-second limit)..."
+          # This certutil build has no -silent option, so provide the expected
+          # confirmation on stdin instead of waiting for an interactive prompt.
+          # Keep a hard timeout in case the certificate store itself stalls.
+          Write-Host "Adding the generated certificate to the current-user Root store (noninteractive, 30-second limit)..."
           $certutil = Join-Path $env:WINDIR "System32\certutil.exe"
-          $stdout = Join-Path $env:RUNNER_TEMP "certutil-root-import.stdout.log"
-          $stderr = Join-Path $env:RUNNER_TEMP "certutil-root-import.stderr.log"
-          $certutilProcess = Start-Process -FilePath $certutil -ArgumentList @(
-            "-silent", "-user", "-addstore", "-f", "Root", $cer
-          ) -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-          Write-Host "Started silent certificate import (PID $($certutilProcess.Id)); waiting up to 30 seconds..."
+          $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+          $startInfo.FileName = $certutil
+          $startInfo.UseShellExecute = $false
+          $startInfo.CreateNoWindow = $true
+          $startInfo.RedirectStandardInput = $true
+          $startInfo.RedirectStandardOutput = $true
+          $startInfo.RedirectStandardError = $true
+          foreach ($argument in @("-user", "-addstore", "-f", "Root", $cer)) {
+            [void]$startInfo.ArgumentList.Add($argument)
+          }
+          $certutilProcess = [System.Diagnostics.Process]::new()
+          $certutilProcess.StartInfo = $startInfo
+          if (!$certutilProcess.Start()) { throw "Could not start certutil to import the MSIX signing certificate." }
+          $stdoutTask = $certutilProcess.StandardOutput.ReadToEndAsync()
+          $stderrTask = $certutilProcess.StandardError.ReadToEndAsync()
+          $certutilProcess.StandardInput.WriteLine("Y")
+          $certutilProcess.StandardInput.Close()
+          Write-Host "Started certutil certificate import (PID $($certutilProcess.Id)); waiting up to 30 seconds..."
           if (!$certutilProcess.WaitForExit(30000)) {
             $certutilProcess.Kill()
             $certutilProcess.WaitForExit()
             throw "Timed out after 30 seconds importing the MSIX signing certificate into CurrentUser\Root. The runner's certificate store is not responding."
           }
-          if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout | ForEach-Object { Write-Host $_ } }
-          if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr | ForEach-Object { Write-Host $_ } }
+          $certutilOutput = $stdoutTask.GetAwaiter().GetResult()
+          $certutilError = $stderrTask.GetAwaiter().GetResult()
+          if ($certutilOutput) { Write-Host $certutilOutput }
+          if ($certutilError) { Write-Host $certutilError }
           if ($certutilProcess.ExitCode -ne 0) {
-            throw "Silent certutil import failed with exit code $($certutilProcess.ExitCode); refusing to continue without a trusted signing certificate."
+            throw "certutil root-store import failed with exit code $($certutilProcess.ExitCode); refusing to continue without a trusted signing certificate."
           }
-          Write-Host "Certificate import completed; SignTool will verify the package signature after packaging."
+          $trustedCertificate = Get-ChildItem -Path "Cert:\CurrentUser\Root" |
+            Where-Object { $_.Thumbprint -eq $certificate.Thumbprint } |
+            Select-Object -First 1
+          if (!$trustedCertificate) {
+            throw "certutil exited successfully, but the signing certificate was not found in CurrentUser\Root."
+          }
+          Write-Host "Certificate import and thumbprint verification completed; SignTool will verify package signatures after packaging."
 
       - name: Package x64 and ARM64 MSIX
         shell: pwsh
