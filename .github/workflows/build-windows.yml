@@ -16,8 +16,16 @@ permissions:
 
 jobs:
   build:
-    name: Build and sign MSIX packages
+    name: Build per-user installer (${{ matrix.architecture }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            rid: win-x64
+          - architecture: ARM64
+            rid: win-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -27,124 +35,71 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Install WinApp CLI
+      - name: Restore
         shell: pwsh
         run: |
-          winget install --id Microsoft.WinAppCli --exact --silent --accept-package-agreements --accept-source-agreements
-          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
-                      [Environment]::GetEnvironmentVariable('Path', 'User')
-          $winapp = Get-Command winapp -ErrorAction SilentlyContinue
-          if (!$winapp) { throw "WinApp CLI was installed but its command alias is not available on PATH." }
-          winapp --version
+          dotnet restore Schoology.WinUI/Schoology.WinUI.csproj --runtime ${{ matrix.rid }} -p:Platform=${{ matrix.architecture }}
+          if ($LASTEXITCODE -ne 0) { throw "Restore failed for ${{ matrix.architecture }}." }
 
-      - name: Generate and trust matching MSIX signing certificate
+      - name: Publish self-contained WinUI app
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "Schoology.WinUI\Package.appxmanifest"
-          [xml]$manifest = Get-Content -LiteralPath $manifestPath -Raw
-          $identity = $manifest.SelectSingleNode("/*[local-name()='Package']/*[local-name()='Identity']")
-          $publisher = $identity.GetAttribute("Publisher")
-          if ([string]::IsNullOrWhiteSpace($publisher)) {
-            throw "Could not read the package publisher from Package.appxmanifest."
-          }
-          Write-Host "Creating an ephemeral code-signing certificate for publisher $publisher..."
-
-          # New-SelfSignedCertificate only supports the Personal (My) store.
-          # Keep the private key there, export the PFX for WinApp CLI, and trust
-          # the public leaf certificate in TrustedPeople for this disposable runner.
-          # It is not a root CA, so do not add it to Trusted Root Certification Authorities.
-          $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisher -CertStoreLocation "Cert:\CurrentUser\My" -KeyExportPolicy Exportable -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddYears(1)
-          if (!$certificate) { throw "Windows could not create the MSIX code-signing certificate." }
-          Write-Host "Created signing certificate: $($certificate.Thumbprint)"
-
-          $output = Join-Path $env:GITHUB_WORKSPACE "msix-output"
+          $output = Join-Path $env:GITHUB_WORKSPACE "publish\${{ matrix.rid }}"
           New-Item -ItemType Directory -Path $output -Force | Out-Null
-          $pfx = Join-Path $env:GITHUB_WORKSPACE "devcert.pfx"
-          $cer = Join-Path $output "Schoology-MSIX-Signing.cer"
-          $password = ConvertTo-SecureString "password" -AsPlainText -Force
-          Export-PfxCertificate -Cert $certificate -FilePath $pfx -Password $password -Force | Out-Null
-          if (!(Test-Path -LiteralPath $pfx)) { throw "The MSIX signing PFX was not exported." }
-          Export-Certificate -Cert $certificate -FilePath $cer -Force | Out-Null
-          if (!(Test-Path -LiteralPath $cer)) { throw "The MSIX publisher certificate was not exported." }
-          Write-Host "Exported the signing PFX and public publisher certificate."
+          dotnet publish Schoology.WinUI/Schoology.WinUI.csproj --configuration Release --no-restore --runtime ${{ matrix.rid }} --self-contained true -p:Platform=${{ matrix.architecture }} -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true -o $output
+          if ($LASTEXITCODE -ne 0) { throw "Publish failed for ${{ matrix.architecture }}." }
 
-          # MSIX sideloading expects a self-signed package certificate in
-          # LocalMachine\TrustedPeople. This avoids treating a leaf signer as a root CA.
-          Import-Certificate -FilePath $cer -CertStoreLocation "Cert:\LocalMachine\TrustedPeople" | Out-Null
-          $trustedCertificate = Get-ChildItem -Path "Cert:\LocalMachine\TrustedPeople" |
-            Where-Object { $_.Thumbprint -eq $certificate.Thumbprint } |
-            Select-Object -First 1
-          if (!$trustedCertificate) {
-            throw "The signing certificate was not found in LocalMachine\TrustedPeople after import."
-          }
-          Write-Host "Verified the signing certificate in LocalMachine\TrustedPeople."
+      - name: Verify published executable
+        shell: pwsh
+        run: |
+          $exe = "publish/${{ matrix.rid }}/Schoology.WinUI.exe"
+          if (!(Test-Path -LiteralPath $exe)) { throw "Expected executable was not produced: $exe" }
+          Write-Host "Verified executable: $exe"
 
-      - name: Package x64 and ARM64 MSIX
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed." }
+
+      - name: Build per-user installer
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $project = Join-Path $env:GITHUB_WORKSPACE "Schoology.WinUI\Schoology.WinUI.csproj"
-          $projectDirectory = Split-Path -Parent $project
-          $pfxFile = $pfx = Join-Path $env:GITHUB_WORKSPACE "devcert.pfx"
-          if (!(Test-Path -LiteralPath $pfx)) { throw "The generated MSIX signing certificate is missing: $pfx" }
-          $output = Join-Path $env:GITHUB_WORKSPACE "msix-output"
-
-          foreach ($target in @(@{ Architecture = "x64"; Rid = "win-x64" }, @{ Architecture = "arm64"; Rid = "win-arm64" })) {
-            $architecture = $target.Architecture
-            $rid = $target.Rid
-
-            # Remove only package outputs from the previous architecture so the
-            # artifact discovered below must have been produced by this invocation.
-            Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue |
-              Where-Object {
-                $_.Extension -in @(".msix", ".msixbundle") -and
-                !$_.FullName.StartsWith($output, [StringComparison]::OrdinalIgnoreCase)
-              } |
-              Remove-Item -Force
-
-            Write-Host "Packaging Schoology for $architecture..."
-            Push-Location $env:GITHUB_WORKSPACE
-            try {
-              winapp package $project --arch $architecture --cert $pfx --self-contained
-              if ($LASTEXITCODE -ne 0) { throw "WinApp CLI packaging failed for $architecture." }
-            }
-            finally { Pop-Location }
-
-            $package = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue |
-              Where-Object {
-                $_.Extension -in @(".msix", ".msixbundle") -and
-                !$_.FullName.StartsWith($output, [StringComparison]::OrdinalIgnoreCase)
-              } |
-              Sort-Object LastWriteTimeUtc -Descending |
-              Select-Object -First 1
-            if (!$package) {
-              Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match "AppPackages|Packages|publish" } |
-                ForEach-Object { Write-Host "Package output directory: $($_.FullName)" }
-              throw "WinApp CLI completed without producing an MSIX for $architecture."
-            }
-
-            $destination = Join-Path $output "Schoology-WinUI-$rid$($package.Extension)"
-            Copy-Item -LiteralPath $package.FullName -Destination $destination -Force
-            Write-Host "Created package: $($package.FullName)"
-            Write-Host "Release artifact: $destination"
+          $iscc = $null
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$env:ChocolateyInstall\lib\innosetup\tools\ISCC.exe"
+          )
+          foreach ($candidate in $candidates) {
+            if (Test-Path -LiteralPath $candidate) { $iscc = $candidate; break }
           }
-
-          $signtool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (!$signtool) { throw "Windows SDK SignTool was not found; cannot verify the MSIX signatures." }
-          Get-ChildItem -Path $output -Filter "*.msix" | ForEach-Object {
-            & $signtool.FullName verify /pa /v $_.FullName
-            if ($LASTEXITCODE -ne 0) { throw "MSIX signature verification failed: $($_.Name)" }
+          if (!$iscc) {
+            $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if ($command) { $iscc = $command.Source }
           }
-          Get-ChildItem -Path $output -File | ForEach-Object { Write-Host "Artifact: $($_.Name) ($($_.Length) bytes)" }
+          if (!$iscc) { throw "Inno Setup compiler was not found." }
 
-      - name: Upload MSIX packages and publisher certificate
+          [xml]$project = Get-Content -LiteralPath "Schoology.WinUI/Schoology.WinUI.csproj" -Raw
+          $version = $project.Project.PropertyGroup.Version | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "Could not read the application version." }
+          $sourceDir = Join-Path $env:GITHUB_WORKSPACE "publish\${{ matrix.rid }}"
+          & $iscc "/DArchitecture=${{ matrix.architecture }}" "/DAppVersion=$version" "/DSourceDir=$sourceDir" "installer\Schoology-WinUI.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for ${{ matrix.architecture }}." }
+
+          $installer = Join-Path $env:GITHUB_WORKSPACE "installer-output\Schoology-WinUI-$version-${{ matrix.architecture }}-Setup.exe"
+          if (!(Test-Path -LiteralPath $installer)) { throw "Expected installer was not created: $installer" }
+          Write-Host "Created per-user installer: $installer"
+
+      - name: Upload installer and published files
         uses: actions/upload-artifact@v5
         with:
-          name: Schoology-WinUI-MSIX
-          path: msix-output/*
+          name: Schoology-WinUI-${{ matrix.rid }}
+          path: |
+            installer-output/*.exe
+            publish/${{ matrix.rid }}/**
           if-no-files-found: error
           retention-days: 14
 
@@ -155,6 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
       - name: Read version and matching release notes
         id: release_meta
         shell: bash
@@ -176,20 +132,24 @@ jobs:
               raise SystemExit(f"No release notes found for {version}")
           Path(destination).write_text("\n\n".join(selected).strip() + "\n", encoding="utf-8")
           PY
-      - name: Download MSIX artifacts
+
+      - name: Download installer artifacts
         uses: actions/download-artifact@v5
         with:
-          name: Schoology-WinUI-MSIX
+          pattern: Schoology-WinUI-*
           path: release-assets
+          merge-multiple: true
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release_meta.outputs.version }}
         shell: bash
         run: |
-          mapfile -d '' packages < <(find release-assets -type f \( -name '*.msix' -o -name '*.msixbundle' -o -name '*.cer' \) -print0)
-          if [ "${#packages[@]}" -lt 3 ]; then
-            echo "Expected x64 and ARM64 MSIX packages plus the publisher certificate." >&2
+          mapfile -d '' installers < <(find release-assets -type f -name '*-Setup.exe' -print0)
+          if [ "${#installers[@]}" -ne 2 ]; then
+            echo "Expected exactly two per-user installer EXEs (x64 and ARM64), found ${#installers[@]}." >&2
+            find release-assets -maxdepth 3 -type f -print >&2
             exit 1
           fi
           if gh release view "$VERSION" >/dev/null 2>&1; then
@@ -197,4 +157,4 @@ jobs:
           else
             gh release create "$VERSION" --title "$VERSION" --notes-file release-notes.md --target main
           fi
-          gh release upload "$VERSION" "${packages[@]}" --clobber
+          gh release upload "$VERSION" "${installers[@]}" --clobber

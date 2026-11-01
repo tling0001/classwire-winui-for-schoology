@@ -8,8 +8,7 @@
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
-    <WindowsPackageType>MSIX</WindowsPackageType>
-    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
     <Nullable>enable</Nullable>
@@ -18,10 +17,10 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.45</Version>
-    <AssemblyVersion>2026.10.0.45</AssemblyVersion>
-    <FileVersion>2026.10.0.45</FileVersion>
-    <InformationalVersion>2026.10.0-port.45</InformationalVersion>
+    <Version>2026.10.0-port.46</Version>
+    <AssemblyVersion>2026.10.0.46</AssemblyVersion>
+    <FileVersion>2026.10.0.46</FileVersion>
+    <InformationalVersion>2026.10.0-port.46</InformationalVersion>
     <Title>Schoology</Title>
     <Product>Schoology</Product>
     <AssemblyName>Schoology.WinUI</AssemblyName>

@@ -17,13 +17,13 @@ A native Windows desktop client for Schoology, built with WinUI 3 and the Window
 
 ## Build and installation
 
-GitHub Actions builds and packages x64 and ARM64 releases. The installer is per-user and targets:
+GitHub Actions publishes self-contained x64 and ARM64 builds and packages each as a **per-user Inno Setup installer EXE**. No MSIX package or publisher-certificate import is required. The installer does not request administrator privileges and installs to:
 
-`%LOCALAPPDATA%\Programs\Schoology`
+`%LOCALAPPDATA%\\Programs\\Schoology`
 
-The WinUI executable and shortcut are installed alongside the existing Tauri app; the installer does not replace the Tauri executable. The installer tracks the files it adds so uninstalling the WinUI app does not intentionally remove Tauri-owned files.
+The WinUI executable and shortcut are installed alongside the existing Tauri app; the installer does not replace the Tauri executable. The uninstaller removes the WinUI files it installed without intentionally removing unrelated Tauri-owned files. The Windows App SDK runtime is bundled with the application. Build, publish, installer creation, and release publishing are performed by GitHub Actions; local builds and installer tests are intentionally not part of this repository workflow.
 
-The application is published as a self-contained .NET 10 app. The Windows App SDK runtime is installed as a prerequisite by the installer when needed. Build, publish, installer creation, and release publishing are performed by GitHub Actions; local builds and installer tests are intentionally not part of this repository workflow.
+The installer is currently unsigned. Windows SmartScreen may therefore show an unknown-publisher warning; this is separate from the MSIX publisher-trust error and does not require importing the old MSIX certificate.
 
 ## Development notes
 
