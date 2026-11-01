@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.45] - 2026-10-31
+
+- Correct MSIX certificate creation to use the supported CurrentUser\\My store, then trust the self-signed leaf certificate in the runner's LocalMachine\\TrustedPeople store (not the root CA store); retain PFX signing and SignTool signature verification.
+
+
 ## [2026.10.0-port.44] - 2026-10-31
 
 - Create the ephemeral self-signed MSIX code-signing certificate directly in the runner's CurrentUser root store, eliminating the certificate-import operation that repeatedly timed out; retain certificate thumbprint checks and SignTool package-signature verification.

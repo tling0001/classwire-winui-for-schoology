@@ -37,7 +37,7 @@ jobs:
           if (!$winapp) { throw "WinApp CLI was installed but its command alias is not available on PATH." }
           winapp --version
 
-      - name: Generate matching MSIX signing certificate
+      - name: Generate and trust matching MSIX signing certificate
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -50,12 +50,12 @@ jobs:
           }
           Write-Host "Creating an ephemeral code-signing certificate for publisher $publisher..."
 
-          # Create the ephemeral self-signed code-signing certificate directly
-          # in CurrentUser\Root. This makes it the runner-local trust anchor at
-          # creation time and avoids the certificate-store import APIs, which
-          # have repeatedly stalled on this hosted Windows runner.
-          # The PFX is then used by WinApp CLI to sign both architecture packages.
-          $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisher -CertStoreLocation "Cert:\CurrentUser\Root" -KeyExportPolicy Exportable -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddYears(1)
+          # New-SelfSignedCertificate only supports the Personal (My) store.
+          # Keep the private key there, export the PFX for WinApp CLI, and trust
+          # the public leaf certificate in TrustedPeople for this disposable runner.
+          # It is not a root CA, so do not add it to Trusted Root Certification Authorities.
+          $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject $publisher -CertStoreLocation "Cert:\CurrentUser\My" -KeyExportPolicy Exportable -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddYears(1)
+          if (!$certificate) { throw "Windows could not create the MSIX code-signing certificate." }
           Write-Host "Created signing certificate: $($certificate.Thumbprint)"
 
           $output = Join-Path $env:GITHUB_WORKSPACE "msix-output"
@@ -69,13 +69,16 @@ jobs:
           if (!(Test-Path -LiteralPath $cer)) { throw "The MSIX publisher certificate was not exported." }
           Write-Host "Exported the signing PFX and public publisher certificate."
 
-          $trustedCertificate = Get-ChildItem -Path "Cert:\CurrentUser\Root" |
+          # MSIX sideloading expects a self-signed package certificate in
+          # LocalMachine\TrustedPeople. This avoids treating a leaf signer as a root CA.
+          Import-Certificate -FilePath $cer -CertStoreLocation "Cert:\LocalMachine\TrustedPeople" | Out-Null
+          $trustedCertificate = Get-ChildItem -Path "Cert:\LocalMachine\TrustedPeople" |
             Where-Object { $_.Thumbprint -eq $certificate.Thumbprint } |
             Select-Object -First 1
           if (!$trustedCertificate) {
-            throw "The generated signing certificate was not found in CurrentUser\Root."
+            throw "The signing certificate was not found in LocalMachine\TrustedPeople after import."
           }
-          Write-Host "The signing certificate was created directly in CurrentUser\Root and its thumbprint was verified."
+          Write-Host "Verified the signing certificate in LocalMachine\TrustedPeople."
 
       - name: Package x64 and ARM64 MSIX
         shell: pwsh
