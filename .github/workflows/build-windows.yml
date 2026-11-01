@@ -70,32 +70,28 @@ jobs:
 
           # SignTool verifies the chain against trusted roots. Trust this
           # per-run certificate only on the ephemeral GitHub Actions runner.
-          # Use the .NET X509Store API directly: certutil can wait indefinitely
-          # on its interactive trust-confirmation path in hosted PowerShell jobs.
-          Write-Host "Adding the generated certificate to the current-user Root store through the Windows certificate API..."
-          $publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($cer)
-          $rootStore = [System.Security.Cryptography.X509Certificates.X509Store]::new(
-            [System.Security.Cryptography.X509Certificates.StoreName]::Root,
-            [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
-          )
-          try {
-            $rootStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-            $rootStore.Add($publicCertificate)
-            Write-Host "Certificate-store API import completed."
-            $trustedCertificate = $rootStore.Certificates.Find(
-              [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-              $certificate.Thumbprint,
-              $false
-            ) | Select-Object -First 1
-            if (!$trustedCertificate) {
-              throw "The generated MSIX signing certificate is not present in the current-user Root store."
-            }
-            Write-Host "Signing certificate is installed and trusted for this CI run: $($trustedCertificate.Thumbprint)"
+          # -silent suppresses certutil's interactive root-certificate prompt.
+          # Run it as a child process with a hard timeout so a Windows trust
+          # dialog or certificate-store lock cannot stall the whole Actions job.
+          Write-Host "Adding the generated certificate to the current-user Root store (silent, 30-second limit)..."
+          $certutil = Join-Path $env:WINDIR "System32\certutil.exe"
+          $stdout = Join-Path $env:RUNNER_TEMP "certutil-root-import.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "certutil-root-import.stderr.log"
+          $certutilProcess = Start-Process -FilePath $certutil -ArgumentList @(
+            "-silent", "-user", "-addstore", "-f", "Root", $cer
+          ) -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          Write-Host "Started silent certificate import (PID $($certutilProcess.Id)); waiting up to 30 seconds..."
+          if (!$certutilProcess.WaitForExit(30000)) {
+            $certutilProcess.Kill()
+            $certutilProcess.WaitForExit()
+            throw "Timed out after 30 seconds importing the MSIX signing certificate into CurrentUser\Root. The runner's certificate store is not responding."
           }
-          finally {
-            $rootStore.Close()
-            $publicCertificate.Dispose()
+          if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout | ForEach-Object { Write-Host $_ } }
+          if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr | ForEach-Object { Write-Host $_ } }
+          if ($certutilProcess.ExitCode -ne 0) {
+            throw "Silent certutil import failed with exit code $($certutilProcess.ExitCode); refusing to continue without a trusted signing certificate."
           }
+          Write-Host "Certificate import completed; SignTool will verify the package signature after packaging."
 
       - name: Package x64 and ARM64 MSIX
         shell: pwsh

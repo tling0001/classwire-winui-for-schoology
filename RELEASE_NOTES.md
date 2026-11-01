@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.42] - 2026-10-31
+
+- Make the ephemeral MSIX root-certificate import explicitly silent and run it as a child process with a 30-second timeout, preventing certificate-store prompts or locks from indefinitely stalling Windows CI; retain SignTool package signature verification.
+
 ## [2026.10.0-port.41] - 2026-10-31
 
 - Replace the hanging `certutil` root-store import with the direct Windows .NET X509Store API, then verify the trusted certificate thumbprint before MSIX signing verification.
