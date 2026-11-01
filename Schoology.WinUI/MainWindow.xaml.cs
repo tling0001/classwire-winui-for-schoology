@@ -526,34 +526,40 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private Brush ThemeBrush(string key)
     {
-        // These brushes live in ThemeDictionaries, so looking them up directly in
-        // Application.Resources throws at runtime. Resolve against the active
-        // Window theme and keep a safe fallback so startup does not fail on a lookup.
-        var themeName = _highContrastEnabled ? "HighContrast" : _root.ActualTheme switch
+        // Resolve the small set of code-behind theme surfaces directly. Accessing
+        // ThemeDictionaries by the "Light" key throws a WinRT E_FAIL in the
+        // unpackaged startup path even though the XAML dictionary declares it.
+        // Avoid that fragile lookup so the splash screen never triggers a
+        // stowed XAML exception while its brushes are being created.
+        if (_highContrastEnabled)
         {
-            ElementTheme.Dark => "Dark",
-            ElementTheme.Light => "Light",
-            _ => "Light"
-        };
-
-        try
-        {
-            if (Application.Current.Resources.ThemeDictionaries[themeName] is ResourceDictionary themeDictionary &&
-                themeDictionary[key] is Brush themedBrush)
-                return themedBrush;
+            var systemColors = new UISettings();
+            var accent = systemColors.GetColorValue(UIColorType.Accent);
+            var foreground = systemColors.GetColorValue(UIColorType.Foreground);
+            var background = systemColors.GetColorValue(UIColorType.Background);
+            var color = key switch
+            {
+                "SchoologyBlueBrush" or "SchoologyBlueDarkBrush" => accent,
+                "SchoologySurfaceBrush" or "SchoologySubtleBrush" => background,
+                "SchoologyDividerBrush" or "SchoologyTextBrush" or "SchoologyMutedTextBrush" => foreground,
+                _ => accent
+            };
+            return new SolidColorBrush(color);
         }
-        catch { }
 
-        return key switch
+        var dark = _root.ActualTheme == ElementTheme.Dark;
+        var colorHex = key switch
         {
-            "SchoologySurfaceBrush" => Brush("#FFFFFFFF"),
-            "SchoologySubtleBrush" => Brush("#FFF2F5F7"),
-            "SchoologyDividerBrush" => Brush("#FFD9E0E5"),
-            "SchoologyTextBrush" => Brush("#FF202124"),
-            "SchoologyMutedTextBrush" => Brush("#FF52616D"),
-            "SchoologyBlueDarkBrush" => Brush("#FF204D7B"),
-            _ => Brush("#FF2E66A3")
+            "SchoologyBlueBrush" => dark ? "#FF5B9BD5" : "#FF2E66A3",
+            "SchoologyBlueDarkBrush" => dark ? "#FF183A5B" : "#FF204D7B",
+            "SchoologySurfaceBrush" => dark ? "#FF202428" : "#FFFFFFFF",
+            "SchoologySubtleBrush" => dark ? "#FF292F34" : "#FFF2F5F7",
+            "SchoologyDividerBrush" => dark ? "#FF46515B" : "#FFCBD5DE",
+            "SchoologyTextBrush" => dark ? "#FFF3F6F8" : "#FF17212B",
+            "SchoologyMutedTextBrush" => dark ? "#FFB8C4CE" : "#FF465563",
+            _ => dark ? "#FF5B9BD5" : "#FF2E66A3"
         };
+        return Brush(colorHex);
     }
 
     private Border Surface(UIElement child, Thickness? padding = null)
