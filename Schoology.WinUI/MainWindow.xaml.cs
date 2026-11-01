@@ -46,8 +46,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private Button? _titleBarCreateButton;
     private string _titleBarCreateContext = string.Empty;
     private readonly SchoologyAuthService _auth = new(false);
-    private readonly AccessibilitySettings _accessibilitySettings = new();
     private bool _highContrastReadAvailable = true;
+    private bool _highContrastEnabled;
     private readonly SchoologyApiClient _api;
     private readonly ObservableCollection<SchoologyEntity> _courses = new();
     private readonly ObservableCollection<SchoologyEntity> _groups = new();
@@ -72,6 +72,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private WindowProc? _windowProcDelegate;
     private const uint WmClose = 0x0010;
     private const uint WmEndSession = 0x0016;
+    private const uint WmSysColorChange = 0x0015;
+    private const uint WmSettingChange = 0x001A;
+    private const uint WmThemeChanged = 0x031A;
+    private const uint SpiGetHighContrast = 0x0042;
+    private const uint HighContrastOn = 0x00000001;
     private const uint WmTrayCallback = 0x8000 + 41;
     private const uint WmActivateExisting = 0x8000 + 42;
     private const int GwlWndProc = -4;
@@ -126,17 +131,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             "Dark" => ElementTheme.Dark,
             _ => ElementTheme.Default
         };
+        _highContrastEnabled = ReadHighContrastSetting();
         _root.ActualThemeChanged += (_, _) => RefreshThemeSurfaces();
-        try
-        {
-            _accessibilitySettings.HighContrastChanged += (_, _) => RefreshThemeSurfaces();
-        }
-        catch (Exception ex)
-        {
-            // Some Windows environments do not expose this COM event source.
-            // High Contrast must never prevent the main window from launching.
-            App.WriteStartupLog("High Contrast change notifications are unavailable; continuing without live notifications.", ex);
-        }
         Title = "Schoology";
         ExtendsContentIntoTitleBar = true;
         AppWindow.TitleBar.ExtendsContentIntoTitleBar = true;
@@ -186,6 +182,19 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         App.WriteStartupLog("Splash timer started.");
     }
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct HighContrastSettings
+    {
+        public uint Size;
+        public uint Flags;
+        public IntPtr DefaultScheme;
+    }
+
+    [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SystemParametersInfo(
+        uint action, uint parameter, ref HighContrastSettings settings, uint updateProfile);
+
     private delegate IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
     private static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, WindowProc newProc);
@@ -234,6 +243,31 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     }
     private IntPtr HandleWindowMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
     {
+        if (message is WmSettingChange or WmThemeChanged or WmSysColorChange)
+        {
+            var result = _previousWindowProc == IntPtr.Zero
+                ? IntPtr.Zero
+                : CallWindowProc(_previousWindowProc, hwnd, message, wParam, lParam);
+            var settingName = message == WmSettingChange && lParam != IntPtr.Zero
+                ? Marshal.PtrToStringUni(lParam)
+                : null;
+            if (message != WmSettingChange ||
+                string.Equals(settingName, "Accessibility", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(settingName, "HighContrast", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    _highContrastEnabled = ReadHighContrastSetting();
+                    RefreshThemeSurfaces();
+                }
+                catch (Exception ex)
+                {
+                    App.WriteStartupLog("Could not refresh theme surfaces after a Windows accessibility/theme change.", ex);
+                }
+            }
+            return result;
+        }
+
         if (message == WmEndSession && wParam != IntPtr.Zero)
         {
             _allowExit = true;
@@ -431,23 +465,29 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (primary) { b.Background = Brush("#2E66A3"); b.Foreground = Brush("#FFFFFF"); }
         b.Click += handler; return b;
     }
+    private bool ReadHighContrastSetting()
+    {
+        if (!_highContrastReadAvailable) return false;
+
+        var settings = new HighContrastSettings
+        {
+            Size = (uint)Marshal.SizeOf<HighContrastSettings>()
+        };
+        if (SystemParametersInfo(SpiGetHighContrast, settings.Size, ref settings, 0))
+            return (settings.Flags & HighContrastOn) != 0;
+
+        _highContrastReadAvailable = false;
+        App.WriteStartupLog(
+            $"Could not read the current High Contrast setting through SystemParametersInfo (Win32 error {Marshal.GetLastWin32Error()}); using the app theme.");
+        return false;
+    }
+
     private Brush ThemeBrush(string key)
     {
         // These brushes live in ThemeDictionaries, so looking them up directly in
         // Application.Resources throws at runtime. Resolve against the active
-        // Window theme and keep a safe fallback so startup cannot fail on a lookup.
-        var highContrast = false;
-        if (_highContrastReadAvailable)
-        {
-            try { highContrast = _accessibilitySettings.HighContrast; }
-            catch (Exception ex)
-            {
-                _highContrastReadAvailable = false;
-                App.WriteStartupLog("Could not read the current High Contrast setting; using the app theme.", ex);
-            }
-        }
-
-        var themeName = highContrast ? "HighContrast" : _root.ActualTheme switch
+        // Window theme and keep a safe fallback so startup does not fail on a lookup.
+        var themeName = _highContrastEnabled ? "HighContrast" : _root.ActualTheme switch
         {
             ElementTheme.Dark => "Dark",
             ElementTheme.Light => "Light",
