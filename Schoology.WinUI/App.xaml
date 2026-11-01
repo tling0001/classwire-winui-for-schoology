@@ -22,38 +22,11 @@
           <SolidColorBrush x:Key="SchoologySuccessTextBrush" Color="#FF287A3D" />
           <SolidColorBrush x:Key="SystemControlForegroundBaseHighBrush" Color="#FF17212B" />
           <SolidColorBrush x:Key="SystemControlForegroundBaseMediumBrush" Color="#FF465563" />
-          <SolidColorBrush x:Key="TextControlBackground" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FFF2F5F7" />
-          <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#FFF2F5F7" />
-          <SolidColorBrush x:Key="TextControlBorderBrush" Color="#FFCBD5DE" />
-          <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#FF596875" />
-          <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#FF2E66A3" />
           <SolidColorBrush x:Key="TextControlForeground" Color="#FF17212B" />
-          <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#FF17212B" />
-          <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="#FF596875" />
           <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#FF596875" />
-          <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#FF596875" />
-          <SolidColorBrush x:Key="ComboBoxBackground" Color="#FFFFFFFF" />
-          <SolidColorBrush x:Key="ComboBoxForeground" Color="#FF17212B" />
-          <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#FFCBD5DE" />
-          <SolidColorBrush x:Key="ComboBoxItemForeground" Color="#FF17212B" />
-          <SolidColorBrush x:Key="ComboBoxItemForegroundPointerOver" Color="#FF17212B" />
-          <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#FFF0F4F8" />
-          <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="#FF17212B" />
-          <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#FFE7F0F8" />
-          <SolidColorBrush x:Key="ListViewItemForeground" Color="#FF17212B" />
-          <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="#FF17212B" />
-          <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#FFF0F4F8" />
-          <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#FFE7F0F8" />
-          <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#FFE7F0F8" />
-          <SolidColorBrush x:Key="ButtonForeground" Color="#FF17212B" />
-          <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#FF17212B" />
           <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FF17212B" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FF17212B" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FF17212B" />
-          <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#FFF0F4F8" />
-          <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="#FFE7F0F8" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Dark">
           <SolidColorBrush x:Key="SchoologyBlueBrush" Color="#FF5B9BD5" />
@@ -67,38 +40,11 @@
           <SolidColorBrush x:Key="SchoologySuccessTextBrush" Color="#FF78C991" />
           <SolidColorBrush x:Key="SystemControlForegroundBaseHighBrush" Color="#FFF3F6F8" />
           <SolidColorBrush x:Key="SystemControlForegroundBaseMediumBrush" Color="#FFB8C4CE" />
-          <SolidColorBrush x:Key="TextControlBackground" Color="#FF202428" />
-          <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FF292F34" />
-          <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FF202428" />
-          <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#FF292F34" />
-          <SolidColorBrush x:Key="TextControlBorderBrush" Color="#FF46515B" />
-          <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#FFB8C4CE" />
-          <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#FF5B9BD5" />
           <SolidColorBrush x:Key="TextControlForeground" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="#FFB8C4CE" />
           <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#FFB8C4CE" />
-          <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#FFB8C4CE" />
-          <SolidColorBrush x:Key="ComboBoxBackground" Color="#FF202428" />
-          <SolidColorBrush x:Key="ComboBoxForeground" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#FF46515B" />
-          <SolidColorBrush x:Key="ComboBoxItemForeground" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="ComboBoxItemForegroundPointerOver" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#FF333B42" />
-          <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#FF29445C" />
-          <SolidColorBrush x:Key="ListViewItemForeground" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#FF333B42" />
-          <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#FF29445C" />
-          <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#FF29445C" />
-          <SolidColorBrush x:Key="ButtonForeground" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#FFF3F6F8" />
           <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FFF3F6F8" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FFF3F6F8" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FFF3F6F8" />
-          <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#FF333B42" />
-          <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="#FF29445C" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="HighContrast">
           <!-- Use system color resources rather than StaticResource brush aliases. -->
@@ -113,38 +59,11 @@
           <SolidColorBrush x:Key="SchoologySuccessTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
           <SolidColorBrush x:Key="SystemControlForegroundBaseHighBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
           <SolidColorBrush x:Key="SystemControlForegroundBaseMediumBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="TextControlBackground" Color="{ThemeResource SystemColorWindowColor}" />
-          <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{ThemeResource SystemColorWindowColor}" />
-          <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="{ThemeResource SystemColorWindowColor}" />
-          <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="{ThemeResource SystemColorWindowColor}" />
-          <SolidColorBrush x:Key="TextControlBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="{ThemeResource SystemColorHighlightColor}" />
           <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="{ThemeResource SystemColorWindowTextColor}" />
           <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="ComboBoxBackground" Color="{ThemeResource SystemColorWindowColor}" />
-          <SolidColorBrush x:Key="ComboBoxForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="ComboBoxItemForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="ComboBoxItemForegroundPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
-          <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
-          <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
-          <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="{ThemeResource SystemColorHighlightColor}" />
-          <SolidColorBrush x:Key="ListViewItemForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
-          <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
-          <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="{ThemeResource SystemColorHighlightColor}" />
-          <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
-          <SolidColorBrush x:Key="ButtonForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="{ThemeResource SystemColorWindowTextColor}" />
           <SolidColorBrush x:Key="NavigationViewItemForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
-          <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
-          <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="{ThemeResource SystemColorHighlightColor}" />
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
     </ResourceDictionary>

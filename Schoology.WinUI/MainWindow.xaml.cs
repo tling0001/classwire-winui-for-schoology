@@ -524,7 +524,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return false;
     }
 
-    private Brush ThemeBrush(string key)
+    private SolidColorBrush ThemeBrush(string key)
     {
         // Resolve the small set of code-behind theme surfaces directly. Accessing
         // ThemeDictionaries by the "Light" key throws a WinRT E_FAIL in the
