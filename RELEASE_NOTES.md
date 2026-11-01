@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.49] - 2026-10-31
+
+- Add native crash diagnostics and per-user Windows Error Reporting full-memory dumps for startup failures that bypass managed exception handlers.
+- Guard the native window-procedure callback against managed exceptions crossing the unmanaged boundary, and capture splash-timer and embedded-image startup failures.
+
+
 ## [2026.10.0-port.48] - 2026-10-31
 
 - Replace the unsupported WinRT High Contrast change-event subscription with native Windows accessibility/theme notifications, preventing the COM event-source failure during startup while preserving live High Contrast theme updates.
