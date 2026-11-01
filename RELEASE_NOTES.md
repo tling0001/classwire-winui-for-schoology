@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.44] - 2026-10-31
+
+- Create the ephemeral self-signed MSIX code-signing certificate directly in the runner's CurrentUser root store, eliminating the certificate-import operation that repeatedly timed out; retain certificate thumbprint checks and SignTool package-signature verification.
+
 ## [2026.10.0-port.43] - 2026-10-31
 
 - Fix the MSIX signing-certificate trust step by removing certutil's unsupported `-silent` switch and supplying its confirmation through redirected standard input; retain the 30-second timeout, verify the imported root thumbprint, and keep SignTool signature verification enabled.
