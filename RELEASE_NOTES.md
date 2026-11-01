@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.41] - 2026-10-31
+
+- Replace the hanging `certutil` root-store import with the direct Windows .NET X509Store API, then verify the trusted certificate thumbprint before MSIX signing verification.
+
 ## [2026.10.0-port.40] - 2026-10-31
 
 - Use noninteractive `certutil` to add the per-run MSIX signing certificate to the ephemeral runner's current-user root store, then verify its thumbprint before packaging.

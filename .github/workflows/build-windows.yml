@@ -70,20 +70,32 @@ jobs:
 
           # SignTool verifies the chain against trusted roots. Trust this
           # per-run certificate only on the ephemeral GitHub Actions runner.
-          # certutil's -f flag makes the store import noninteractive in CI.
-          Write-Host "Adding the generated certificate to the current-user Root store..."
-          & certutil.exe -user -addstore -f Root $cer
-          if ($LASTEXITCODE -ne 0) {
-            throw "certutil could not add the MSIX signing certificate to the current-user Root store (exit $LASTEXITCODE)."
+          # Use the .NET X509Store API directly: certutil can wait indefinitely
+          # on its interactive trust-confirmation path in hosted PowerShell jobs.
+          Write-Host "Adding the generated certificate to the current-user Root store through the Windows certificate API..."
+          $publicCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($cer)
+          $rootStore = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+            [System.Security.Cryptography.X509Certificates.StoreName]::Root,
+            [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+          )
+          try {
+            $rootStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+            $rootStore.Add($publicCertificate)
+            Write-Host "Certificate-store API import completed."
+            $trustedCertificate = $rootStore.Certificates.Find(
+              [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+              $certificate.Thumbprint,
+              $false
+            ) | Select-Object -First 1
+            if (!$trustedCertificate) {
+              throw "The generated MSIX signing certificate is not present in the current-user Root store."
+            }
+            Write-Host "Signing certificate is installed and trusted for this CI run: $($trustedCertificate.Thumbprint)"
           }
-          Write-Host "Verifying the trusted root certificate thumbprint..."
-          $trustedCertificate = Get-ChildItem -Path "Cert:\CurrentUser\Root" |
-            Where-Object { $_.Thumbprint -eq $certificate.Thumbprint } |
-            Select-Object -First 1
-          if (!$trustedCertificate) {
-            throw "The generated MSIX signing certificate is not present in the current-user Root store."
+          finally {
+            $rootStore.Close()
+            $publicCertificate.Dispose()
           }
-          Write-Host "Signing certificate is installed and trusted for this CI run: $($trustedCertificate.Thumbprint)"
 
       - name: Package x64 and ARM64 MSIX
         shell: pwsh
