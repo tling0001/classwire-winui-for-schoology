@@ -587,12 +587,19 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var destinationPage = _page;
         _root.Children.Clear();
 
-        // Use native WinUI entrance transitions with direction derived from the
-        // navigation origin. Returning to the login root moves in from the left;
-        // opening a child screen moves in from the right; sibling/home navigation
-        // uses a subtle forward motion. Respect the system reduced-motion setting.
-        if (new UISettings().AnimationsEnabled)
+        // The initial splash is the first visual attached to the native Window.
+        // Keep that first attachment transition-free: applying an EntranceThemeTransition
+        // before the root has completed its initial XAML load can trigger a stowed
+        // XAML exception in the unpackaged startup path. Normal page navigation keeps
+        // the native transition, and all transitions still respect reduced motion.
+        if (destinationPage == "splash" || !new UISettings().AnimationsEnabled)
         {
+            content.Transitions = null;
+        }
+        else
+        {
+            // Returning to the login root moves in from the left; opening a child
+            // screen moves in from the right; sibling/home navigation moves forward.
             var returningToRoot = destinationPage == "login" &&
                 previousPage is not "splash" and not "login";
             var movingBackToHome = destinationPage == "home" &&
@@ -607,10 +614,6 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     FromVerticalOffset = 8
                 }
             };
-        }
-        else
-        {
-            content.Transitions = null;
         }
 
         _root.Children.Add(content);
