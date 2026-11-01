@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.52] - 2026-11-01
+
+- Capture first-chance WinUI/XAML and WinRT exceptions during the first 20 seconds of startup, before they can be surfaced as an opaque Windows STATUS_STOWED_EXCEPTION crash.
+- Add first-frame, splash visual-tree, and window activation breadcrumbs to identify whether startup fails while constructing, attaching, or laying out the initial WinUI surface.
+
+
 ## [2026.10.0-port.51] - 2026-10-31
 
 - Add a UI-thread-independent dispatcher watchdog that records when the WinUI message queue stops responding and captures a full-memory process dump with native thread information.

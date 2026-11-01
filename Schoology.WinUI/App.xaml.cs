@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using Microsoft.Win32;
@@ -15,6 +16,8 @@ public partial class App : Application
     private Window? _window;
     private DispatcherQueue? _dispatcherQueue;
     private static Mutex? _instanceMutex;
+    private static readonly long StartupDiagnosticsStartedAt = Environment.TickCount64;
+    private static int _startupXamlExceptionCount;
     private static int _uiWatchdogStarted;
     private static int _uiHeartbeatQueued;
     private static int _uiStallDumpWritten;
@@ -51,6 +54,11 @@ public partial class App : Application
             WriteStartupLog("Could not configure native crash diagnostics; managed diagnostics remain active.", ex);
         }
 
+        // Observe first-chance XAML/WinRT exceptions before WinUI stows them and
+        // terminates with STATUS_STOWED_EXCEPTION (0xC000027B). Keep this limited
+        // to the first 20 seconds and the first 12 relevant exceptions.
+        AppDomain.CurrentDomain.FirstChanceException += OnStartupFirstChanceException;
+
         // Register before InitializeComponent so XAML startup failures are captured.
         UnhandledException += (_, args) =>
         {
@@ -69,6 +77,25 @@ public partial class App : Application
         WriteStartupLog("App constructor entered.");
         InitializeComponent();
         WriteStartupLog("App.InitializeComponent completed.");
+    }
+
+    private static void OnStartupFirstChanceException(object? sender, FirstChanceExceptionEventArgs args)
+    {
+        if (Environment.TickCount64 - StartupDiagnosticsStartedAt > 20_000) return;
+
+        var exception = args.Exception;
+        var typeName = exception.GetType().FullName ?? string.Empty;
+        var stackTrace = exception.StackTrace ?? string.Empty;
+        var isXamlOrWinRt = typeName.Contains("Xaml", StringComparison.OrdinalIgnoreCase) ||
+            typeName.Contains("WinRT", StringComparison.OrdinalIgnoreCase) ||
+            typeName.EndsWith("COMException", StringComparison.Ordinal) ||
+            stackTrace.Contains("Microsoft.UI.Xaml", StringComparison.OrdinalIgnoreCase) ||
+            stackTrace.Contains("WinRT", StringComparison.OrdinalIgnoreCase);
+        if (!isXamlOrWinRt) return;
+
+        var count = Interlocked.Increment(ref _startupXamlExceptionCount);
+        if (count <= 12)
+            WriteStartupLog($"Startup first-chance XAML/WinRT exception #{count} (type={typeName}, HRESULT=0x{exception.HResult:X8}).", exception);
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)

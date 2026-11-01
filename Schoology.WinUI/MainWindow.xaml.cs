@@ -114,8 +114,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         // on a resource that is not present in the installed EXE layout.
         _root = new Grid();
         Content = _root;
+        _root.Loaded += (_, _) => App.WriteStartupLog("MainWindow root Loaded event received; initial XAML root is attached.");
         App.WriteStartupLog("MainWindow visual root created programmatically.");
         _api = new SchoologyApiClient(_auth);
+        Activated += (_, _) => App.WriteStartupLog("MainWindow Activated event received.");
         _windowProcDelegate = HandleWindowMessage;
         var windowHandle = Win32Interop.GetWindowFromWindowId(AppWindow.Id);
         _previousWindowProc = SetWindowLongPtr(windowHandle, GwlWndProc, _windowProcDelegate);
@@ -647,6 +649,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         // Unpackaged WinUI 3 apps do not receive the MSIX-managed splash surface.
         // Use a compact native WinUI launch surface over the Window's Mica backdrop.
         var grid = new Grid { Background = new SolidColorBrush(Colors.Transparent) };
+        App.WriteStartupLog("Splash root Grid created.");
+        grid.Loaded += (_, _) => App.WriteStartupLog("Splash root Grid Loaded event received.");
+        var firstLayoutLogged = false;
+        grid.LayoutUpdated += (_, _) =>
+        {
+            if (firstLayoutLogged) return;
+            firstLayoutLogged = true;
+            App.WriteStartupLog($"Splash root completed its first layout ({grid.ActualWidth:0.##}x{grid.ActualHeight:0.##}).");
+        };
         var stack = new StackPanel
         {
             Width = 360,
@@ -654,6 +665,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             VerticalAlignment = VerticalAlignment.Center,
             Spacing = 18
         };
+        App.WriteStartupLog("Splash StackPanel created.");
         var logo = new Image
         {
             Width = 270,
@@ -661,6 +673,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Center
         };
+        App.WriteStartupLog("Splash logo Image created.");
         stack.Children.Add(logo);
         var ring = new ProgressRing
         {
@@ -670,13 +683,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Foreground = ThemeBrush("SchoologyBlueBrush"),
             HorizontalAlignment = HorizontalAlignment.Center
         };
+        App.WriteStartupLog("Splash ProgressRing created.");
         stack.Children.Add(ring);
         var caption = Text("Getting Schoology ready…", 13);
+        App.WriteStartupLog("Splash caption TextBlock created.");
         caption.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         caption.HorizontalAlignment = HorizontalAlignment.Center;
         stack.Children.Add(caption);
         grid.Children.Add(stack);
+        App.WriteStartupLog("Splash controls added to the visual tree.");
         Reset(grid);
+        App.WriteStartupLog("Splash visual tree attached; requesting embedded logo load.");
         _ = SetEmbeddedImageAsync(logo, "Schoology.WinUI.Assets.logo_schoology.png");
     }
 
