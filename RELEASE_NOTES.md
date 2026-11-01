@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.51] - 2026-10-31
+
+- Add a UI-thread-independent dispatcher watchdog that records when the WinUI message queue stops responding and captures a full-memory process dump with native thread information.
+- Preserve startup logging while capturing the stalled process before an abrupt termination can erase the evidence; dumps are written under the user's Schoology Logs\\CrashDumps folder.
+
+
 ## [2026.10.0-port.50] - 2026-10-31
 
 - Restore the original WinUI system-color-based High Contrast theme resources instead of resolving system brush aliases through StaticResource.

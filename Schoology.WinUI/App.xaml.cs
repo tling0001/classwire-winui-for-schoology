@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using Microsoft.Win32;
 using System.Text;
 using System.Threading;
@@ -13,6 +15,18 @@ public partial class App : Application
     private Window? _window;
     private DispatcherQueue? _dispatcherQueue;
     private static Mutex? _instanceMutex;
+    private static int _uiWatchdogStarted;
+    private static int _uiHeartbeatQueued;
+    private static int _uiStallDumpWritten;
+    private static int _uiWasStalled;
+    private static long _lastUiHeartbeatMilliseconds;
+    private const uint MiniDumpWithFullMemory = 0x00000002;
+    private const uint MiniDumpWithThreadInfo = 0x00001000;
+    [DllImport("Dbghelp.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MiniDumpWriteDump(
+        IntPtr processHandle, uint processId, SafeFileHandle dumpFile, uint dumpType,
+        IntPtr exceptionParam, IntPtr userStreamParam, IntPtr callbackParam);
     [DllImport("user32.dll", EntryPoint = "FindWindowW", CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindow(string? className, string? windowName);
     [DllImport("user32.dll", EntryPoint = "PostMessageW")]
@@ -97,6 +111,8 @@ public partial class App : Application
 
             _window.Activate();
             WriteStartupLog("MainWindow.Activate completed.");
+            if (_dispatcherQueue is not null)
+                StartUiDispatcherWatchdog(_dispatcherQueue);
             if (IsBackgroundLaunch && _window is MainWindow mainWindow) mainWindow.HideToBackground();
         }
         catch (Exception ex)
@@ -118,6 +134,88 @@ public partial class App : Application
         key.SetValue("DumpFolder", dumpDirectory, RegistryValueKind.ExpandString);
         key.SetValue("DumpCount", 5, RegistryValueKind.DWord);
         key.SetValue("DumpType", 2, RegistryValueKind.DWord);
+    }
+
+    private static void StartUiDispatcherWatchdog(DispatcherQueue dispatcherQueue)
+    {
+        if (Interlocked.Exchange(ref _uiWatchdogStarted, 1) != 0) return;
+
+        Interlocked.Exchange(ref _lastUiHeartbeatMilliseconds, Environment.TickCount64);
+        WriteStartupLog("Independent UI-dispatcher watchdog started; it will capture a full dump if the UI thread stops processing work.");
+
+        _ = Task.Run(async () =>
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+
+                if (Interlocked.Exchange(ref _uiHeartbeatQueued, 1) == 0)
+                {
+                    if (!dispatcherQueue.TryEnqueue(() =>
+                    {
+                        Interlocked.Exchange(ref _lastUiHeartbeatMilliseconds, Environment.TickCount64);
+                        Interlocked.Exchange(ref _uiHeartbeatQueued, 0);
+                        if (Interlocked.Exchange(ref _uiWasStalled, 0) != 0)
+                            WriteStartupLog("UI dispatcher heartbeat resumed after a stall.");
+                    }))
+                    {
+                        Interlocked.Exchange(ref _uiHeartbeatQueued, 0);
+                    }
+                }
+
+                var stalledMilliseconds = Environment.TickCount64 -
+                    Interlocked.Read(ref _lastUiHeartbeatMilliseconds);
+                if (stalledMilliseconds < 5000 ||
+                    Interlocked.Exchange(ref _uiStallDumpWritten, 1) != 0)
+                    continue;
+
+                Interlocked.Exchange(ref _uiWasStalled, 1);
+                WriteStartupLog($"UI dispatcher has not processed queued work for {stalledMilliseconds} ms; capturing a full process dump.");
+                WriteUiStallDump();
+            }
+        });
+    }
+
+    private static void WriteUiStallDump()
+    {
+        try
+        {
+            var dumpDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Schoology", "Logs", "CrashDumps");
+            Directory.CreateDirectory(dumpDirectory);
+            var dumpPath = Path.Combine(
+                dumpDirectory,
+                $"ui-dispatcher-stall-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.dmp");
+
+            using var process = Process.GetCurrentProcess();
+            using var dumpFile = new FileStream(
+                dumpPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            var written = MiniDumpWriteDump(
+                process.Handle,
+                (uint)process.Id,
+                dumpFile.SafeFileHandle,
+                MiniDumpWithFullMemory | MiniDumpWithThreadInfo,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                IntPtr.Zero);
+
+            if (!written)
+            {
+                var error = Marshal.GetLastWin32Error();
+                dumpFile.Dispose();
+                try { File.Delete(dumpPath); } catch { }
+                WriteStartupLog($"MiniDumpWriteDump failed (Win32 error {error}).");
+                return;
+            }
+
+            dumpFile.Flush(flushToDisk: true);
+            WriteStartupLog($"Full UI-stall process dump saved: {dumpPath} ({dumpFile.Length:N0} bytes).");
+        }
+        catch (Exception ex)
+        {
+            WriteStartupLog("Could not capture the UI-stall process dump.", ex);
+        }
     }
 
     private void OnNotificationInvoked(AppNotificationManager sender, AppNotificationActivatedEventArgs args)
