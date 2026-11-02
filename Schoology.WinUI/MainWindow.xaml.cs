@@ -486,6 +486,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         Foreground = ThemeBrush("SchoologyTextBrush")
     };
 
+    private Grid LoadingStatus(string message) => LoadingStatus(message, out var ignoredStatus);
+
     private Grid LoadingStatus(string message, out TextBlock status, double ringSize = 18)
     {
         var host = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
@@ -2658,7 +2660,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetAutomationId(list, "SchoologyNotificationsList");
         Grid.SetRow(list, 1); root.Children.Add(list);
-        list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading notifications…", out _) });
+        list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading notifications…") });
         _ = LoadNotificationsAsync(list);
         return root;
     }
@@ -3018,7 +3020,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetAutomationId(list, "SchoologyRequestsList");
         Grid.SetRow(list, 1); root.Children.Add(list);
-        list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading requests…", out _) });
+        list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading requests…") });
         _ = LoadRequestsAsync(list);
         return root;
     }
@@ -3133,7 +3135,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             VerticalAlignment = VerticalAlignment.Stretch };
         AutomationProperties.SetAutomationId(tree, "SchoologyResourcesTree");
         Grid.SetRow(tree, 1); root.Children.Add(tree);
-        tree.RootNodes.Add(new TreeViewNode { Content = LoadingStatus("Loading resources…", out _) });
+        tree.RootNodes.Add(new TreeViewNode { Content = LoadingStatus("Loading resources…") });
         tree.Expanding += async (_, args) =>
         {
             if (args.Node.Content is ResourceTreeEntry entry &&
@@ -3217,7 +3219,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     {
         node.HasUnrealizedChildren = false;
         node.Children.Clear();
-        node.Children.Add(new TreeViewNode { Content = LoadingStatus("Loading resources…", out _) });
+        node.Children.Add(new TreeViewNode { Content = LoadingStatus("Loading resources…") });
         try
         {
             if (_session is null)
@@ -6778,7 +6780,7 @@ try {
     {
         if (_session is null || entityId <= 0 || updateId <= 0) return;
         var content = new StackPanel { Spacing = 8 };
-        content.Children.Add(LoadingStatus("Loading comments…", out _));
+        content.Children.Add(LoadingStatus("Loading comments…"));
         var dialog = new ContentDialog
         {
             Title = "Comments",
@@ -7422,7 +7424,7 @@ try {
             if (!courses.TryGetValue(args.Node, out var course) || !args.Node.HasUnrealizedChildren) return;
             args.Node.HasUnrealizedChildren = false;
             args.Node.Children.Clear();
-            args.Node.Children.Add(new TreeViewNode { Content = LoadingStatus("Loading grades…", out _) });
+            args.Node.Children.Add(new TreeViewNode { Content = LoadingStatus("Loading grades…") });
             try
             {
                 if (_session is null) throw new InvalidOperationException("Sign in to view grades.");
@@ -7713,7 +7715,7 @@ try {
         var wideUpdates = new StackPanel { Spacing = 8 };
         var wideInfo = new StackPanel { Spacing = 8 };
         var wideBadges = new StackPanel { Spacing = 8 };
-        UIElement MakePane(string title, StackPanel paneContent)
+        Border MakePane(string title, StackPanel paneContent)
         {
             var panel = new StackPanel { Spacing = 10 };
             panel.Children.Add(Text(title, 17, true));
@@ -7800,7 +7802,7 @@ try {
         {
             if (!loaded)
             {
-                narrowFrame.Content = LoadingStatus("Loading profile…", out _);
+                narrowFrame.Content = LoadingStatus("Loading profile…");
                 return;
             }
             var tab = selector.SelectedItem == infoTab ? "Info" :
@@ -7889,9 +7891,9 @@ try {
             }
         }
 
-        wideUpdates.Children.Add(LoadingStatus("Loading updates…", out _));
-        wideInfo.Children.Add(LoadingStatus("Loading profile information…", out _));
-        wideBadges.Children.Add(LoadingStatus("Loading badges…", out _));
+        wideUpdates.Children.Add(LoadingStatus("Loading updates…"));
+        wideInfo.Children.Add(LoadingStatus("Loading profile information…"));
+        wideBadges.Children.Add(LoadingStatus("Loading badges…"));
         _ = LoadProfileAsync();
         return root;
     }
