@@ -45,6 +45,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private string _selectedEntity = string.Empty;
     private long _selectedEntityId;
     private string _selectedEntityTab = string.Empty;
+    private long _activeProfileUserId;
     private Button? _titleBarCreateButton;
     private string _titleBarCreateContext = string.Empty;
     private readonly SchoologyAuthService _auth = new(false);
@@ -484,6 +485,43 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center,
         Foreground = ThemeBrush("SchoologyTextBrush")
     };
+
+    private Grid LoadingStatus(string message, out TextBlock status, double ringSize = 18)
+    {
+        var host = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        host.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var ring = new ProgressRing
+        {
+            Width = ringSize, Height = ringSize, IsActive = true,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        status = Text(message, 13);
+        status.Tag = ring;
+        host.Children.Add(ring);
+        Grid.SetColumn(status, 1);
+        host.Children.Add(status);
+        return host;
+    }
+
+    private static void SetStatusText(TextBlock status, string value)
+    {
+        status.Text = value;
+        if (status.Tag is not ProgressRing ring) return;
+        var active = value.StartsWith("Loading", StringComparison.OrdinalIgnoreCase) ||
+            value.StartsWith("Refreshing", StringComparison.OrdinalIgnoreCase);
+        ring.IsActive = active;
+        ring.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static void RemoveLoadingStatus(TextBlock status)
+    {
+        if (status.Tag is ProgressRing ring && ring.Parent is Grid host && host.Parent is Panel parent)
+            parent.Children.Remove(host);
+        else if (status.Parent is Panel directParent)
+            RemoveLoadingStatus(status);
+    }
     private Border EmptyState(string title, string? description = null)
     {
         var content = new StackPanel
@@ -519,7 +557,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Size = (uint)Marshal.SizeOf<HighContrastSettings>()
         };
         if (SystemParametersInfo(SpiGetHighContrast, settings.Size, ref settings, 0))
-            return (settings.Flags & HighContrastOn) != 0;
+        {
+            var enabled = (settings.Flags & HighContrastOn) != 0;
+            if (enabled)
+            {
+                var ui = new UISettings();
+                var foreground = ui.GetColorValue(UIColorType.Foreground);
+                var background = ui.GetColorValue(UIColorType.Background);
+                App.WriteStartupLog($"Windows High Contrast is enabled; using system-selected foreground #{foreground.R:X2}{foreground.G:X2}{foreground.B:X2} and background #{background.R:X2}{background.G:X2}{background.B:X2}.");
+            }
+            return enabled;
+        }
 
         _highContrastReadAvailable = false;
         App.WriteStartupLog(
@@ -1007,9 +1055,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 var matches = await _auth.SearchSchoolsAsync(search.Text);
                 search.ItemsSource = matches;
                 search.IsSuggestionListOpen = matches.Count > 0;
-                status.Text = matches.Count == 0 ? "No matching schools found. Try another name or domain." : "Choose your school from the suggestions.";
+                SetStatusText(status, matches.Count == 0 ? "No matching schools found. Try another name or domain." : "Choose your school from the suggestions.");
             }
-            catch (Exception ex) { status.Text = ex.Message; }
+            catch (Exception ex) { SetStatusText(status, ex.Message); }
         };
         search.SuggestionChosen += (_, args) =>
         {
@@ -1018,14 +1066,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 selectedSchool = school;
                 search.Text = school.Name;
                 continueButton.IsEnabled = true;
-                status.Text = $"Selected {school.Name}. Continue to open its secure sign-in page.";
+                SetStatusText(status, $"Selected {school.Name}. Continue to open its secure sign-in page.");
             }
         };
         continueButton.Click += async (_, _) =>
         {
             if (selectedSchool is null) return;
             continueButton.IsEnabled = false;
-            status.Text = "Preparing secure school sign-in…";
+            SetStatusText(status, "Preparing secure school sign-in…");
             try
             {
                 search.Visibility = Visibility.Collapsed;
@@ -1034,7 +1082,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                status.Text = ex.Message;
+                SetStatusText(status, ex.Message);
                 continueButton.IsEnabled = true;
             }
         };
@@ -1089,7 +1137,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             }
 
             signIn.IsEnabled = false;
-            status.Text = "Signing in and verifying your Schoology profile…";
+            SetStatusText(status, "Signing in and verifying your Schoology profile…");
             try
             {
                 _session = await _auth.SignInAsync(username.Text, password.Password, null);
@@ -1097,7 +1145,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 ShowHome();
                 _ = LoadAccountCollectionsAsync();
             }
-            catch (Exception ex) { status.Text = ex.Message; signIn.IsEnabled = true; }
+            catch (Exception ex) { SetStatusText(status, ex.Message); signIn.IsEnabled = true; }
         };
         credentialForm.Children.Add(username);
         credentialForm.Children.Add(password);
@@ -1113,7 +1161,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         TextBlock status,
         UIElement credentialForm)
     {
-        status.Text = "Preparing secure school sign-in…";
+        SetStatusText(status, "Preparing secure school sign-in…");
         try
         {
             var request = await _auth.BeginSchoolBrowserLoginAsync(school);
@@ -1129,20 +1177,20 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 var requestToken = HttpUtility.ParseQueryString(callback.Query).Get("request_token");
                 if (string.IsNullOrWhiteSpace(requestToken))
                 {
-                    status.Text = "Schoology returned an invalid sign-in callback. Please try again.";
+                    SetStatusText(status, "Schoology returned an invalid sign-in callback. Please try again.");
                     return;
                 }
 
                 try
                 {
-                    status.Text = "Verifying your Schoology account…";
+                    SetStatusText(status, "Verifying your Schoology account…");
                     _session = await _auth.CompleteSchoolBrowserSignInAsync(requestToken);
                     ShowHome();
                     await LoadAccountCollectionsAsync();
                 }
                 catch (Exception ex)
                 {
-                    status.Text = ex.Message;
+                    SetStatusText(status, ex.Message);
                     credentialForm.Visibility = Visibility.Visible;
                     browser.Visibility = Visibility.Collapsed;
                 }
@@ -1150,12 +1198,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
             credentialForm.Visibility = Visibility.Collapsed;
             browser.Visibility = Visibility.Visible;
-            status.Text = "Complete sign-in with your school. Your password is entered only on the school sign-in page.";
+            SetStatusText(status, "Complete sign-in with your school. Your password is entered only on the school sign-in page.");
             browser.Source = new Uri(request.AuthorizationUrl);
         }
         catch (Exception ex)
         {
-            status.Text = ex.Message;
+            SetStatusText(status, ex.Message);
             credentialForm.Visibility = Visibility.Visible;
             browser.Visibility = Visibility.Collapsed;
         }
@@ -1175,7 +1223,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         start.Click += async (_, _) =>
         {
             start.IsEnabled = false;
-            status.Text = "Requesting camera access…";
+            SetStatusText(status, "Requesting camera access…");
             try
             {
                 await StopQrScannerAsync();
@@ -1187,11 +1235,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 _qrPlayer = await _qrScanner.StartAsync();
                 preview.SetMediaPlayer(_qrPlayer);
                 _qrPlayer.Play();
-                status.Text = "Camera is active. Hold the QR code steady in the frame.";
+                SetStatusText(status, "Camera is active. Hold the QR code steady in the frame.");
             }
             catch (Exception ex)
             {
-                status.Text = $"Could not start the camera: {ex.Message}";
+                SetStatusText(status, $"Could not start the camera: {ex.Message}");
                 start.IsEnabled = true;
             }
         };
@@ -1203,7 +1251,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private async Task CompleteQrSignInAsync(string qr, TextBlock status, Button start)
     {
         start.IsEnabled = false;
-        status.Text = "QR code detected. Verifying your Schoology sign-in…";
+        SetStatusText(status, "QR code detected. Verifying your Schoology sign-in…");
         try
         {
             await StopQrScannerAsync();
@@ -1214,7 +1262,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            status.Text = ex.Message;
+            SetStatusText(status, ex.Message);
             start.IsEnabled = true;
         }
     }
@@ -1492,6 +1540,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         AutomationProperties.SetName(profileItem, profileName + " profile");
         nav.MenuItems.Add(profileItem);
+        if (section == "Profile") nav.SelectedItem = profileItem;
         nav.MenuItems.Add(new NavigationViewItemSeparator());
 
         var items = new (string Name, Symbol Icon)[]
@@ -1538,8 +1587,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 return;
             }
             if (item.Tag is not string rootTarget) return;
-            if (rootTarget == "Sign out") { SchoologyAuthService.SignOut(); _session = null; _sharedWebViewInitialized = false; _sharedWebViewSessionUserId = 0; _sectionFrame = null; ShowLogin(); }
-            else ShowHome(rootTarget == "Home" ? "Recent Activity" : rootTarget);
+            if (rootTarget == "Sign out") { SchoologyAuthService.SignOut(); _session = null; _activeProfileUserId = 0; _sharedWebViewInitialized = false; _sharedWebViewSessionUserId = 0; _sectionFrame = null; ShowLogin(); }
+            else
+            {
+                if (rootTarget == "Profile") _activeProfileUserId = _session?.UserId ?? 0;
+                ShowHome(rootTarget == "Home" ? "Recent Activity" : rootTarget);
+            }
         };
         _appNavigation = nav;
         Grid.SetRow(titleBar, 0);
@@ -1621,14 +1674,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
         var text = new Button { Content = "Create text submission", HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
-        var dialog = new ContentDialog { Title = "Submit assignment", Content = content,
+        var comment = new Button { Content = "Create comment", HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
+        var dialog = new ContentDialog { Title = "Create assignment content", Content = content,
             CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot };
         upload.Click += async (_, _) => { dialog.Hide(); await PickAndSubmitAssignmentFileAsync(); };
         resource.Click += async (_, _) => { dialog.Hide(); await ShowAssignmentResourcePickerAsync(); };
         text.Click += async (_, _) => { dialog.Hide(); await ShowTextAssignmentSubmissionDialogAsync(); };
+        comment.Click += async (_, _) => { dialog.Hide(); await ShowAssignmentCommentDialogAsync(); };
         content.Children.Add(upload);
         content.Children.Add(resource);
         content.Children.Add(text);
+        if (_activeAssignmentAllowsComments) content.Children.Add(comment);
         await dialog.ShowAsync();
     }
 
@@ -1949,7 +2006,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         else if (section == "Grades")
             page = BuildGradesPage();
         else if (section == "Profile")
+        {
+            if (_activeProfileUserId <= 0) _activeProfileUserId = _session?.UserId ?? 0;
             page = BuildProfilePage();
+        }
         else if (section == "Notifications")
             page = BuildNotificationsPage();
         else if (section == "Requests")
@@ -2109,8 +2169,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private ScrollViewer BuildRecentActivityContent()
     {
         var panel = new StackPanel { Spacing = 10, Margin = new Thickness(4, 2, 10, 8) };
-        var status = Text("Loading recent Schoology activity…", 13);
-        panel.Children.Add(status);
+        var statusHost = LoadingStatus("Loading recent Schoology activity…", out var status);
+        panel.Children.Add(statusHost);
         _ = LoadRecentActivityAsync(panel, status);
         return new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     }
@@ -2158,7 +2218,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 new Dictionary<string, string> { ["start"] = "0", ["limit"] = "30", ["with_attachments"] = "TRUE", ["richtext"] = "1" });
             var records = SchoologyApiClient.ReadRecords(document.RootElement, "update", "updates", "update_list");
             await ResolvePostAuthorsAsync(records, session);
-            panel.Children.Remove(status);
+            RemoveLoadingStatus(status);
             if (records.Count == 0) { panel.Children.Add(EmptyState("No recent activity", "Your recent Schoology activity will appear here.")); return; }
             foreach (var record in records)
             {
@@ -2169,7 +2229,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            status.Text = $"Unable to load recent activity: {ex.Message}";
+            SetStatusText(status, $"Unable to load recent activity: {ex.Message}");
             panel.Children.Add(Action("Retry", async (_, _) => await LoadRecentActivityAsync(panel, status)));
         }
     }
@@ -2377,9 +2437,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var root = new Grid { RowSpacing = 8 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var status = Text("Loading upcoming assignments and events…", 13);
+        var statusHost = LoadingStatus("Loading upcoming assignments and events…", out var status);
         status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
-        root.Children.Add(status);
+        root.Children.Add(statusHost);
         var list = new ListView { SelectionMode = ListViewSelectionMode.None,
             IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Background = new SolidColorBrush(Colors.Transparent) };
@@ -2505,11 +2565,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         {
             var records = await FetchUpcomingRecordsAsync();
             RenderGroupedUpcoming(list, records);
-            status.Text = records.Count == 0 ? "No upcoming events or assignments." : $"{records.Count} upcoming items";
+            SetStatusText(status, records.Count == 0 ? "No upcoming events or assignments." : $"{records.Count} upcoming items");
         }
         catch (Exception ex)
         {
-            status.Text = $"Unable to load upcoming items: {ex.Message}";
+            SetStatusText(status, $"Unable to load upcoming items: {ex.Message}");
             if (list.Items.Count == 0) list.Items.Add(new ListViewItem { Content = Action("Retry", async (_, _) => await LoadUpcomingAsync(list, status)) });
         }
     }
@@ -2584,8 +2644,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetAutomationId(list, "SchoologyNotificationsList");
         Grid.SetRow(list, 1); root.Children.Add(list);
-        var status = Text("Loading notifications…", 13);
-        list.Items.Add(new ListViewItem { Content = status });
+        list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading notifications…", out _) });
         _ = LoadNotificationsAsync(list);
         return root;
     }
@@ -2945,8 +3004,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetAutomationId(list, "SchoologyRequestsList");
         Grid.SetRow(list, 1); root.Children.Add(list);
-        var status = Text("Loading requests…", 13);
-        list.Items.Add(new ListViewItem { Content = status });
+        list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading requests…", out _) });
         _ = LoadRequestsAsync(list);
         return root;
     }
@@ -3061,8 +3119,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             VerticalAlignment = VerticalAlignment.Stretch };
         AutomationProperties.SetAutomationId(tree, "SchoologyResourcesTree");
         Grid.SetRow(tree, 1); root.Children.Add(tree);
-        var status = Text("Loading resources…", 13);
-        tree.RootNodes.Add(new TreeViewNode { Content = status });
+        tree.RootNodes.Add(new TreeViewNode { Content = LoadingStatus("Loading resources…", out _) });
         tree.Expanding += async (_, args) =>
         {
             if (args.Node.Content is ResourceTreeEntry entry &&
@@ -3146,7 +3203,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     {
         node.HasUnrealizedChildren = false;
         node.Children.Clear();
-        node.Children.Add(new TreeViewNode { Content = "Loading resources…" });
+        node.Children.Add(new TreeViewNode { Content = LoadingStatus("Loading resources…", out _) });
         try
         {
             if (_session is null)
@@ -3462,7 +3519,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             {
                 progressBar.IsIndeterminate = false;
                 progressBar.Value = Math.Clamp(percent, 0, 100);
-                status.Text = $"Downloading update… {Math.Round(percent):0}%";
+                SetStatusText(status, $"Downloading update… {Math.Round(percent):0}%");
             });
             var installerPath = await DownloadAndVerifyInstallerAsync(update, progress);
             progressDialog.Hide();
@@ -4080,10 +4137,10 @@ try {
         var root = new Grid { RowSpacing = 8 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var status = Text("Loading upcoming items for this " +
-            (kind == "Groups" ? "group" : kind == "School Profile" ? "school" : "course") + "…", 13);
+        var statusHost = LoadingStatus("Loading upcoming items for this " +
+            (kind == "Groups" ? "group" : kind == "School Profile" ? "school" : "course") + "…", out var status);
         status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
-        root.Children.Add(status);
+        root.Children.Add(statusHost);
         var list = new ListView
         {
             SelectionMode = ListViewSelectionMode.None,
@@ -4106,13 +4163,13 @@ try {
             using var document = await _api.GetEntityTabAsync(session, kind, entityId, "Upcoming");
             var records = SchoologyApiClient.ReadRecords(document.RootElement, "event", "events", "assignment", "assignments");
             RenderGroupedUpcoming(list, records, null, kind, entityId);
-            status.Text = records.Count == 0 ? "Nothing is scheduled for this " +
+            SetStatusText(status, records.Count == 0 ? "Nothing is scheduled for this " +
                 (kind == "Groups" ? "group" : kind == "School Profile" ? "school" : "course") + "." :
-                $"{records.Count} upcoming items";
+                $"{records.Count} upcoming items");
         }
         catch (Exception ex)
         {
-            status.Text = $"Unable to load this {kind.ToLowerInvariant()}’s upcoming items: {ex.Message}";
+            SetStatusText(status, $"Unable to load this {kind.ToLowerInvariant()}’s upcoming items: {ex.Message}");
             list.Items.Clear();
             list.Items.Add(new ListViewItem { Content = Action("Retry", async (_, _) =>
                 await LoadEntityUpcomingAsync(kind, entityId, list, status)) });
@@ -4265,8 +4322,8 @@ try {
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 Content = body, Background = new SolidColorBrush(Colors.Transparent) };
         Grid.SetRow(bodyContent, 1); layout.Children.Add(bodyContent);
-        var status = Text("Loading from Schoology…", 13);
-        status.Foreground = ThemeBrush("SchoologyMutedTextBrush"); body.Children.Add(status);
+        var statusHost = LoadingStatus("Loading from Schoology…", out var status);
+        status.Foreground = ThemeBrush("SchoologyMutedTextBrush"); body.Children.Add(statusHost);
         _ = LoadEntityTabAsync(kind, entityId, tab, body, status);
         return layout;
     }
@@ -4546,11 +4603,13 @@ try {
             {
                 var context = isWide && submissionsEnabled && (selectedTab is "Info" or "Comments")
                     ? "assignment-actions"
-                    : selectedTab == "Comments" && commentsEnabled
-                        ? "assignment-comment"
-                        : !isWide && selectedTab == "Submissions" && submissionsEnabled
-                            ? "assignment-actions"
-                            : string.Empty;
+                    : selectedTab == "Comments" && commentsEnabled && submissionsEnabled
+                        ? "assignment-actions"
+                        : selectedTab == "Comments" && commentsEnabled
+                            ? "assignment-comment"
+                            : !isWide && selectedTab == "Submissions" && submissionsEnabled
+                                ? "assignment-actions"
+                                : string.Empty;
                 SetTitleBarCreateContext(context);
             }
             void SelectWide(SelectorBarItem item)
@@ -4813,7 +4872,7 @@ try {
                     : await _api.GetEntityTabAsync(session, kind, entityId, tab);
             if (kind == "School Profile" && tab == "Info")
             {
-                body.Children.Remove(status);
+                RemoveLoadingStatus(status);
                 var school = document.RootElement;
                 AddProfileField(body, "Address", string.Join(" ", new[]
                 {
@@ -4828,7 +4887,7 @@ try {
             var records = SchoologyApiClient.ReadRecords(document.RootElement,
                 tab == "Members" ? ["enrollment", "enrollments", "member", "members", "user", "users"] :
                 tab == "Materials" ? ["folder-item", "folder_item", "folderItems", "items"] : []);
-            body.Children.Remove(status);
+            RemoveLoadingStatus(status);
             if (tab == "Members") { body.Children.Add(BuildMembersList(records, kind)); return; }
             if (tab == "Materials") { body.Children.Add(BuildMaterialsList(entityId, records)); return; }
             if (tab == "Assignments")
@@ -4931,7 +4990,7 @@ try {
         }
         catch (Exception ex)
         {
-            status.Text = $"Unable to load {tab.ToLowerInvariant()}: {ex.Message}";
+            SetStatusText(status, $"Unable to load {tab.ToLowerInvariant()}: {ex.Message}");
         }
     }
 
@@ -5040,12 +5099,12 @@ try {
                     progressBar.IsIndeterminate = false;
                     progressBar.Maximum = value.Total.Value;
                     progressBar.Value = Math.Min(value.Received, value.Total.Value);
-                    status.Text = $"{FormatFileSize(value.Received)} of {FormatFileSize(value.Total.Value)}";
+                    SetStatusText(status, $"{FormatFileSize(value.Received)} of {FormatFileSize(value.Total.Value)}");
                 }
                 else
                 {
                     progressBar.IsIndeterminate = true;
-                    status.Text = $"Downloaded {FormatFileSize(value.Received)}";
+                    SetStatusText(status, $"Downloaded {FormatFileSize(value.Received)}");
                 }
             });
             var download = _auth.GetSchoologyFileBytesAsync(
@@ -5339,7 +5398,7 @@ try {
                 }
                 currentPage = 0;
                 pageLabel.Text = "1 / " + pdf.PageCount;
-                status.Text = "";
+                SetStatusText(status, "");
                 previous.IsEnabled = false;
                 next.IsEnabled = pdf.PageCount > 1;
                 viewerScroll.ChangeView(null, 0, 1f, true);
@@ -5349,7 +5408,7 @@ try {
                 pdf = null;
                 pdfStream?.Dispose();
                 pdfStream = null;
-                status.Text = $"Unable to render this PDF: {ex.Message}";
+                SetStatusText(status, $"Unable to render this PDF: {ex.Message}");
                 pageLabel.Text = "Preview unavailable";
             }
         }
@@ -5365,7 +5424,7 @@ try {
             }
             catch (Exception ex)
             {
-                status.Text = $"Unable to render this image: {ex.Message}";
+                SetStatusText(status, $"Unable to render this image: {ex.Message}");
             }
         }
 
@@ -5395,11 +5454,11 @@ try {
             await bitmap.SetSourceAsync(stream);
             image.Source = bitmap;
             pageLabel.Text = $"{pageIndex + 1} / {pdf.PageCount}";
-            status.Text = "";
+            SetStatusText(status, "");
         }
         catch (Exception ex)
         {
-            status.Text = $"Unable to render PDF page {pageIndex + 1}: {ex.Message}";
+            SetStatusText(status, $"Unable to render PDF page {pageIndex + 1}: {ex.Message}");
         }
         finally { page?.Dispose(); }
     }
@@ -5658,7 +5717,7 @@ try {
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 var avatar = new Image { Width = 40, Height = 40, Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill };
                 if (!string.IsNullOrWhiteSpace(person.Picture))
-                    try { avatar.Source = new BitmapImage(new Uri(NormalizeSchoologyImageUrl(person.Picture))); } catch { }
+                    _ = LoadPostImageAsync(avatar, person.Picture);
                 else _ = LoadMemberAvatarAsync(person.Id, avatar);
                 row.Children.Add(new Border { Width = 40, Height = 40, CornerRadius = new CornerRadius(20),
                     Background = ThemeBrush("SchoologySubtleBrush"), Child = avatar });
@@ -5668,7 +5727,7 @@ try {
                 Grid.SetColumn(labels, 1); row.Children.Add(labels);
                 var memberItem = new ListViewItem { Content = row, Tag = person.Id,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch };
-                memberItem.Tapped += async (_, _) => await OpenMemberProfileAsync(person.Id);
+                memberItem.Tapped += (_, _) => ShowUserProfile(person.Id);
                 list.Items.Add(memberItem);
             }
         }
@@ -5681,26 +5740,6 @@ try {
     }
 
 
-
-    private async Task OpenMemberProfileAsync(long userId)
-    {
-        if (_session is null || userId <= 0) return;
-        try
-        {
-            using var document = await _api.GetUserAsync(_session, userId);
-            var user = document.RootElement;
-            if (user.ValueKind == JsonValueKind.Object && user.TryGetProperty("user", out var nested)) user = nested;
-            var details = new StackPanel { Spacing = 8 };
-            var name = ProfileValue(user, "name_display", "display_name", "name") ?? "Schoology member";
-            details.Children.Add(Text(name, 19, true));
-            AddProfileField(details, "Username", ProfileValue(user, "username"));
-            AddProfileField(details, "Email", ProfileValue(user, "primary_email", "email"));
-            AddProfileField(details, "School", ProfileValue(user, "school_title", "school_name"));
-            await new ContentDialog { Title = "Member profile", Content = details,
-                CloseButtonText = "Close", XamlRoot = _root.XamlRoot }.ShowAsync();
-        }
-        catch (Exception ex) { await ShowApiErrorAsync("Unable to open member profile", ex.Message); }
-    }
 
     private static string NormalizeSchoologyImageUrl(string value)
     {
@@ -6244,6 +6283,44 @@ try {
         return content;
     }
 
+    private static IReadOnlyList<string> ExtractInlinePostImageUrls(string? markup)
+    {
+        if (string.IsNullOrWhiteSpace(markup)) return [];
+        var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(markup,
+            @"<img\b[^>]*?\bsrc\s*=\s*(['""])(.*?)\1",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline))
+        {
+            var raw = System.Net.WebUtility.HtmlDecode(match.Groups[2].Value).Trim();
+            if (raw.Length == 0) continue;
+            if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri))
+            {
+                try { uri = new Uri(new Uri("https://app.schoology.com/"), raw); }
+                catch { continue; }
+            }
+            if (uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo)) continue;
+            urls.Add(NormalizeSchoologyImageUrl(uri.AbsoluteUri));
+        }
+        return urls.ToArray();
+    }
+
+    private StackPanel BuildInlinePostImages(string? markup)
+    {
+        var images = new StackPanel { Spacing = 8 };
+        foreach (var url in ExtractInlinePostImageUrls(markup))
+        {
+            var image = new Image
+            {
+                MaxWidth = 680, MaxHeight = 440,
+                Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            _ = LoadPostImageAsync(image, url);
+            images.Children.Add(image);
+        }
+        return images;
+    }
+
     private Border BuildUpdateCard(string kind, long entityId, SchoologyApiRecord update, JsonElement? authorProfile = null)
     {
         var updateId = JsonLong(update.Data, "id", "update_id");
@@ -6287,12 +6364,15 @@ try {
         if (!string.IsNullOrWhiteSpace(postBody))
         {
             card.Children.Add(CreateRichContent(postBody, 14));
+            var inlineImages = BuildInlinePostImages(postBody);
+            if (inlineImages.Children.Count > 0) card.Children.Add(inlineImages);
         }
         if (update.Data.ValueKind == JsonValueKind.Object)
         {
             var returnToPost = () =>
             {
                 if (kind == "Recent") ShowHome("Recent Activity");
+                else if (kind == "Profile") ShowUserProfile(entityId);
                 else
                 {
                     var entity = kind == "Courses" ? _courses.FirstOrDefault(item => item.Id == entityId) :
@@ -6545,17 +6625,17 @@ try {
         {
             if (_session is null || updateId <= 0)
                 throw new InvalidOperationException("This update does not have a valid Schoology ID.");
-            status.Text = "Loading comments…";
+            SetStatusText(status, "Loading comments…");
             list.Children.Clear();
             using var document = await _api.GetUpdateCommentsAsync(_session, kind, entityId, updateId);
             var comments = SchoologyApiClient.ReadRecords(document.RootElement, "comment", "comments");
             await ResolveCommentAuthorsAsync(comments, _session);
             foreach (var comment in comments) list.Children.Add(BuildCommentRow(comment, updateId));
-            status.Text = comments.Count == 0 ? "No comments yet. Be the first to comment." : $"{comments.Count} comments";
+            SetStatusText(status, comments.Count == 0 ? "No comments yet. Be the first to comment." : $"{comments.Count} comments");
         }
         catch (Exception ex)
         {
-            status.Text = $"Unable to load comments: {ex.Message}";
+            SetStatusText(status, $"Unable to load comments: {ex.Message}");
             var retry = Action("Retry", async (_, _) =>
                 await LoadUpdateCommentsAsync(kind, entityId, updateId, panel, status, list));
             panel.Children.Insert(Math.Max(0, panel.Children.IndexOf(status) + 1), retry);
@@ -6684,7 +6764,7 @@ try {
     {
         if (_session is null || entityId <= 0 || updateId <= 0) return;
         var content = new StackPanel { Spacing = 8 };
-        content.Children.Add(Text("Loading comments…", 12));
+        content.Children.Add(LoadingStatus("Loading comments…", out _));
         var dialog = new ContentDialog
         {
             Title = "Comments",
@@ -6849,7 +6929,7 @@ try {
         var listHost = new Grid();
         var mailboxFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
         Grid.SetRow(mailboxFrame, 2); left.Children.Add(mailboxFrame);
-        var status = Text("Loading messages…", 12);
+        var statusHost = LoadingStatus("Loading messages…", out var status, 16);
         var list = new ListView { SelectionMode = ListViewSelectionMode.Single,
             IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Background = new SolidColorBrush(Colors.Transparent) };
@@ -6862,7 +6942,7 @@ try {
         empty.Visibility = Visibility.Collapsed;
         listHost.Children.Add(empty);
         var statusOverlay = new Border { Background = ThemeBrush("SchoologySurfaceBrush"),
-            Padding = new Thickness(8), VerticalAlignment = VerticalAlignment.Top, Child = status };
+            Padding = new Thickness(8), VerticalAlignment = VerticalAlignment.Top, Child = statusHost };
         listHost.Children.Add(statusOverlay);
         NavigateShellFrame(mailboxFrame, listHost, SlideNavigationTransitionEffect.FromRight);
 
@@ -7016,14 +7096,14 @@ try {
             if (_session is null)
             {
                 loading = false;
-                status.Text = "Sign in to view messages.";
+                SetStatusText(status, "Sign in to view messages.");
                 RenderMessages();
                 ShowDetailPlaceholder("Messages unavailable", "Sign in to load your Schoology messages.");
                 return;
             }
             currentMode = mode;
             loading = true;
-            status.Text = $"Loading {mode.ToLowerInvariant()}…";
+            SetStatusText(status, $"Loading {mode.ToLowerInvariant()}…");
             RenderMessages();
             try
             {
@@ -7040,7 +7120,7 @@ try {
                 await ResolveMessagePeopleAsync(mode == "Sent" ? sentRecords : inboxRecords, mode);
                 loading = false;
                 RenderMessages();
-                status.Text = recordsCountText(mode);
+                SetStatusText(status, recordsCountText(mode));
                 if (mode == "Unread" && !inboxRecords.Any(IsUnread))
                     ShowDetailPlaceholder("You're all caught up", "There are no unread messages.");
                 else if (mode == "Sent" && sentRecords.Count == 0)
@@ -7051,7 +7131,7 @@ try {
             catch (Exception ex)
             {
                 loading = false;
-                status.Text = $"Unable to load {mode.ToLowerInvariant()}: {ex.Message}";
+                SetStatusText(status, $"Unable to load {mode.ToLowerInvariant()}: {ex.Message}");
                 RenderMessages();
             }
         }
@@ -7328,7 +7408,7 @@ try {
             if (!courses.TryGetValue(args.Node, out var course) || !args.Node.HasUnrealizedChildren) return;
             args.Node.HasUnrealizedChildren = false;
             args.Node.Children.Clear();
-            args.Node.Children.Add(new TreeViewNode { Content = "Loading grades…" });
+            args.Node.Children.Add(new TreeViewNode { Content = LoadingStatus("Loading grades…", out _) });
             try
             {
                 if (_session is null) throw new InvalidOperationException("Sign in to view grades.");
@@ -7487,7 +7567,7 @@ try {
                 _sharedWebViewInitialized = true;
             }
 
-            var status = Text("Loading…", 11);
+            var statusHost = LoadingStatus("Loading…", out var status, 16);
             status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
             core.NavigationStarting += async (_, args) =>
             {
@@ -7503,10 +7583,10 @@ try {
                     await Windows.System.Launcher.LaunchUriAsync(destination);
                     return;
                 }
-                status.Text = "Loading…";
+                SetStatusText(status, "Loading…");
             };
             core.NavigationCompleted += (_, args) =>
-                status.Text = args.IsSuccess ? " " : "Unable to load this page. Use Reload to try again.";
+                SetStatusText(status, args.IsSuccess ? " " : "Unable to load this page. Use Reload to try again.");
             core.NewWindowRequested += async (_, args) =>
             {
                 args.Handled = true;
@@ -7531,8 +7611,8 @@ try {
             var heading = Text(title, 16, true);
             Grid.SetColumn(heading, 1);
             toolbar.Children.Add(heading);
-            Grid.SetColumn(status, 2);
-            toolbar.Children.Add(status);
+            Grid.SetColumn(statusHost, 2);
+            toolbar.Children.Add(statusHost);
             var reload = Action("Reload", (_, _) => core.Reload());
             Grid.SetColumn(reload, 3);
             toolbar.Children.Add(reload);
@@ -7553,32 +7633,230 @@ try {
         }
     }
 
-    private StackPanel BuildProfilePage()
+    private void ShowUserProfile(long userId)
     {
-        var panel = new StackPanel { Spacing = 12, Margin = new Thickness(24) };
-        panel.Children.Add(Text("My Profile", 24, true));
-        var status = Text("Loading your Schoology profile…", 13);
-        panel.Children.Add(status);
-        _ = LoadProfileAsync(panel, status);
-        return panel;
+        if (_session is null || userId <= 0) return;
+        _activeProfileUserId = userId;
+        _page = "home";
+        _section = "Profile";
+        UpdateTitleBarCreateButton("Profile", null);
+        if (_appNavigation is not null)
+        {
+            _syncingNavigationSelection = true;
+            _appNavigation.SelectedItem = _appNavigation.MenuItems.OfType<NavigationViewItem>()
+                .FirstOrDefault(item => string.Equals(item.Tag as string, "Profile", StringComparison.Ordinal));
+            _syncingNavigationSelection = false;
+        }
+        var page = BuildProfilePage();
+        if (_sectionFrame is not null) NavigateMainSection(page, "Profile");
+        else Reset(BuildApplicationShell("Profile", page));
     }
 
-    private async Task LoadProfileAsync(StackPanel panel, TextBlock status)
+    private Grid BuildProfilePage()
     {
-        try
+        var session = _session;
+        var userId = _activeProfileUserId > 0 ? _activeProfileUserId : session?.UserId ?? 0;
+        var root = new Grid { Margin = new Thickness(20), RowSpacing = 14 };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var header = new Grid { ColumnSpacing = 14, Padding = new Thickness(14), Background = ThemeBrush("SchoologySurfaceBrush") };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var avatarImage = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill };
+        var avatar = new Border { Width = 64, Height = 64, CornerRadius = new CornerRadius(32),
+            Background = ThemeBrush("SchoologySubtleBrush"), Child = avatarImage };
+        header.Children.Add(avatar);
+        var headerText = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        var nameText = Text("Loading profile…", 21, true);
+        var schoolText = Text("", 13);
+        schoolText.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        headerText.Children.Add(nameText);
+        headerText.Children.Add(schoolText);
+        Grid.SetColumn(headerText, 1);
+        header.Children.Add(headerText);
+        root.Children.Add(Surface(header, new Thickness(8)));
+
+        var body = new Grid();
+        Grid.SetRow(body, 1);
+        root.Children.Add(body);
+
+        var wide = new Grid { ColumnSpacing = 12 };
+        for (var i = 0; i < 3; i++)
+            wide.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var wideUpdates = new StackPanel { Spacing = 8 };
+        var wideInfo = new StackPanel { Spacing = 8 };
+        var wideBadges = new StackPanel { Spacing = 8 };
+        UIElement MakePane(string title, StackPanel paneContent)
         {
-            if (_session is null) throw new InvalidOperationException("Sign in to view your profile.");
-            using var document = await _api.GetProfileAsync(_session);
-            var user = document.RootElement;
-            panel.Children.Remove(status);
-            var name = ProfileValue(user, "name_display", "nameDisplay", "display_name", "name") ?? "Schoology user";
-            panel.Children.Add(Surface(Text(name, 20, true)));
-            AddProfileField(panel, "Username", ProfileValue(user, "username"));
-            AddProfileField(panel, "Email", ProfileValue(user, "primary_email", "email"));
-            AddProfileField(panel, "School", ProfileValue(user, "school_title", "school_name"));
-            AddProfileField(panel, "User ID", ProfileValue(user, "id"));
+            var panel = new StackPanel { Spacing = 10 };
+            panel.Children.Add(Text(title, 17, true));
+            panel.Children.Add(new ScrollViewer { Content = paneContent,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
+            return Surface(panel, new Thickness(12));
         }
-        catch (Exception ex) { status.Text = $"Unable to load profile: {ex.Message}"; }
+        wide.Children.Add(MakePane("Updates", wideUpdates));
+        var infoPane = MakePane("Info", wideInfo);
+        Grid.SetColumn(infoPane, 1);
+        wide.Children.Add(infoPane);
+        var badgesPane = MakePane("Badges", wideBadges);
+        Grid.SetColumn(badgesPane, 2);
+        wide.Children.Add(badgesPane);
+
+        var narrow = new Grid { RowSpacing = 8 };
+        narrow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        narrow.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var selector = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Stretch };
+        var updatesTab = new SelectorBarItem { Text = "Updates" };
+        var infoTab = new SelectorBarItem { Text = "Info" };
+        var badgesTab = new SelectorBarItem { Text = "Badges" };
+        selector.Items.Add(updatesTab);
+        selector.Items.Add(infoTab);
+        selector.Items.Add(badgesTab);
+        selector.SelectedItem = updatesTab;
+        Grid.SetRow(selector, 0);
+        narrow.Children.Add(selector);
+        var narrowFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
+        Grid.SetRow(narrowFrame, 1);
+        narrow.Children.Add(narrowFrame);
+
+        JsonElement userData = default;
+        IReadOnlyList<SchoologyApiRecord> updateRecords = [];
+        IReadOnlyList<SchoologyApiRecord> badgeRecords = [];
+        string? updatesError = null;
+        string? badgesError = null;
+        var loaded = false;
+
+        StackPanel BuildTabContent(string tab)
+        {
+            var panel = new StackPanel { Spacing = 8, Margin = new Thickness(8) };
+            if (tab == "Info")
+            {
+                AddProfileField(panel, "Email", ProfileValue(userData, "primary_email", "primaryEmail", "email"));
+                AddProfileField(panel, "Username", ProfileValue(userData, "username"));
+                AddProfileField(panel, "First Name", ProfileValue(userData, "first_name", "firstName", "name_first"));
+                AddProfileField(panel, "Last Name", ProfileValue(userData, "last_name", "lastName", "name_last"));
+                AddProfileField(panel, "School", ProfileValue(userData, "school_name", "school_title"));
+                if (panel.Children.Count == 0) panel.Children.Add(EmptyState("No profile information available."));
+            }
+            else if (tab == "Badges")
+            {
+                if (badgesError is not null) panel.Children.Add(EmptyState("Unable to load badges.", badgesError));
+                else if (badgeRecords.Count == 0) panel.Children.Add(EmptyState("No badges."));
+                else foreach (var badge in badgeRecords)
+                {
+                    var title = ProfileValue(badge.Data, "name", "title", "badge_name") ?? badge.Title;
+                    var description = ProfileValue(badge.Data, "description", "body", "message");
+                    var card = new StackPanel { Spacing = 5 };
+                    card.Children.Add(Text(title, 14, true));
+                    if (!string.IsNullOrWhiteSpace(description)) card.Children.Add(Text(StripMarkup(description), 12));
+                    panel.Children.Add(Surface(card, new Thickness(12)));
+                }
+            }
+            else
+            {
+                if (updatesError is not null) panel.Children.Add(EmptyState("Unable to load profile updates.", updatesError));
+                else if (updateRecords.Count == 0) panel.Children.Add(EmptyState("No updates."));
+                else foreach (var update in updateRecords)
+                    panel.Children.Add(BuildUpdateCard("Profile", userId, update, userData));
+            }
+            return panel;
+        }
+
+        void ShowNarrowTab()
+        {
+            if (!loaded)
+            {
+                narrowFrame.Content = LoadingStatus("Loading profile…", out _);
+                return;
+            }
+            var tab = selector.SelectedItem == infoTab ? "Info" :
+                selector.SelectedItem == badgesTab ? "Badges" : "Updates";
+            narrowFrame.Content = new ScrollViewer { Content = BuildTabContent(tab),
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        }
+        selector.SelectionChanged += (_, _) => ShowNarrowTab();
+        ShowNarrowTab();
+
+        body.Children.Add(wide);
+        body.Children.Add(narrow);
+        void UpdateLayout(double width)
+        {
+            var isWide = width >= 1000;
+            wide.Visibility = isWide ? Visibility.Visible : Visibility.Collapsed;
+            narrow.Visibility = isWide ? Visibility.Collapsed : Visibility.Visible;
+        }
+        body.SizeChanged += (_, args) => UpdateLayout(args.NewSize.Width);
+        UpdateLayout(_root.ActualWidth);
+
+        async Task LoadProfileAsync()
+        {
+            try
+            {
+                if (session is null || userId <= 0) throw new InvalidOperationException("Sign in to view this profile.");
+                using var profileDocument = userId == session.UserId
+                    ? await _api.GetProfileAsync(session)
+                    : await _api.GetUserAsync(session, userId);
+                var profileRoot = profileDocument.RootElement;
+                userData = profileRoot.ValueKind == JsonValueKind.Object &&
+                    profileRoot.TryGetProperty("user", out var nestedUser) ? nestedUser.Clone() : profileRoot.Clone();
+
+                nameText.Text = ProfileValue(userData, "name_display", "display_name", "name", "username") ?? "Schoology user";
+                schoolText.Text = ProfileValue(userData, "school_name", "school_title") ??
+                    (userData.ValueKind == JsonValueKind.Object && userData.TryGetProperty("school", out var school)
+                        ? ProfileValue(school, "school_name", "title", "name") ?? "" : "");
+                var picture = ProfileValue(userData, "picture_url", "pictureUrl", "picture", "photo_url", "avatar_url");
+                if (!string.IsNullOrWhiteSpace(picture)) _ = LoadPostImageAsync(avatarImage, picture);
+
+                try
+                {
+                    using var updatesDocument = await _auth.GetApiJsonAsync(session, $"users/{userId}/updates",
+                        new Dictionary<string, string>
+                        {
+                            ["start"] = "0", ["limit"] = "20", ["with_attachments"] = "TRUE", ["richtext"] = "1"
+                        });
+                    updateRecords = SchoologyApiClient.ReadRecords(updatesDocument.RootElement, "update", "updates", "update_list");
+                }
+                catch (Exception ex) { updatesError = ex.Message; }
+
+                try
+                {
+                    using var badgesDocument = await _auth.GetApiJsonAsync(session, $"users/{userId}/badges", null);
+                    badgeRecords = SchoologyApiClient.ReadRecords(badgesDocument.RootElement, "badge", "badges", "items");
+                }
+                catch (Exception ex) { badgesError = ex.Message; }
+
+                loaded = true;
+                wideUpdates.Children.Clear();
+                wideInfo.Children.Clear();
+                wideBadges.Children.Clear();
+                foreach (var child in BuildTabContent("Updates").Children.ToArray()) wideUpdates.Children.Add(child);
+                foreach (var child in BuildTabContent("Info").Children.ToArray()) wideInfo.Children.Add(child);
+                foreach (var child in BuildTabContent("Badges").Children.ToArray()) wideBadges.Children.Add(child);
+                ShowNarrowTab();
+            }
+            catch (Exception ex)
+            {
+                nameText.Text = "Profile";
+                schoolText.Text = "";
+                wideUpdates.Children.Clear();
+                wideUpdates.Children.Add(EmptyState("Unable to load profile.", ex.Message));
+                wideInfo.Children.Clear();
+                wideInfo.Children.Add(EmptyState("Unable to load profile.", ex.Message));
+                wideBadges.Children.Clear();
+                wideBadges.Children.Add(EmptyState("Unable to load profile.", ex.Message));
+                loaded = true;
+                ShowNarrowTab();
+            }
+        }
+
+        wideUpdates.Children.Add(LoadingStatus("Loading updates…", out _));
+        wideInfo.Children.Add(LoadingStatus("Loading profile information…", out _));
+        wideBadges.Children.Add(LoadingStatus("Loading badges…", out _));
+        _ = LoadProfileAsync();
+        return root;
     }
 
     private void AddProfileField(StackPanel panel, string label, string? value)
