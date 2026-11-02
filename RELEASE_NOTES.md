@@ -1,5 +1,15 @@
 # Release notes
 
+## [2026.10.0-port.55] - 2026-11-01
+
+- Use neutral black/gray and white/gray text, navigation selection, and card-outline colors in Light and Dark themes while keeping Schoology-blue buttons and icons.
+- Request attachments and rich text for course, group, and school update feeds; render the complete update attachment payload, including separate file attachments, and keep non-image files visible even when they have thumbnails.
+- Resolve course-material and post document API URLs to their actual file attachments so supported PDFs/images offer native View or Download actions and other files download directly.
+- Normalize poll-option response shapes so official poll models render when options are wrapped or returned as a single object.
+- Load PDF previews from an in-memory stream so the temporary file is not locked; serialize page rendering and release the stream before navigating back.
+- Apply the current Schoology theme to title-bar Create actions.
+
+
 ## [2026.10.0-port.54] - 2026-11-01
 
 - Restore the generated WinUI PRI resource index beside the unpackaged executable so WinUI can resolve its built-in theme dictionaries during application startup.

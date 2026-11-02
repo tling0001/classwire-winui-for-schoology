@@ -108,13 +108,15 @@ internal sealed class SchoologyApiClient
                 ? new Dictionary<string, string> { ["start"] = "0", ["limit"] = "200", ["with_attachments"] = "TRUE" }
                 : tab == "Assignments"
                     ? new Dictionary<string, string> { ["start"] = "0", ["limit"] = "100", ["with_attachments"] = "TRUE", ["richtext"] = "1" }
-                    : tab == "Upcoming"
-                        ? new Dictionary<string, string>
-                        {
-                            ["start_date"] = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-                            ["start"] = "0", ["limit"] = "20"
-                        }
-                        : new Dictionary<string, string> { ["limit"] = "100" };
+                    : tab == "Updates"
+                        ? new Dictionary<string, string> { ["start"] = "0", ["limit"] = "100", ["with_attachments"] = "TRUE", ["richtext"] = "1" }
+                        : tab == "Upcoming"
+                            ? new Dictionary<string, string>
+                            {
+                                ["start_date"] = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                                ["start"] = "0", ["limit"] = "20"
+                            }
+                            : new Dictionary<string, string> { ["limit"] = "100" };
         if (tab == "Discussions")
         {
             parameters["limit"] = "50";

@@ -476,10 +476,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private static SolidColorBrush Brush(string color) => new(Microsoft.UI.ColorHelper.FromArgb(
         255, Convert.ToByte(color.Substring(1, 2), 16), Convert.ToByte(color.Substring(3, 2), 16), Convert.ToByte(color.Substring(5, 2), 16)));
-    private static TextBlock Text(string value, double size = 14, bool bold = false) => new()
+    private TextBlock Text(string value, double size = 14, bool bold = false) => new()
     {
         Text = value, FontSize = size, FontWeight = bold ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal,
-        TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center
+        TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center,
+        Foreground = ThemeBrush("SchoologyTextBrush")
     };
     private Border EmptyState(string title, string? description = null)
     {
@@ -554,9 +555,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             "SchoologyBlueDarkBrush" => dark ? "#FF183A5B" : "#FF204D7B",
             "SchoologySurfaceBrush" => dark ? "#FF202428" : "#FFFFFFFF",
             "SchoologySubtleBrush" => dark ? "#FF292F34" : "#FFF2F5F7",
-            "SchoologyDividerBrush" => dark ? "#FF46515B" : "#FFCBD5DE",
-            "SchoologyTextBrush" => dark ? "#FFF3F6F8" : "#FF17212B",
-            "SchoologyMutedTextBrush" => dark ? "#FFB8C4CE" : "#FF465563",
+            "SchoologyDividerBrush" => dark ? "#FF454545" : "#FFD0D0D0",
+            "SchoologyTextBrush" => dark ? "#FFF5F5F5" : "#FF1A1A1A",
+            "SchoologyMutedTextBrush" => dark ? "#FFB8B8B8" : "#FF666666",
             _ => dark ? "#FF5B9BD5" : "#FF2E66A3"
         };
         return Brush(colorHex);
@@ -1402,6 +1403,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             VerticalAlignment = VerticalAlignment.Center
         };
         var createButton = Action("＋ Create", (_, _) => HandleTitleBarCreateClick(), true);
+        createButton.Background = ThemeBrush("SchoologyBlueBrush");
+        createButton.Foreground = Brush("#FFFFFFFF");
+        createButton.BorderBrush = ThemeBrush("SchoologyBlueBrush");
         AutomationProperties.SetAutomationId(createButton, "TitleBarCreateButton");
         _titleBarCreateButton = createButton;
         commands.Children.Add(createButton);
@@ -1446,6 +1450,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         nav.Resources["NavigationViewItemForeground"] = ThemeBrush("SchoologyTextBrush");
         nav.Resources["NavigationViewItemForegroundPointerOver"] = ThemeBrush("SchoologyTextBrush");
         nav.Resources["NavigationViewItemForegroundSelected"] = ThemeBrush("SchoologyTextBrush");
+        nav.Resources["NavigationViewItemBackgroundPointerOver"] = ThemeBrush("SchoologySubtleBrush");
+        nav.Resources["NavigationViewItemBackgroundSelected"] = ThemeBrush("SchoologySubtleBrush");
+        nav.Resources["NavigationViewSelectionIndicatorForeground"] = ThemeBrush("SchoologyBlueBrush");
         var animationsEnabled = AnimationsEnabled;
         var initialTransition = new SlideNavigationTransitionInfo { Effect = SlideNavigationTransitionEffect.FromRight };
         var sectionFrame = new Frame
@@ -3167,7 +3174,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
     }
 
-    private static StackPanel ActivityItem(string course, string title, string meta)
+    private StackPanel ActivityItem(string course, string title, string meta)
     {
         var stack = new StackPanel { Spacing = 5 };
         stack.Children.Add(Text(course.ToUpperInvariant(), 11, true));
@@ -3176,7 +3183,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return stack;
     }
 
-    private static Grid CourseRow(string name)
+    private Grid CourseRow(string name)
     {
         var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -4463,13 +4470,34 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         viewerScroll.Content = image;
 
         PdfDocument? pdf = null;
+        InMemoryRandomAccessStream? pdfStream = null;
         uint currentPage = 0;
+        var renderGate = new SemaphoreSlim(1, 1);
+        var viewerClosing = false;
+        Button previous = null!;
+        Button next = null!;
         var status = Text("", 12);
         status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
-        var back = Action("‹ Back", (_, _) =>
+        Button back = null!;
+        back = Action("‹ Back", async (_, _) =>
         {
+            if (viewerClosing) return;
+            viewerClosing = true;
+            back.IsEnabled = false;
+            previous.IsEnabled = false;
+            next.IsEnabled = false;
             _activeNativeFileViewerRoot = null;
             _refreshNativeFileViewer = null;
+            await renderGate.WaitAsync();
+            try
+            {
+                pdf = null;
+                pdfStream?.Dispose();
+                pdfStream = null;
+                image.Source = null;
+                viewerScroll.Content = null;
+            }
+            finally { renderGate.Release(); }
             try { File.Delete(previewPath); } catch { }
             onBack();
         });
@@ -4479,21 +4507,29 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var pageLabel = Text(isPdf ? "Loading PDF…" : "Image", 12);
         pageLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         pageLabel.VerticalAlignment = VerticalAlignment.Center;
-        Button previous = null!;
-        Button next = null!;
+        async Task RenderCurrentPageAsync()
+        {
+            await renderGate.WaitAsync();
+            try
+            {
+                if (viewerClosing || pdf is null) return;
+                await RenderPdfPageAsync(pdf, currentPage, image, pageLabel, status);
+            }
+            finally { renderGate.Release(); }
+        }
         previous = Action("‹", async (_, _) =>
         {
-            if (pdf is null || currentPage == 0) return;
+            if (viewerClosing || pdf is null || currentPage == 0) return;
             currentPage--;
-            await RenderPdfPageAsync(pdf, currentPage, image, pageLabel, status);
+            await RenderCurrentPageAsync();
             previous.IsEnabled = currentPage > 0;
             next.IsEnabled = currentPage + 1 < pdf.PageCount;
         });
         next = Action("›", async (_, _) =>
         {
-            if (pdf is null || currentPage + 1 >= pdf.PageCount) return;
+            if (viewerClosing || pdf is null || currentPage + 1 >= pdf.PageCount) return;
             currentPage++;
-            await RenderPdfPageAsync(pdf, currentPage, image, pageLabel, status);
+            await RenderCurrentPageAsync();
             previous.IsEnabled = currentPage > 0;
             next.IsEnabled = currentPage + 1 < pdf.PageCount;
         });
@@ -4523,15 +4559,27 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         {
             try
             {
-                var storageFile = await StorageFile.GetFileFromPathAsync(previewPath);
-                pdf = await PdfDocument.LoadFromFileAsync(storageFile);
+                var pdfBytes = await File.ReadAllBytesAsync(previewPath);
+                pdfStream = new InMemoryRandomAccessStream();
+                using (var writer = new DataWriter(pdfStream.GetOutputStreamAt(0)))
+                {
+                    writer.WriteBytes(pdfBytes);
+                    await writer.StoreAsync();
+                    await writer.FlushAsync();
+                    writer.DetachStream();
+                }
+                pdfStream.Seek(0);
+                pdf = await PdfDocument.LoadFromStreamAsync(pdfStream);
                 if (pdf.PageCount == 0) throw new InvalidOperationException("The PDF does not contain any pages.");
-                await RenderPdfPageAsync(pdf, currentPage, image, pageLabel, status);
+                await RenderCurrentPageAsync();
                 previous.IsEnabled = false;
                 next.IsEnabled = pdf.PageCount > 1;
             }
             catch (Exception ex)
             {
+                pdf = null;
+                pdfStream?.Dispose();
+                pdfStream = null;
                 status.Text = $"Unable to render this PDF: {ex.Message}";
                 pageLabel.Text = "Preview unavailable";
             }
@@ -4554,7 +4602,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
         _activeNativeFileViewerRoot = viewer;
         _refreshNativeFileViewer = () =>
-            _ = ShowNativeFileViewerAsync(previewPath, title, isPdf, originalUrl, originalFilename, originalMime, onBack);
+        {
+            viewer.Background = ThemeBrush("SchoologySubtleBrush");
+            viewerScroll.Background = ThemeBrush("SchoologySubtleBrush");
+            status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+            pageLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        };
         if (_sectionFrame is not null) NavigateMainSection(viewer, title);
         else Reset(BuildApplicationShell(title, viewer));
     }
@@ -4562,9 +4615,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private static async Task RenderPdfPageAsync(
         PdfDocument pdf, uint pageIndex, Image image, TextBlock pageLabel, TextBlock status)
     {
+        PdfPage? page = null;
         try
         {
-            var page = pdf.GetPage(pageIndex);
+            page = pdf.GetPage(pageIndex);
             using var stream = new InMemoryRandomAccessStream();
             await page.RenderToStreamAsync(stream);
             stream.Seek(0);
@@ -4573,12 +4627,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             image.Source = bitmap;
             pageLabel.Text = $"{pageIndex + 1} / {pdf.PageCount}";
             status.Text = "";
-            page.Dispose();
         }
         catch (Exception ex)
         {
             status.Text = $"Unable to render PDF page {pageIndex + 1}: {ex.Message}";
         }
+        finally { page?.Dispose(); }
     }
 
     private StackPanel BuildMaterialsList(long sectionId, IReadOnlyList<SchoologyApiRecord> initialRecords)
@@ -4707,6 +4761,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             }
             if (!string.IsNullOrWhiteSpace(rawUrl))
             {
+                if (await TryOpenDocumentAttachmentAsync(rawUrl,
+                    () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId))))
+                    return;
                 if (!rawUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
                     !rawUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
                     rawUrl = "https://app.schoology.com/" + rawUrl.TrimStart('/');
@@ -5074,6 +5131,26 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return default;
     }
 
+    private static JsonElement[] ReadJsonItems(JsonElement value, params string[] collectionKeys)
+    {
+        if (value.ValueKind == JsonValueKind.Array)
+            return value.EnumerateArray().Select(item => item.Clone()).ToArray();
+        if (value.ValueKind != JsonValueKind.Object) return Array.Empty<JsonElement>();
+
+        foreach (var key in collectionKeys)
+            if (value.TryGetProperty(key, out var nested) &&
+                (nested.ValueKind is JsonValueKind.Array or JsonValueKind.Object))
+            {
+                var items = ReadJsonItems(nested, collectionKeys);
+                if (items.Length > 0) return items;
+            }
+
+        return JsonLong(value, "id", "poll_option_id", "pollOptionId", "pollOptionID") > 0 ||
+            ProfileValue(value, "title", "name", "text") is not null
+            ? new[] { value.Clone() }
+            : Array.Empty<JsonElement>();
+    }
+
     private static List<(JsonElement Item, string Kind)> ReadAttachmentItems(JsonElement root)
     {
         var result = new List<(JsonElement Item, string Kind)>();
@@ -5099,7 +5176,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var itemKind = kind;
             if (itemKind == "container")
             {
-                if (declaredType.Contains("file") || fileUrl is not null || convertedUrl is not null ||
+                if (declaredType.Contains("file") || declaredType is "image" or "photo" ||
+                    fileUrl is not null || convertedUrl is not null ||
                     mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                     itemKind = "file";
                 else if (declaredType.Contains("embed") || ProfileValue(node, "embed_code", "embedCode") is not null) itemKind = "embed";
@@ -5134,6 +5212,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     case "video": Visit(property.Value, "video", depth + 1); break;
                     case "embeds":
                     case "embed": Visit(property.Value, "embed", depth + 1); break;
+                    case "externaltools":
+                    case "externaltool": Visit(property.Value, "link", depth + 1); break;
+                    case "annotationfiles": Visit(property.Value, "file", depth + 1); break;
                 }
             }
         }
@@ -5153,6 +5234,33 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (!opened) await ShowApiErrorAsync("Unable to open link", "Windows could not open this link in the default browser.");
     }
 
+    private async Task<bool> TryOpenDocumentAttachmentAsync(string? rawUrl, Action onBack)
+    {
+        if (_session is null || string.IsNullOrWhiteSpace(rawUrl)) return false;
+        var candidate = rawUrl.Trim();
+        if (candidate.StartsWith("/", StringComparison.Ordinal))
+            candidate = "https://api.schoology.com" + candidate;
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)) return false;
+        var match = Regex.Match(uri.AbsolutePath, @"/(?:v1/)?sections/(\d+)/documents/(\d+)(?:/|$)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!match.Success ||
+            !long.TryParse(match.Groups[1].Value, out var sectionId) ||
+            !long.TryParse(match.Groups[2].Value, out var documentId)) return false;
+
+        using var response = await _api.GetDocumentAsync(_session, sectionId, documentId);
+        var documentData = response.RootElement.TryGetProperty("document", out var nested)
+            ? nested : response.RootElement;
+        var file = FirstFileAttachment(documentData);
+        if (file.ValueKind != JsonValueKind.Object)
+        {
+            var fileItem = ReadAttachmentItems(documentData).FirstOrDefault(item => item.Kind == "file");
+            file = fileItem.Item;
+        }
+        if (file.ValueKind != JsonValueKind.Object) return false;
+        await ShowAttachmentOptionsAsync(file, onBack);
+        return true;
+    }
+
     private async Task ShowAttachmentOptionsAsync(JsonElement attachment, Action onBack)
     {
         var name = SafeMaterialFileName(ProfileValue(attachment, "filename", "fileName", "file_title",
@@ -5168,6 +5276,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             (convertedStatus.Length == 0 || convertedStatus is "success" or "converted" or "1");
         var thumbnail = ProfileValue(attachment, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
         originalUrl ??= ProfileValue(attachment, "url", "href") ?? convertedUrl ?? thumbnail;
+        if (!string.IsNullOrWhiteSpace(originalUrl) &&
+            await TryOpenDocumentAttachmentAsync(originalUrl, onBack)) return;
         if (string.IsNullOrWhiteSpace(originalUrl))
         {
             var link = ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url");
@@ -5250,9 +5360,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (string.IsNullOrWhiteSpace(url)) continue;
 
             var declaredType = ProfileValue(attachment, "type", "attachment_type", "attachmentType")?.ToLowerInvariant() ?? "";
-            var isImage = declaredType == "image" || mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
-                MaterialExtension(name, mime) is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".svg" or ".heic" or ".heif" or ".avif" ||
-                !string.IsNullOrWhiteSpace(thumbnail);
+            var isImage = declaredType is "image" or "photo" ||
+                mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+                MaterialExtension(name, mime) is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".svg" or ".heic" or ".heif" or ".avif";
             if (isImage && kind == "video" && !string.IsNullOrWhiteSpace(thumbnail))
             {
                 var videoPreview = new Image
@@ -5349,10 +5459,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private RichTextBlock CreateRichContent(string? markup, double fontSize)
     {
-        return SchoologyRichContent.Create(markup, fontSize, async uri =>
+        var content = SchoologyRichContent.Create(markup, fontSize, async uri =>
         {
             await OpenExternalLinkAsync(uri.AbsoluteUri);
         });
+        content.Foreground = ThemeBrush("SchoologyTextBrush");
+        return content;
     }
 
     private Border BuildUpdateCard(string kind, long entityId, SchoologyApiRecord update, JsonElement? authorProfile = null)
@@ -5401,9 +5513,6 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
         if (update.Data.ValueKind == JsonValueKind.Object)
         {
-        var attachmentRoot = FindJsonPropertyRecursive(update.Data, "attachments", "attachment", "files", "file-attachment");
-        if (attachmentRoot.ValueKind is JsonValueKind.Array or JsonValueKind.Object)
-        {
             var returnToPost = () =>
             {
                 if (kind == "Recent") ShowHome("Recent Activity");
@@ -5416,9 +5525,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     else ShowHome("Recent Activity");
                 }
             };
-            var attachmentPanel = BuildAttachmentControls(attachmentRoot, returnToPost);
+            var attachmentPanel = BuildAttachmentControls(update.Data, returnToPost);
             if (attachmentPanel.Children.Count > 0) card.Children.Add(attachmentPanel);
-        }
             var poll = FindJsonPropertyRecursive(update.Data,
                 "pollUpdateModel", "poll_update_model", "poll", "poll_update", "pollUpdate");
             if (poll.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
@@ -5428,12 +5536,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 var options = FindJsonPropertyRecursive(poll,
                     "options", "pollOptionsList", "poll_options", "pollOptions", "pollList", "poll_list",
                     "option", "poll_option");
-                if (options.ValueKind == JsonValueKind.Object)
-                {
-                    var nestedOptions = FindJsonPropertyRecursive(options, "option", "poll_option", "options");
-                    if (nestedOptions.ValueKind is JsonValueKind.Array or JsonValueKind.Object) options = nestedOptions;
-                }
-                if (options.ValueKind == JsonValueKind.Array)
+                var optionItems = ReadJsonItems(options,
+                    "option", "poll_option", "options", "pollOptionsList", "poll_options", "pollOptions", "pollList", "poll_list");
+                if (optionItems.Length > 0)
                 {
                     var pollList = new ListView
                     {
@@ -5444,14 +5549,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                         Background = new SolidColorBrush(Colors.Transparent)
                     };
                     AutomationProperties.SetName(pollList, "Poll options");
-                    void RenderPollOptions(JsonElement pollOptions)
+                    void RenderPollOptions(IReadOnlyList<JsonElement> pollOptions)
                     {
                         pollList.Items.Clear();
-                        if (pollOptions.ValueKind != JsonValueKind.Array) return;
-                        var optionItems = pollOptions.EnumerateArray().ToArray();
-                        var totalVotes = optionItems.Sum(option =>
+                        if (pollOptions.Count == 0) return;
+                        var currentOptions = pollOptions;
+                        var totalVotes = pollOptions.Sum(option =>
                             JsonLong(option, "count", "votes", "vote_count", "voteCount", "total_votes", "totalVotes", "num_votes", "numVotes"));
-                        foreach (var option in optionItems)
+                        foreach (var option in pollOptions)
                         {
                             var optionId = JsonLong(option, "id", "poll_option_id", "pollOptionId", "pollOptionID");
                             var selected = JsonBoolean(option, "selected", "is_selected", "isSelected");
@@ -5478,24 +5583,21 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                                 try
                                 {
                                     using var vote = await _api.VotePollAsync(_session, updateId, optionId, !selected);
-                                    var updated = vote.RootElement;
-                                    if (updated.ValueKind == JsonValueKind.Object)
+                                    var updatedModel = FindJsonPropertyRecursive(vote.RootElement,
+                                        "pollUpdateModel", "poll_update_model", "poll", "poll_update", "pollUpdate");
+                                    if (updatedModel.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+                                        updatedModel = vote.RootElement;
+                                    var updatedOptions = FindJsonPropertyRecursive(updatedModel,
+                                        "options", "pollOptionsList", "poll_options", "pollOptions", "pollList", "poll_list",
+                                        "option", "poll_option");
+                                    var refreshedOptions = ReadJsonItems(updatedOptions,
+                                        "option", "poll_option", "options", "pollOptionsList", "poll_options", "pollOptions", "pollList", "poll_list");
+                                    if (refreshedOptions.Length > 0)
                                     {
-                                        foreach (var modelKey in new[] { "pollUpdateModel", "poll_update_model", "poll", "poll_update" })
-                                            if (updated.TryGetProperty(modelKey, out var model)) { updated = model; break; }
+                                        RenderPollOptions(refreshedOptions);
+                                        return;
                                     }
-                                    if (updated.ValueKind == JsonValueKind.Object)
-                                        foreach (var key in new[] { "options", "pollOptionsList", "poll_options", "pollOptions", "pollList", "poll_list" })
-                                            if (updated.TryGetProperty(key, out var updatedOptions))
-                                            {
-                                                if (updatedOptions.ValueKind == JsonValueKind.Object && updatedOptions.TryGetProperty("option", out var optionArray)) updatedOptions = optionArray;
-                                                if (updatedOptions.ValueKind == JsonValueKind.Array)
-                                                {
-                                                    RenderPollOptions(updatedOptions);
-                                                    return;
-                                                }
-                                            }
-                                    RenderPollOptions(options);
+                                    RenderPollOptions(currentOptions);
                                 }
                                 catch (Exception ex) { await ShowApiErrorAsync("Unable to vote in poll", ex.Message); }
                                 finally { item.IsEnabled = true; }
@@ -5503,7 +5605,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                             pollList.Items.Add(item);
                         }
                     }
-                    RenderPollOptions(options);
+                    RenderPollOptions(optionItems);
                     pollPanel.Children.Add(pollList);
                 }
                 else pollPanel.Children.Add(Text("Poll options are not available.", 12));
