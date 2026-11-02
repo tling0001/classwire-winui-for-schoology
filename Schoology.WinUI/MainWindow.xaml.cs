@@ -477,8 +477,27 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { App.WriteStartupLog("Could not persist window state.", ex); }
     }
 
-    private static SolidColorBrush Brush(string color) => new(Microsoft.UI.ColorHelper.FromArgb(
-        255, Convert.ToByte(color.Substring(1, 2), 16), Convert.ToByte(color.Substring(3, 2), 16), Convert.ToByte(color.Substring(5, 2), 16)));
+    private static SolidColorBrush Brush(string color)
+    {
+        // ThemeBrush supplies #AARRGGBB values, while a few call sites use
+        // #RRGGBB. Parse both formats correctly; treating the alpha byte as
+        // red made all opaque themed colors render with a bright-red channel.
+        var hex = color.TrimStart('#');
+        return hex.Length switch
+        {
+            6 => new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(
+                255,
+                Convert.ToByte(hex.Substring(0, 2), 16),
+                Convert.ToByte(hex.Substring(2, 2), 16),
+                Convert.ToByte(hex.Substring(4, 2), 16))),
+            8 => new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(
+                Convert.ToByte(hex.Substring(0, 2), 16),
+                Convert.ToByte(hex.Substring(2, 2), 16),
+                Convert.ToByte(hex.Substring(4, 2), 16),
+                Convert.ToByte(hex.Substring(6, 2), 16))),
+            _ => throw new FormatException($"Expected #RRGGBB or #AARRGGBB color, received '{color}'.")
+        };
+    }
     private TextBlock Text(string value, double size = 14, bool bold = false) => new()
     {
         Text = value, FontSize = size, FontWeight = bold ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal,
@@ -5499,6 +5518,7 @@ try {
             var previous = history.Pop();
             Render(previous.Records);
             breadcrumb.Text = previous.Title;
+            back.Content = $"‹ Back to {breadcrumb.Text}";
             var targetItem = list.Items.OfType<ListViewItem>().FirstOrDefault(candidate =>
                 candidate.Tag is SchoologyApiRecord parentRecord &&
                 JsonLong(parentRecord.Data, "id", "folder_id", "folderId") == previous.FolderId);
@@ -5651,6 +5671,7 @@ try {
                 using var folder = await _api.GetCourseFolderAsync(_session, sectionId, folderId);
                 var records = SchoologyApiClient.ReadRecords(folder.RootElement, "folder-item", "folder_item", "folderItems", "items");
                 history.Push((current.ToArray(), breadcrumb.Text, folderId));
+                back.Content = $"‹ Back to {breadcrumb.Text}";
                 breadcrumb.Text = ProfileValue(record.Data, "title", "name") ?? record.Title;
                 back.IsEnabled = true;
                 back.Visibility = Visibility.Visible;
