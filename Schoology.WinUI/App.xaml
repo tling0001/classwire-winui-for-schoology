@@ -27,6 +27,21 @@
           <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FF1A1A1A" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FF1A1A1A" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FF1A1A1A" />
+          <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#FF1A1A1A" />
+          <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#FF666666" />
+          <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#FF777777" />
+          <SolidColorBrush x:Key="TextFillColorDisabledBrush" Color="#FF999999" />
+          <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#FFD0D0D0" />
+          <SolidColorBrush x:Key="ControlStrokeColorSecondaryBrush" Color="#FFB8B8B8" />
+          <SolidColorBrush x:Key="ControlStrongStrokeColorDefaultBrush" Color="#FF777777" />
+          <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#FFD0D0D0" />
+          <SolidColorBrush x:Key="CardStrokeColorDefaultSolidBrush" Color="#FFD0D0D0" />
+          <SolidColorBrush x:Key="DividerStrokeColorDefaultBrush" Color="#FFD0D0D0" />
+          <SolidColorBrush x:Key="SurfaceStrokeColorDefaultBrush" Color="#FFD0D0D0" />
+          <SolidColorBrush x:Key="CardBackgroundFillColorDefaultBrush" Color="#FFFFFFFF" />
+          <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#FFFFFFFF" />
+          <SolidColorBrush x:Key="SolidBackgroundFillColorSecondaryBrush" Color="#FFF7F7F7" />
+          <SolidColorBrush x:Key="SubtleFillColorSecondaryBrush" Color="#FFF2F5F7" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Dark">
           <SolidColorBrush x:Key="SchoologyBlueBrush" Color="#FF5B9BD5" />
@@ -45,27 +60,55 @@
           <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FFF5F5F5" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FFF5F5F5" />
           <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FFF5F5F5" />
+          <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#FFF5F5F5" />
+          <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#FFB8B8B8" />
+          <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#FF929292" />
+          <SolidColorBrush x:Key="TextFillColorDisabledBrush" Color="#FF666666" />
+          <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#FF454545" />
+          <SolidColorBrush x:Key="ControlStrokeColorSecondaryBrush" Color="#FF555555" />
+          <SolidColorBrush x:Key="ControlStrongStrokeColorDefaultBrush" Color="#FF777777" />
+          <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#FF454545" />
+          <SolidColorBrush x:Key="CardStrokeColorDefaultSolidBrush" Color="#FF454545" />
+          <SolidColorBrush x:Key="DividerStrokeColorDefaultBrush" Color="#FF454545" />
+          <SolidColorBrush x:Key="SurfaceStrokeColorDefaultBrush" Color="#FF454545" />
+          <SolidColorBrush x:Key="CardBackgroundFillColorDefaultBrush" Color="#FF202428" />
+          <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#FF202428" />
+          <SolidColorBrush x:Key="SolidBackgroundFillColorSecondaryBrush" Color="#FF292F34" />
+          <SolidColorBrush x:Key="SubtleFillColorSecondaryBrush" Color="#FF292F34" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="HighContrast">
-          <!-- Use system color resources rather than StaticResource brush aliases. -->
-          <SolidColorBrush x:Key="SchoologyBlueBrush" Color="{ThemeResource SystemColorHighlightColor}" />
-          <SolidColorBrush x:Key="SchoologyBlueDarkBrush" Color="{ThemeResource SystemColorHighlightColor}" />
-          <SolidColorBrush x:Key="SchoologySurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
-          <SolidColorBrush x:Key="SchoologySubtleBrush" Color="{ThemeResource SystemColorWindowColor}" />
-          <SolidColorBrush x:Key="SchoologyDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="SchoologyTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="SchoologyMutedTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="SchoologyWarningTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="SchoologySuccessTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="SystemControlForegroundBaseHighBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="SystemControlForegroundBaseMediumBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="TextControlForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="NavigationViewItemForeground" Color="{ThemeResource SystemColorWindowTextColor}" />
-          <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
-          <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="{ThemeResource SystemColorHighlightTextColor}" />
+          <StaticResource x:Key="SchoologyBlueBrush" ResourceKey="SystemColorHighlightColorBrush" />
+          <StaticResource x:Key="SchoologyBlueDarkBrush" ResourceKey="SystemColorHighlightColorBrush" />
+          <StaticResource x:Key="SchoologySurfaceBrush" ResourceKey="SystemColorWindowColorBrush" />
+          <StaticResource x:Key="SchoologySubtleBrush" ResourceKey="SystemColorWindowColorBrush" />
+          <StaticResource x:Key="SchoologyDividerBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="SchoologyTextBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="SchoologyMutedTextBrush" ResourceKey="SystemColorGrayTextColorBrush" />
+          <StaticResource x:Key="SchoologyWarningTextBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="SchoologySuccessTextBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="TextFillColorPrimaryBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="TextFillColorSecondaryBrush" ResourceKey="SystemColorGrayTextColorBrush" />
+          <StaticResource x:Key="TextFillColorTertiaryBrush" ResourceKey="SystemColorGrayTextColorBrush" />
+          <StaticResource x:Key="TextFillColorDisabledBrush" ResourceKey="SystemColorGrayTextColorBrush" />
+          <StaticResource x:Key="ControlStrokeColorDefaultBrush" ResourceKey="SystemColorButtonTextColorBrush" />
+          <StaticResource x:Key="ControlStrokeColorSecondaryBrush" ResourceKey="SystemColorButtonTextColorBrush" />
+          <StaticResource x:Key="ControlStrongStrokeColorDefaultBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="CardStrokeColorDefaultBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="CardStrokeColorDefaultSolidBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="DividerStrokeColorDefaultBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="SurfaceStrokeColorDefaultBrush" ResourceKey="SystemColorWindowTextColorBrush" />
+          <StaticResource x:Key="CardBackgroundFillColorDefaultBrush" ResourceKey="SystemColorWindowColorBrush" />
+          <StaticResource x:Key="SolidBackgroundFillColorBaseBrush" ResourceKey="SystemColorWindowColorBrush" />
+          <StaticResource x:Key="SolidBackgroundFillColorSecondaryBrush" ResourceKey="SystemColorWindowColorBrush" />
+          <StaticResource x:Key="SubtleFillColorSecondaryBrush" ResourceKey="SystemColorWindowColorBrush" />
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
+      <Style TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+      </Style>
+      <Style TargetType="RichTextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+      </Style>
     </ResourceDictionary>
   </Application.Resources>
 </Application>

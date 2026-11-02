@@ -1,5 +1,17 @@
 # Release notes
 
+## [2026.10.0-port.56] - 2026-11-02
+
+- Use the native WinUI AccentButtonStyle for the title-bar Create action instead of custom button colors and padding.
+- Switch the main NavigationView to responsive Auto mode so its normal left pane becomes a compact overlay on narrow windows.
+- Center the course dashboard's wrapping course cards and synchronize dashboard course selection with the matching expanded item in the left navigation.
+- Apply WinUI 3 semantic text, card-stroke, control-stroke, divider, and surface brushes in Light, Dark, and High Contrast themes to remove device-accent tint from ordinary text and card outlines.
+- Render PDF pages as a continuous vertically scrollable document, retain previous/next page jump buttons, and size each page to the viewer width at initial zoom.
+- Add distinct native Fluent glyphs for Word, PowerPoint, and Excel document attachments.
+- Format notification body placeholders using positional and sequential BodyArg values, and map notification icons to the official Schoology notification types.
+- Render poll options supplied directly on recent-activity update objects, and recognize additional image/photo attachment collections.
+- Submit poll votes as JSON, matching the official Android ROPollVote request body and the classic Tauri port's JSON request mode.
+
 ## [2026.10.0-port.55] - 2026-11-01
 
 - Use neutral black/gray and white/gray text, navigation selection, and card-outline colors in Light and Dark themes while keeping Schoology-blue buttons and icons.

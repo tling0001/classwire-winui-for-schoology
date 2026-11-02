@@ -40,6 +40,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private string _lastRenderedPage = "splash";
     private string _section = "Recent Activity";
     private NavigationView? _appNavigation;
+    private bool _syncingNavigationSelection;
     private Frame? _sectionFrame;
     private string _selectedEntity = string.Empty;
     private long _selectedEntityId;
@@ -1402,10 +1403,13 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center
         };
-        var createButton = Action("＋ Create", (_, _) => HandleTitleBarCreateClick(), true);
-        createButton.Background = ThemeBrush("SchoologyBlueBrush");
-        createButton.Foreground = Brush("#FFFFFFFF");
-        createButton.BorderBrush = ThemeBrush("SchoologyBlueBrush");
+        var createButton = new Button
+        {
+            Content = "＋ Create",
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        createButton.Click += (_, _) => HandleTitleBarCreateClick();
         AutomationProperties.SetAutomationId(createButton, "TitleBarCreateButton");
         _titleBarCreateButton = createButton;
         commands.Children.Add(createButton);
@@ -1418,7 +1422,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
         var nav = new NavigationView
         {
-            PaneDisplayMode = NavigationViewPaneDisplayMode.Left,
+            PaneDisplayMode = NavigationViewPaneDisplayMode.Auto,
             IsPaneOpen = true,
             IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
             IsSettingsVisible = false,
@@ -1520,7 +1524,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         });
         nav.SelectionChanged += (_, args) =>
         {
-            if (args.SelectedItem is not NavigationViewItem item) return;
+            if (_syncingNavigationSelection || args.SelectedItem is not NavigationViewItem item) return;
             if (item.Tag is string target && target.Contains(':'))
             {
                 var parts = target.Split(':', 2);
@@ -1942,6 +1946,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
+    private static ItemsWrapGrid? FindItemsWrapGrid(DependencyObject root)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is ItemsWrapGrid panel) return panel;
+            var nested = FindItemsWrapGrid(child);
+            if (nested is not null) return nested;
+        }
+        return null;
+    }
+
     private GridView BuildCourseDashboardContent()
     {
         // Tauri uses responsive course cards with a wide image, title and period.
@@ -1951,11 +1967,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             SelectionMode = ListViewSelectionMode.None,
             IsItemClickEnabled = false,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Top,
             Padding = new Thickness(12),
             Background = new SolidColorBrush(Colors.Transparent)
         };
         AutomationProperties.SetAutomationId(grid, "HomeCourseDashboardGrid");
+        grid.Loaded += (_, _) =>
+        {
+            var itemsPanel = FindItemsWrapGrid(grid);
+            if (itemsPanel is not null) itemsPanel.HorizontalAlignment = HorizontalAlignment.Center;
+        };
         if (_courses.Count == 0)
         {
             grid.Items.Add(new GridViewItem { Content = EmptyState("No courses were returned for this account.") });
@@ -2376,14 +2398,23 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     record.Data.TryGetProperty("body_args", out var bodyArgs) ? bodyArgs :
                     record.Data.ValueKind == JsonValueKind.Object &&
                     record.Data.TryGetProperty("bodyArgs", out var bodyArgsCamel) ? bodyArgsCamel : default;
-                if (args.ValueKind == JsonValueKind.Array)
-                    foreach (var arg in args.EnumerateArray())
-                        body = body.Replace("%s", ProfileValue(arg, "title", "name") ?? "", StringComparison.Ordinal);
+                body = FormatNotificationBody(body, args);
                 var type = (ProfileValue(record.Data, "type", "notification_type", "notificationType") ?? "").ToLowerInvariant();
-                var iconGlyph = type.Contains("grade") ? "\uE8A5" :
-                    type.Contains("assignment") || type.Contains("assessment") ? "\uE8F1" :
-                    type.Contains("comment") ? "\uE90A" :
-                    type.Contains("event") ? "\uE787" : "\uE713";
+                var realm = (ProfileValue(record.Data, "realm") ?? "").ToLowerInvariant();
+                var iconGlyph = type switch
+                {
+                    "grade_add" => "\uE8A5",
+                    "grade_item_submit" => "\uE8F1",
+                    "badge_award" => "\uE734",
+                    "course_materials_add" => "\uE8B7",
+                    "comment_add" or "comment_private_add" => "\uE90A",
+                    "discussion_add" when realm == "schools" => "\uE8BD",
+                    "discussion_add" when realm == "groups" => "\uE8B7",
+                    "event_add" or "event_update" => "\uE787",
+                    _ when type.Contains("assignment") || type.Contains("assessment") => "\uE8F1",
+                    _ when type.Contains("event") => "\uE787",
+                    _ => "\uE713"
+                };
                 var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(10, 12, 10, 12) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -2422,6 +2453,24 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             list.Items.Add(new ListViewItem { Content = EmptyState("Unable to load notifications", ex.Message) });
             list.Items.Add(new ListViewItem { Content = Action("Retry", async (_, _) => await LoadNotificationsAsync(list)) });
         }
+    }
+
+    private static string FormatNotificationBody(string body, JsonElement bodyArgs)
+    {
+        if (string.IsNullOrEmpty(body) || bodyArgs.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+            return body;
+        var args = ReadJsonItems(bodyArgs, "body_arg", "body_args", "items");
+        if (args.Length == 0) return body;
+        var sequentialIndex = 0;
+        return Regex.Replace(body, @"%(?:(\d+)\$|<)?s", match =>
+        {
+            var index = match.Groups[1].Success
+                ? (int.TryParse(match.Groups[1].Value, out var positional) ? positional - 1 : -1)
+                : sequentialIndex++;
+            if (index < 0 || index >= args.Length) return match.Value;
+            var value = ProfileValue(args[index], "title", "name", "text") ?? args[index].ToString();
+            return StripMarkup(value);
+        });
     }
 
     private static string? FindNotificationLink(JsonElement element)
@@ -3202,6 +3251,22 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private void ShowUpcoming() => ShowHome("Upcoming");
 
+    private void SyncEntityNavigationSelection(string kind, SchoologyEntity? entity)
+    {
+        if (_appNavigation is null || entity is null || kind is not ("Courses" or "Groups")) return;
+        var parent = _appNavigation.MenuItems.OfType<NavigationViewItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag as string, kind, StringComparison.Ordinal));
+        if (parent is null) return;
+        parent.IsExpanded = true;
+        var prefix = kind == "Groups" ? "group:" : "course:";
+        var child = parent.MenuItems.OfType<NavigationViewItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag as string, prefix + entity.Id, StringComparison.Ordinal));
+        if (child is null) return;
+        _syncingNavigationSelection = true;
+        try { _appNavigation.SelectedItem = child; }
+        finally { _syncingNavigationSelection = false; }
+    }
+
     private void ShowThreePane(string kind, SchoologyEntity? initialEntity = null)
     {
         var previousPage = _page;
@@ -3212,6 +3277,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (_selectedEntityId != initialEntity.Id || previousPage != kind) _selectedEntityTab = string.Empty;
             _selectedEntity = initialEntity.Name;
             _selectedEntityId = initialEntity.Id;
+            SyncEntityNavigationSelection(kind, initialEntity);
         }
         else { _selectedEntity = string.Empty; _selectedEntityId = 0; _selectedEntityTab = string.Empty; }
         UpdateTitleBarCreateButton(kind, _selectedEntityTab);
@@ -4450,12 +4516,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         for (var i = 0; i < 8; i++)
             toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = i == 1 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
 
+        var pdfPagesStack = new StackPanel
+        {
+            Spacing = 16,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var pdfPageImages = new List<Image>();
         var viewerScroll = new ScrollViewer
         {
             ZoomMode = ZoomMode.Enabled,
             MinZoomFactor = 0.5f,
             MaxZoomFactor = 4f,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Background = ThemeBrush("SchoologySubtleBrush")
         };
@@ -4474,6 +4546,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         uint currentPage = 0;
         var renderGate = new SemaphoreSlim(1, 1);
         var viewerClosing = false;
+        viewerScroll.SizeChanged += (_, args) =>
+        {
+            var pageWidth = Math.Max(240, args.NewSize.Width - 48);
+            pdfPagesStack.Width = Math.Max(240, args.NewSize.Width);
+            foreach (var pageImage in pdfPageImages) pageImage.Width = pageWidth;
+        };
         Button previous = null!;
         Button next = null!;
         var status = Text("", 12);
@@ -4507,31 +4585,44 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var pageLabel = Text(isPdf ? "Loading PDF…" : "Image", 12);
         pageLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         pageLabel.VerticalAlignment = VerticalAlignment.Center;
-        async Task RenderCurrentPageAsync()
+        void ScrollToCurrentPdfPage()
         {
-            await renderGate.WaitAsync();
-            try
-            {
-                if (viewerClosing || pdf is null) return;
-                await RenderPdfPageAsync(pdf, currentPage, image, pageLabel, status);
-            }
-            finally { renderGate.Release(); }
+            if (pdf is null || currentPage >= pdfPageImages.Count) return;
+            pageLabel.Text = (currentPage + 1) + " / " + pdf.PageCount;
+            pdfPageImages[(int)currentPage].StartBringIntoView();
+            previous.IsEnabled = currentPage > 0;
+            next.IsEnabled = currentPage + 1 < pdf.PageCount;
         }
-        previous = Action("‹", async (_, _) =>
+        viewerScroll.ViewChanged += (_, _) =>
+        {
+            if (viewerClosing || pdf is null || pdfPageImages.Count == 0) return;
+            var viewportCenter = viewerScroll.VerticalOffset + viewerScroll.ViewportHeight / 2;
+            var closestPage = currentPage;
+            var closestDistance = double.MaxValue;
+            for (var index = 0; index < pdfPageImages.Count; index++)
+            {
+                var pageImage = pdfPageImages[index];
+                if (pageImage.ActualHeight <= 0) continue;
+                var top = pageImage.TransformToVisual(pdfPagesStack).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
+                var distance = Math.Abs(top + pageImage.ActualHeight / 2 - viewportCenter);
+                if (distance < closestDistance) { closestDistance = distance; closestPage = (uint)index; }
+            }
+            currentPage = closestPage;
+            pageLabel.Text = (currentPage + 1) + " / " + pdf.PageCount;
+            previous.IsEnabled = currentPage > 0;
+            next.IsEnabled = currentPage + 1 < pdf.PageCount;
+        };
+        previous = Action("‹", (_, _) =>
         {
             if (viewerClosing || pdf is null || currentPage == 0) return;
             currentPage--;
-            await RenderCurrentPageAsync();
-            previous.IsEnabled = currentPage > 0;
-            next.IsEnabled = currentPage + 1 < pdf.PageCount;
+            ScrollToCurrentPdfPage();
         });
-        next = Action("›", async (_, _) =>
+        next = Action("›", (_, _) =>
         {
             if (viewerClosing || pdf is null || currentPage + 1 >= pdf.PageCount) return;
             currentPage++;
-            await RenderCurrentPageAsync();
-            previous.IsEnabled = currentPage > 0;
-            next.IsEnabled = currentPage + 1 < pdf.PageCount;
+            ScrollToCurrentPdfPage();
         });
         var zoomOut = Action("−", (_, _) => viewerScroll.ChangeView(null, null, Math.Max(0.5f, viewerScroll.ZoomFactor - 0.2f)));
         var zoomIn = Action("+", (_, _) => viewerScroll.ChangeView(null, null, Math.Min(4f, viewerScroll.ZoomFactor + 0.2f)));
@@ -4571,9 +4662,38 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 pdfStream.Seek(0);
                 pdf = await PdfDocument.LoadFromStreamAsync(pdfStream);
                 if (pdf.PageCount == 0) throw new InvalidOperationException("The PDF does not contain any pages.");
-                await RenderCurrentPageAsync();
+                viewerScroll.Content = pdfPagesStack;
+                var pageWidth = Math.Max(240, viewerScroll.ActualWidth - 48);
+                pdfPagesStack.Width = Math.Max(240, viewerScroll.ActualWidth);
+                for (uint pageIndex = 0; pageIndex < pdf.PageCount; pageIndex++)
+                {
+                    var pageImage = new Image
+                    {
+                        Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Width = pageWidth,
+                        MaxWidth = 1500
+                    };
+                    pdfPageImages.Add(pageImage);
+                    pdfPagesStack.Children.Add(new Border
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Background = ThemeBrush("SchoologySurfaceBrush"),
+                        BorderBrush = ThemeBrush("SchoologyDividerBrush"),
+                        BorderThickness = new Thickness(1),
+                        Padding = new Thickness(8),
+                        Child = pageImage
+                    });
+                    await renderGate.WaitAsync();
+                    try { await RenderPdfPageAsync(pdf, pageIndex, pageImage, pageLabel, status); }
+                    finally { renderGate.Release(); }
+                }
+                currentPage = 0;
+                pageLabel.Text = "1 / " + pdf.PageCount;
+                status.Text = "";
                 previous.IsEnabled = false;
                 next.IsEnabled = pdf.PageCount > 1;
+                viewerScroll.ChangeView(null, 0, 1f, true);
             }
             catch (Exception ex)
             {
@@ -5214,7 +5334,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     case "embed": Visit(property.Value, "embed", depth + 1); break;
                     case "externaltools":
                     case "externaltool": Visit(property.Value, "link", depth + 1); break;
-                    case "annotationfiles": Visit(property.Value, "file", depth + 1); break;
+                    case "annotationfiles":
+                    case "images":
+                    case "image":
+                    case "photos":
+                    case "photo": Visit(property.Value, "file", depth + 1); break;
                 }
             }
         }
@@ -5363,16 +5487,20 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var isImage = declaredType is "image" or "photo" ||
                 mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
                 MaterialExtension(name, mime) is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".svg" or ".heic" or ".heif" or ".avif";
-            if (isImage && kind == "video" && !string.IsNullOrWhiteSpace(thumbnail))
+            // The classic renderer displays attachment thumbnails even when they
+            // represent a preview of a non-image file. Preserve those previews in
+            // the shared Recent Activity and entity-post renderer as well.
+            if (!string.IsNullOrWhiteSpace(thumbnail) &&
+                (kind == "video" || kind == "file" && !isImage))
             {
-                var videoPreview = new Image
+                var attachmentPreview = new Image
                 {
                     MaxHeight = 240, MaxWidth = 520,
                     Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
                     HorizontalAlignment = HorizontalAlignment.Left
                 };
-                _ = LoadPostImageAsync(videoPreview, thumbnail);
-                panel.Children.Add(videoPreview);
+                _ = LoadPostImageAsync(attachmentPreview, thumbnail);
+                panel.Children.Add(attachmentPreview);
             }
             if (isImage && kind == "file")
             {
@@ -5453,7 +5581,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (kind.Contains("video") || Regex.IsMatch(name, @"\.(mp4|mov|avi|webm|mkv)$")) return "\uE714";
         if (kind.Contains("audio") || Regex.IsMatch(name, @"\.(mp3|wav|m4a|aac|ogg|flac)$")) return "\uE8D6";
         if (kind.Contains("link") || kind.Contains("url") || kind.Contains("web_content")) return "\uE71B";
-        if (kind.Contains("spreadsheet") || Regex.IsMatch(name, @"\.(xls|xlsx|csv|ods)$")) return "\uE9F9";
+        if (kind.Contains("presentation") || kind.Contains("powerpoint") ||
+            Regex.IsMatch(name, @"\.(ppt|pptx|pptm|pps|ppsx)$")) return "\uE786";
+        if (kind.Contains("spreadsheet") || kind.Contains("excel") ||
+            Regex.IsMatch(name, @"\.(xls|xlsx|xlsm|xlsb|csv|ods)$")) return "\uE9F9";
+        if (kind.Contains("wordprocessing") || kind.Contains("document") ||
+            Regex.IsMatch(name, @"\.(doc|docx|docm|odt|rtf)$")) return "\uE8A5";
         return "\uE8A5";
     }
 
@@ -5529,6 +5662,13 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (attachmentPanel.Children.Count > 0) card.Children.Add(attachmentPanel);
             var poll = FindJsonPropertyRecursive(update.Data,
                 "pollUpdateModel", "poll_update_model", "poll", "poll_update", "pollUpdate");
+            if (poll.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+            {
+                var directPollOptions = FindJsonPropertyRecursive(update.Data,
+                    "pollOptions", "poll_options", "pollOptionsList", "poll_options_list");
+                if (directPollOptions.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
+                    poll = update.Data;
+            }
             if (poll.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
             {
                 var pollPanel = new StackPanel { Spacing = 6 };
