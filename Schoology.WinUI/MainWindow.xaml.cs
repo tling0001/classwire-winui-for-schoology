@@ -520,7 +520,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (status.Tag is ProgressRing ring && ring.Parent is Grid host && host.Parent is Panel parent)
             parent.Children.Remove(host);
         else if (status.Parent is Panel directParent)
-            RemoveLoadingStatus(status);
+            directParent.Children.Remove(status);
     }
     private Border EmptyState(string title, string? description = null)
     {
