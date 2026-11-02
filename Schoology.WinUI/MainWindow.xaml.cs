@@ -1735,7 +1735,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var gradeItemId = _activeAssignmentGradeItemId;
         if (session is null || !_activeAssignmentAllowsSubmission || sectionId <= 0 || gradeItemId <= 0) return;
         var body = new TextBox { PlaceholderText = "Enter your submission…", AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap, MinHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            TextWrapping = TextWrapping.Wrap, MinHeight = 180 };
+        ScrollViewer.SetVerticalScrollBarVisibility(body, ScrollBarVisibility.Auto);
         var dialog = new ContentDialog
         {
             Title = "Create text submission",
@@ -2922,7 +2923,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (!string.IsNullOrWhiteSpace(url))
         {
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-                uri = new Uri(_auth.WebSessionUrl, url.TrimStart('/'));
+                uri = new Uri(new Uri(_auth.WebSessionUrl), url.TrimStart('/'));
             if (uri.Scheme is "https" or "http")
             {
                 await OpenSharedWebViewAsync(uri.AbsoluteUri, "Notification", onBack: () => ShowHome("Notifications"));
