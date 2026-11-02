@@ -491,15 +491,26 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var host = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
         host.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var animationsEnabled = AnimationsEnabled;
         var ring = new ProgressRing
         {
-            Width = ringSize, Height = ringSize, IsActive = true,
+            Width = ringSize, Height = ringSize, IsActive = animationsEnabled,
+            Visibility = animationsEnabled ? Visibility.Visible : Visibility.Collapsed,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Left
         };
+        // Reduced-motion mode keeps a static indicator instead of animating the ring.
+        var staticIndicator = new FontIcon
+        {
+            Glyph = "\\uE895", FontSize = 16,
+            Foreground = ThemeBrush("SchoologyBlueBrush"),
+            Visibility = animationsEnabled ? Visibility.Collapsed : Visibility.Visible,
+            VerticalAlignment = VerticalAlignment.Center
+        };
         status = Text(message, 13);
-        status.Tag = ring;
+        status.Tag = (ring, staticIndicator);
         host.Children.Add(ring);
+        host.Children.Add(staticIndicator);
         Grid.SetColumn(status, 1);
         host.Children.Add(status);
         return host;
@@ -508,16 +519,19 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private static void SetStatusText(TextBlock status, string value)
     {
         status.Text = value;
-        if (status.Tag is not ProgressRing ring) return;
+        if (status.Tag is not ValueTuple<ProgressRing, FontIcon> indicators) return;
         var active = value.StartsWith("Loading", StringComparison.OrdinalIgnoreCase) ||
             value.StartsWith("Refreshing", StringComparison.OrdinalIgnoreCase);
-        ring.IsActive = active;
-        ring.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        var animate = active && AnimationsEnabled;
+        indicators.Item1.IsActive = animate;
+        indicators.Item1.Visibility = animate ? Visibility.Visible : Visibility.Collapsed;
+        indicators.Item2.Visibility = active && !AnimationsEnabled ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private static void RemoveLoadingStatus(TextBlock status)
     {
-        if (status.Tag is ProgressRing ring && ring.Parent is Grid host && host.Parent is Panel parent)
+        if (status.Tag is ValueTuple<ProgressRing, FontIcon> indicators &&
+            indicators.Item1.Parent is Grid host && host.Parent is Panel parent)
             parent.Children.Remove(host);
         else if (status.Parent is Panel directParent)
             directParent.Children.Remove(status);
