@@ -1567,12 +1567,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             try { profileIcon = new ImageIcon { Source = new BitmapImage(new Uri(NormalizeSchoologyImageUrl(profilePicture))) }; } catch { }
         var profileLabel = Text(profileName, 13, true);
         profileLabel.TextTrimming = TextTrimming.CharacterEllipsis;
+        profileIcon.Width = 16;
+        profileIcon.Height = 16;
+        profileLabel.VerticalAlignment = VerticalAlignment.Center;
+        profileLabel.MaxHeight = 20;
         var profileItem = new NavigationViewItem
         {
             Content = profileLabel,
             Icon = profileIcon,
             Tag = "Profile",
-            MinHeight = 44
+            Height = 44,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
         AutomationProperties.SetName(profileItem, profileName + " profile");
         nav.MenuItems.Add(profileItem);
@@ -1769,8 +1775,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     {
         var list = new ListView
         {
-            SelectionMode = ListViewSelectionMode.Single,
-            IsItemClickEnabled = true,
+            SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = false,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             MaxHeight = 480
         };
@@ -1793,6 +1799,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var item = new ListViewItem { Content = row, Tag = attachment.Item,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetName(item, $"Open attachment {name}");
+            item.Tapped += (_, _) =>
+            {
+                selectedAttachment = attachment.Item.Clone();
+                dialog.Hide();
+            };
             list.Items.Add(item);
         }
         dialog = new ContentDialog
@@ -1801,14 +1812,6 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Content = list,
             CloseButtonText = "Close",
             XamlRoot = _root.XamlRoot
-        };
-        list.ItemClick += (_, args) =>
-        {
-            if (args.ClickedItem is ListViewItem { Tag: JsonElement attachment })
-            {
-                selectedAttachment = attachment;
-                dialog.Hide();
-            }
         };
         await dialog.ShowAsync();
         if (selectedAttachment.ValueKind != JsonValueKind.Undefined)
@@ -3073,8 +3076,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             {
                 var list = new ListView
                 {
-                    SelectionMode = ListViewSelectionMode.Single,
-                    IsItemClickEnabled = true,
+                    SelectionMode = ListViewSelectionMode.None,
+                    IsItemClickEnabled = false,
                     MaxHeight = 440,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch
                 };
@@ -3096,18 +3099,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     var item = new ListViewItem { Content = row, Tag = option.Clone(),
                         HorizontalContentAlignment = HorizontalAlignment.Stretch };
                     AutomationProperties.SetName(item, optionTitle);
+                    item.Tapped += (_, _) =>
+                    {
+                        chosenTarget = option.Clone();
+                        moreDialog.Hide();
+                    };
                     list.Items.Add(item);
                 }
                 moreDialog = new ContentDialog { Title = "Choose notification item", Content = list,
                     CloseButtonText = "Close", XamlRoot = _root.XamlRoot };
-                list.ItemClick += (_, args) =>
-                {
-                    if (args.ClickedItem is ListViewItem { Tag: JsonElement option })
-                    {
-                        chosenTarget = option;
-                        moreDialog.Hide();
-                    }
-                };
                 await moreDialog.ShowAsync();
                 if (chosenTarget.ValueKind != JsonValueKind.Undefined)
                 {
@@ -3295,7 +3295,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var list = new ListView
         {
             SelectionMode = ListViewSelectionMode.None,
-            IsItemClickEnabled = true,
+            IsItemClickEnabled = false,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Background = new SolidColorBrush(Colors.Transparent)
         };
@@ -3304,9 +3304,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         root.Children.Add(list);
         long collectionId = 0;
         long currentFolderId = 0;
-        list.ItemClick += async (_, args) =>
+        async Task ActivateResourceEntryAsync(ResourceTreeEntry entry)
         {
-            if (args.ClickedItem is not ListViewItem { Tag: ResourceTreeEntry entry }) return;
             if (entry.Kind == "collection")
             {
                 collectionId = entry.Id;
@@ -3320,7 +3319,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 await LoadCollectionAsync(entry.Id, entry.Title);
             }
             else await OpenResourceTreeEntryAsync(entry);
-        };
+        }
 
         void AddResourceRow(ResourceTreeEntry entry)
         {
@@ -3339,8 +3338,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Grid.SetColumn(labels, 1);
             row.Children.Add(labels);
             var item = new ListViewItem { Content = row, Tag = entry,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                IsTabStop = true };
             AutomationProperties.SetName(item, entry.Title);
+            item.Tapped += async (_, _) => await ActivateResourceEntryAsync(entry);
             list.Items.Add(item);
         }
 
@@ -4429,9 +4430,6 @@ try {
         }
         Grid.SetRow(navigation, 1);
         sidebar.Children.Add(navigation);
-        if (kind == "Courses" && entityId > 0 && selected is not null)
-            _ = LoadCourseAppsIntoSidebarAsync(entityId, navigation, selected);
-
         var upcoming = new Grid { RowSpacing = 8, Padding = new Thickness(14),
             Background = ThemeBrush("SchoologySurfaceBrush") };
         upcoming.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -4482,16 +4480,22 @@ try {
             if (entityId <= 0) return;
             _selectedEntityTab = tab;
             UpdateTitleBarCreateButton(kind, tab);
-            NavigateShellFrame(detail, tab == "Upcoming" ? BuildEntityUpcomingContent(kind, entityId) :
-                BuildEntityTabContent(kind, entityId, entityName, tab, selected, showInfobox: false), SlideNavigationTransitionEffect.FromRight);
-            NavigateShellFrame(compactFrame, tab == "Upcoming" ? BuildEntityUpcomingContent(kind, entityId) :
-                BuildEntityTabContent(kind, entityId, entityName, tab, selected, showInfobox: false), SlideNavigationTransitionEffect.FromRight);
+            UIElement BuildSelectedTabContent() => tab switch
+            {
+                "Upcoming" => BuildEntityUpcomingContent(kind, entityId),
+                "Course Apps" when kind == "Courses" => BuildCourseAppsContent(entityId, selected!),
+                _ => BuildEntityTabContent(kind, entityId, entityName, tab, selected, showInfobox: false)
+            };
+            NavigateShellFrame(detail, BuildSelectedTabContent(), SlideNavigationTransitionEffect.FromRight);
+            NavigateShellFrame(compactFrame, BuildSelectedTabContent(), SlideNavigationTransitionEffect.FromRight);
         }
 
         compactSelector.SelectionChanged += (_, _) =>
         {
             if (compactSelector.SelectedItem is SelectorBarItem item) ShowTab(item.Text);
         };
+        if (kind == "Courses" && entityId > 0 && selected is not null)
+            _ = LoadCourseAppsIntoSidebarAsync(entityId, navigation, selected, compactSelector);
         NavigateShellFrame(upcomingFrame, BuildEntityUpcomingContent(kind, entityId), SlideNavigationTransitionEffect.FromRight);
         if (entityId > 0)
         {
@@ -4557,7 +4561,7 @@ try {
         }
     }
 
-    private async Task LoadCourseAppsIntoSidebarAsync(long sectionId, ListView navigation, SchoologyEntity course)
+    private async Task LoadCourseAppsIntoSidebarAsync(long sectionId, ListView navigation, SchoologyEntity course, SelectorBar compactSelector)
     {
         try
         {
@@ -4576,6 +4580,12 @@ try {
                     return;
             }
             if (apps.ValueKind != JsonValueKind.Array || apps.GetArrayLength() == 0) return;
+            if (!compactSelector.Items.OfType<SelectorBarItem>().Any(item => item.Text == "Course Apps"))
+            {
+                var appsTab = new SelectorBarItem { Text = "Course Apps", Tag = "Course Apps" };
+                AutomationProperties.SetName(appsTab, "Course apps");
+                compactSelector.Items.Add(appsTab);
+            }
 
             navigation.Items.Add(new ListViewItem
             {
@@ -4589,14 +4599,26 @@ try {
                 var appId = JsonLong(app, "id", "application_id", "applicationId", "app_id", "appId");
                 if (appId <= 0) continue;
                 var title = ProfileValue(app, "title", "name") ?? "Course App";
+                var logoUrl = ProfileValue(app, "logoUrl", "logo_url", "logo");
                 var row = new Grid { ColumnSpacing = 12 };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.Children.Add(new SymbolIcon(Symbol.AllApps)
+                var appIcon = new Grid { Width = 24, Height = 24, VerticalAlignment = VerticalAlignment.Center };
+                var fallbackIcon = new SymbolIcon(Symbol.AllApps)
                 {
                     Width = 22, Height = 22, Foreground = ThemeBrush("SchoologyBlueBrush"),
                     VerticalAlignment = VerticalAlignment.Center
-                });
+                };
+                appIcon.Children.Add(fallbackIcon);
+                if (!string.IsNullOrWhiteSpace(logoUrl))
+                {
+                    var logoImage = new Image { Width = 24, Height = 24,
+                        Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+                        VerticalAlignment = VerticalAlignment.Center };
+                    appIcon.Children.Add(logoImage);
+                    _ = LoadPostImageAsync(logoImage, logoUrl, fallbackIcon);
+                }
+                row.Children.Add(appIcon);
                 var label = Text(title, 14, true);
                 label.Foreground = ThemeBrush("SchoologyTextBrush");
                 Grid.SetColumn(label, 1);
@@ -4616,6 +4638,98 @@ try {
         catch (Exception ex)
         {
             App.WriteStartupLog($"Could not load course apps for section {sectionId}.", ex);
+        }
+    }
+
+    private Grid BuildCourseAppsContent(long sectionId, SchoologyEntity course)
+    {
+        var root = new Grid { RowSpacing = 8, Margin = new Thickness(12) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var statusHost = LoadingStatus("Loading course apps…", out var status);
+        root.Children.Add(statusHost);
+        var list = new ListView
+        {
+            SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = false,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Background = new SolidColorBrush(Colors.Transparent)
+        };
+        AutomationProperties.SetAutomationId(list, "CourseAppsList");
+        Grid.SetRow(list, 1);
+        root.Children.Add(list);
+        _ = LoadCourseAppsContentAsync(sectionId, course, list, status);
+        return root;
+    }
+
+    private async Task LoadCourseAppsContentAsync(long sectionId, SchoologyEntity course, ListView list, TextBlock status)
+    {
+        try
+        {
+            var session = _session ?? throw new InvalidOperationException("Sign in to view course apps.");
+            using var document = await _api.GetCourseAppsAsync(session, sectionId);
+            var root = document.RootElement;
+            JsonElement apps = default;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (!root.TryGetProperty("@extra", out apps) &&
+                    !root.TryGetProperty("extra", out apps) &&
+                    !(root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object &&
+                      (data.TryGetProperty("@extra", out apps) || data.TryGetProperty("extra", out apps))))
+                    apps = default;
+            }
+            list.Items.Clear();
+            if (apps.ValueKind != JsonValueKind.Array || apps.GetArrayLength() == 0)
+            {
+                list.Items.Add(new ListViewItem { Content = EmptyState("No course apps", "Apps provided by this course will appear here.") });
+                SetStatusText(status, string.Empty);
+                return;
+            }
+            foreach (var app in apps.EnumerateArray())
+            {
+                var appId = JsonLong(app, "id", "application_id", "applicationId", "app_id", "appId");
+                if (appId <= 0) continue;
+                var title = ProfileValue(app, "title", "name") ?? "Course App";
+                var logoUrl = ProfileValue(app, "logoUrl", "logo_url", "logo");
+                var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(10, 8, 10, 8) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                var iconHost = new Grid { Width = 36, Height = 36, VerticalAlignment = VerticalAlignment.Center };
+                var fallback = new SymbolIcon(Symbol.AllApps)
+                {
+                    Width = 28, Height = 28, Foreground = ThemeBrush("SchoologyBlueBrush"),
+                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+                };
+                iconHost.Children.Add(fallback);
+                if (!string.IsNullOrWhiteSpace(logoUrl))
+                {
+                    var image = new Image { Width = 36, Height = 36,
+                        Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+                        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                    iconHost.Children.Add(image);
+                    _ = LoadPostImageAsync(image, logoUrl, fallback);
+                }
+                row.Children.Add(iconHost);
+                var label = Text(title, 14, true);
+                label.VerticalAlignment = VerticalAlignment.Center;
+                Grid.SetColumn(label, 1);
+                row.Children.Add(label);
+                var item = new ListViewItem { Content = row, Tag = app.Clone(),
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                AutomationProperties.SetName(item, title);
+                item.Tapped += async (_, _) => await LaunchCourseAppAsync(sectionId, appId, title, course);
+                list.Items.Add(item);
+            }
+            SetStatusText(status, list.Items.Count == 0 ? "No launchable course apps were returned." : $"{list.Items.Count} course apps");
+        }
+        catch (Exception ex)
+        {
+            list.Items.Clear();
+            var error = new StackPanel { Spacing = 8, Margin = new Thickness(12) };
+            error.Children.Add(EmptyState("Unable to load course apps", ex.Message));
+            error.Children.Add(Action("Retry", async (_, _) => await LoadCourseAppsContentAsync(sectionId, course, list, status)));
+            list.Items.Add(new ListViewItem { Content = error });
+            SetStatusText(status, "Course apps could not be loaded.");
         }
     }
 
@@ -6093,7 +6207,7 @@ try {
         return url;
     }
 
-    private async Task LoadPostImageAsync(Image image, string rawUrl)
+    private async Task LoadPostImageAsync(Image image, string rawUrl, UIElement? fallback = null)
     {
         try
         {
@@ -6112,10 +6226,12 @@ try {
             var bitmap = new BitmapImage();
             await bitmap.SetSourceAsync(stream);
             image.Source = bitmap;
+            if (fallback is not null) fallback.Visibility = Visibility.Collapsed;
         }
         catch
         {
             image.Visibility = Visibility.Collapsed;
+            if (fallback is not null) fallback.Visibility = Visibility.Visible;
         }
     }
 
@@ -6675,6 +6791,14 @@ try {
         var created = ParseSchoologyDate(createdRaw)?.ToString("g", System.Globalization.CultureInfo.CurrentCulture) ?? createdRaw;
         var picture = ProfileValue(profile, "picture_url", "pictureUrl", "picture", "photo_url", "profile_url") ??
             ProfileValue(update.Data, "picture_url", "author_picture", "user_picture", "avatar_url");
+        var authorId = JsonLong(update.Data, "user_id", "uid", "author_id", "authorId", "creator_id", "creatorId", "created_by_id");
+        if (authorId <= 0) authorId = JsonLong(profile, "id", "user_id", "uid");
+        var postRealm = (ProfileValue(update.Data, "realm", "realm_name", "realmName") ?? "").ToLowerInvariant();
+        var groupId = JsonLong(update.Data, "group_id", "groupId", "realm_id", "realmId");
+        var groupName = ProfileValue(update.Data, "group_name", "groupName", "realm_title", "realmTitle");
+        var isGroupPost = postRealm is "group" or "groups" && groupId > 0;
+        var group = isGroupPost ? _groups.FirstOrDefault(item => item.Id == groupId) : null;
+        if (isGroupPost && string.IsNullOrWhiteSpace(groupName)) groupName = group?.Name;
         var heading = new Grid { ColumnSpacing = 10 };
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -6691,7 +6815,54 @@ try {
             VerticalAlignment = VerticalAlignment.Center };
         heading.Children.Add(avatar);
         var authorInfo = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
-        authorInfo.Children.Add(Text(author, 14, true));
+        var authorLine = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5,
+            VerticalAlignment = VerticalAlignment.Center };
+        if (authorId > 0)
+        {
+            var authorButton = new Button
+            {
+                Content = Text(author, 14, true),
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(0),
+                MinHeight = 24,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = ThemeBrush("SchoologyBlueBrush")
+            };
+            AutomationProperties.SetName(authorButton, $"Open {author}'s profile");
+            AutomationProperties.SetAutomationId(authorButton, $"PostAuthor_{authorId}");
+            authorButton.Click += (_, _) => ShowUserProfile(authorId);
+            authorLine.Children.Add(authorButton);
+        }
+        else authorLine.Children.Add(Text(author, 14, true));
+        if (isGroupPost && !string.IsNullOrWhiteSpace(groupName))
+        {
+            authorLine.Children.Add(new FontIcon
+            {
+                Glyph = "\uE76C",
+                FontSize = 12,
+                Foreground = ThemeBrush("SchoologyMutedTextBrush"),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            var groupButton = new Button
+            {
+                Content = Text(groupName, 13, true),
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(0),
+                MinHeight = 24,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = ThemeBrush("SchoologyBlueBrush")
+            };
+            AutomationProperties.SetName(groupButton, $"Open {groupName}");
+            AutomationProperties.SetAutomationId(groupButton, $"PostGroup_{groupId}");
+            groupButton.Click += (_, _) => ShowThreePane("Groups", group ??
+                new SchoologyEntity(groupId, groupName, string.Empty, null, update.Data.Clone()));
+            authorLine.Children.Add(groupButton);
+        }
+        authorInfo.Children.Add(authorLine);
         if (!string.IsNullOrWhiteSpace(created))
         {
             var date = Text(created, 11);
@@ -7273,13 +7444,18 @@ try {
 
         var modes = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Stretch };
         foreach (var label in new[] { "Inbox", "Unread", "Sent" })
-            modes.Items.Add(new SelectorBarItem { Text = label });
+        {
+            var modeItem = new SelectorBarItem { Text = label, Tag = label };
+            AutomationProperties.SetName(modeItem, label + " messages");
+            modes.Items.Add(modeItem);
+        }
+        AutomationProperties.SetAutomationId(modes, "MessagesMailboxSelector");
         modes.SelectedItem = modes.Items[0];
         Grid.SetRow(modes, 1); left.Children.Add(modes);
 
         var listHost = new Grid();
-        var mailboxFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
-        Grid.SetRow(mailboxFrame, 2); left.Children.Add(mailboxFrame);
+        Grid.SetRow(listHost, 2);
+        left.Children.Add(listHost);
         var statusHost = LoadingStatus("Loading messages…", out var status, 16);
         var list = new ListView { SelectionMode = ListViewSelectionMode.Single,
             IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch,
@@ -7295,7 +7471,6 @@ try {
         var statusOverlay = new Border { Background = ThemeBrush("SchoologySurfaceBrush"),
             Padding = new Thickness(8), VerticalAlignment = VerticalAlignment.Top, Child = statusHost };
         listHost.Children.Add(statusOverlay);
-        NavigateShellFrame(mailboxFrame, listHost, SlideNavigationTransitionEffect.FromRight);
 
         var detail = new Grid { Background = ThemeBrush("SchoologySurfaceBrush") };
         var detailFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
@@ -7309,6 +7484,14 @@ try {
         var currentMode = "Inbox";
         bool loading = false;
         bool messageSelected = false;
+        bool mailboxLoadFailed = false;
+        UIElement mailboxStatusContent = statusHost;
+        bool inboxLoaded = false;
+        bool sentLoaded = false;
+        int mailboxLoadGeneration = 0;
+        int messageViewGeneration = 0;
+        CancellationTokenSource? mailboxLoadCancellation = null;
+        CancellationTokenSource? messageLoadCancellation = null;
 
         bool IsUnread(SchoologyApiRecord record)
         {
@@ -7438,38 +7621,71 @@ try {
                 list.Items.Add(item);
             }
             empty.Visibility = records.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            statusOverlay.Visibility = loading ? Visibility.Visible : Visibility.Collapsed;
-            statusOverlay.Child = status;
+            statusOverlay.Visibility = loading || mailboxLoadFailed ? Visibility.Visible : Visibility.Collapsed;
+            statusOverlay.Child = mailboxStatusContent;
+        }
+
+        void ShowMailboxLoadError(string message)
+        {
+            mailboxLoadFailed = true;
+            var errorPanel = new StackPanel { Spacing = 8, Padding = new Thickness(10) };
+            errorPanel.Children.Add(Text(message, 12));
+            errorPanel.Children.Add(Action("Retry", async (_, _) => await LoadMailboxAsync(currentMode)));
+            mailboxStatusContent = errorPanel;
+            RenderMessages();
         }
 
         async Task LoadMailboxAsync(string mode)
         {
+            var generation = ++mailboxLoadGeneration;
+            mailboxLoadCancellation?.Cancel();
+            var requestCancellation = new CancellationTokenSource();
+            requestCancellation.CancelAfter(TimeSpan.FromSeconds(35));
+            mailboxLoadCancellation = requestCancellation;
+
             if (_session is null)
             {
                 loading = false;
-                SetStatusText(status, "Sign in to view messages.");
-                RenderMessages();
+                ShowMailboxLoadError("Sign in to view your Schoology messages.");
                 ShowDetailPlaceholder("Messages unavailable", "Sign in to load your Schoology messages.");
+                if (ReferenceEquals(mailboxLoadCancellation, requestCancellation))
+                    mailboxLoadCancellation = null;
+                requestCancellation.Dispose();
                 return;
             }
+
             currentMode = mode;
             loading = true;
+            mailboxLoadFailed = false;
+            mailboxStatusContent = statusHost;
+            statusOverlay.Child = statusHost;
             SetStatusText(status, $"Loading {mode.ToLowerInvariant()}…");
             RenderMessages();
             try
             {
                 if (mode == "Sent")
                 {
-                    using var sent = await _api.GetMessagesAsync(_session, true);
-                    sentRecords = SchoologyApiClient.ReadRecords(sent.RootElement, "message", "messages");
+                    if (!sentLoaded)
+                    {
+                        using var sent = await _api.GetMessagesAsync(_session, true, requestCancellation.Token);
+                        if (generation != mailboxLoadGeneration) return;
+                        sentRecords = SchoologyApiClient.ReadRecords(sent.RootElement, "message", "messages");
+                        sentLoaded = true;
+                    }
                 }
-                else
+                else if (!inboxLoaded)
                 {
-                    using var inbox = await _api.GetMessagesAsync(_session, false);
+                    using var inbox = await _api.GetMessagesAsync(_session, false, requestCancellation.Token);
+                    if (generation != mailboxLoadGeneration) return;
                     inboxRecords = SchoologyApiClient.ReadRecords(inbox.RootElement, "message", "messages");
+                    inboxLoaded = true;
                 }
+
+                if (generation != mailboxLoadGeneration) return;
                 var recordsToResolve = mode == "Sent" ? sentRecords : inboxRecords;
                 loading = false;
+                mailboxLoadFailed = false;
+                mailboxStatusContent = statusHost;
                 RenderMessages();
                 SetStatusText(status, recordsCountText(mode));
                 _ = ResolveAndRefreshMessagePeopleAsync(recordsToResolve, mode);
@@ -7480,11 +7696,34 @@ try {
                 else if (mode == "Inbox" && inboxRecords.Count == 0)
                     ShowDetailPlaceholder("Your inbox is empty", "New messages will appear here.");
             }
+            catch (OperationCanceledException) when (generation != mailboxLoadGeneration)
+            {
+                // A newer mailbox selection owns the list now.
+            }
+            catch (OperationCanceledException)
+            {
+                if (generation == mailboxLoadGeneration)
+                {
+                    loading = false;
+                    ShowMailboxLoadError($"Loading {mode.ToLowerInvariant()} timed out. Select Retry to try again.");
+                }
+            }
             catch (Exception ex)
             {
+                if (generation != mailboxLoadGeneration) return;
                 loading = false;
-                SetStatusText(status, $"Unable to load {mode.ToLowerInvariant()}: {ex.Message}");
-                RenderMessages();
+                ShowMailboxLoadError($"Unable to load {mode.ToLowerInvariant()}: {ex.Message}");
+            }
+            finally
+            {
+                if (generation == mailboxLoadGeneration)
+                {
+                    loading = false;
+                    statusOverlay.Visibility = mailboxLoadFailed ? Visibility.Visible : Visibility.Collapsed;
+                }
+                if (ReferenceEquals(mailboxLoadCancellation, requestCancellation))
+                    mailboxLoadCancellation = null;
+                requestCancellation.Dispose();
             }
         }
 
@@ -7513,6 +7752,12 @@ try {
                 await ShowApiErrorAsync("Unable to open message", "Schoology did not return a valid message ID.");
                 return;
             }
+            var viewGeneration = ++messageViewGeneration;
+            var activeMode = currentMode;
+            messageLoadCancellation?.Cancel();
+            var messageCancellation = new CancellationTokenSource();
+            messageCancellation.CancelAfter(TimeSpan.FromSeconds(35));
+            messageLoadCancellation = messageCancellation;
             messageSelected = true;
             var loadingPanel = new StackPanel { Spacing = 10, Margin = new Thickness(24) };
             loadingPanel.Children.Add(new ProgressRing { IsActive = true, Width = 28, Height = 28 });
@@ -7520,7 +7765,8 @@ try {
             NavigateShellFrame(detailFrame, loadingPanel, SlideNavigationTransitionEffect.FromRight);
             try
             {
-                using var document = await _api.GetMessageAsync(_session, id, currentMode == "Sent");
+                using var document = await _api.GetMessageAsync(_session, id, activeMode == "Sent", messageCancellation.Token);
+                if (viewGeneration != messageViewGeneration || activeMode != currentMode) return;
                 var rootMessage = document.RootElement;
                 var threadRecords = SchoologyApiClient.ReadRecords(rootMessage, "message", "messages");
                 var threadMessages = threadRecords.Select(item => item.Data).ToList();
@@ -7546,6 +7792,7 @@ try {
                     }
                     catch (Exception ex) { App.WriteStartupLog($"Could not resolve message author {id}.", ex); }
                 }));
+                if (viewGeneration != messageViewGeneration || activeMode != currentMode) return;
                 var detailContent = new Grid { RowSpacing = 0 };
                 detailContent.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                 detailContent.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -7617,12 +7864,23 @@ try {
                 Grid.SetRow(scroll, 1); detailContent.Children.Add(scroll);
                 NavigateShellFrame(detailFrame, detailContent, SlideNavigationTransitionEffect.FromRight);
             }
+            catch (OperationCanceledException) when (viewGeneration != messageViewGeneration)
+            {
+                // The user switched mailboxes or selected another message.
+            }
             catch (Exception ex)
             {
+                if (viewGeneration != messageViewGeneration) return;
                 var error = new StackPanel { Spacing = 10, Padding = new Thickness(24) };
                 error.Children.Add(Text($"Unable to load message: {ex.Message}", 13));
                 error.Children.Add(Action("Retry", async (_, _) => await OpenMessageAsync(record)));
                 NavigateShellFrame(detailFrame, error, SlideNavigationTransitionEffect.FromRight);
+            }
+            finally
+            {
+                if (ReferenceEquals(messageLoadCancellation, messageCancellation))
+                    messageLoadCancellation = null;
+                messageCancellation.Dispose();
             }
         }
 
@@ -7633,16 +7891,32 @@ try {
             item.Tapped += async (_, _) =>
             {
                 await OpenMessageAsync(record);
-                if (root.ActualWidth < 760) { left.Visibility = Visibility.Collapsed; detail.Visibility = Visibility.Visible; }
+                if (messageSelected && root.ActualWidth < 760)
+                {
+                    left.Visibility = Visibility.Collapsed;
+                    detail.Visibility = Visibility.Visible;
+                }
             };
         }
         modes.SelectionChanged += async (_, _) =>
         {
-            if (modes.SelectedItem is not SelectorBarItem item) return;
-            var mode = item.Text;
-            if (mode == currentMode) return;
-            ShowDetailPlaceholder("Select a message", "Choose a message from the list to read it.");
-            await LoadMailboxAsync(mode);
+            try
+            {
+                if (modes.SelectedItem is not SelectorBarItem item) return;
+                var mode = item.Tag as string ?? item.Text;
+                if (mode == currentMode) return;
+                messageViewGeneration++;
+                messageLoadCancellation?.Cancel();
+                ShowDetailPlaceholder("Select a message", "Choose a message from the list to read it.");
+                await LoadMailboxAsync(mode);
+            }
+            catch (Exception ex)
+            {
+                App.WriteStartupLog("Mailbox selector navigation failed.", ex);
+                loading = false;
+                statusOverlay.Visibility = Visibility.Collapsed;
+                SetStatusText(status, $"Unable to switch mailbox: {ex.Message}");
+            }
         };
 
         // Responsive master/detail: on narrow windows, opening a message replaces

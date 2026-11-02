@@ -1,5 +1,14 @@
 # Release notes
 
+## [2026.10.0-port.60] - 2026-11-02
+
+- Make notification choices, assignment attachment rows, and resource entries activate directly from their ListViewItem, matching the working in-app ListView interaction pattern.
+- Harden mailbox loading and SelectorBar switching with cancellation, request generations, timeout feedback, and guarded message-detail navigation.
+- Keep the mailbox list directly hosted in its layout instead of navigating a nested Frame for the static list surface.
+- Constrain the collapsed NavigationView profile item and avatar to the standard navigation-row size.
+- Load course application logos from Schoology's logoUrl/logo_url/logo fields and add a Course Apps tab with a launchable ListView in portrait mode.
+- Add clickable post author names and group-context links with the chevron shown by the classic Tauri renderer.
+
 ## [2026.10.0-port.59] - 2026-11-02
 
 - Render mailbox messages immediately and resolve participant profile details in the background so slow profile lookups cannot leave the ListView stuck behind its loading overlay.
