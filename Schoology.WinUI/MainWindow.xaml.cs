@@ -502,7 +502,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         // Reduced-motion mode keeps a static indicator instead of animating the ring.
         var staticIndicator = new FontIcon
         {
-            Glyph = "\\uE895", FontSize = 16,
+            Glyph = "", FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 16,
             Foreground = ThemeBrush("SchoologyBlueBrush"),
             Visibility = animationsEnabled ? Visibility.Collapsed : Visibility.Visible,
             VerticalAlignment = VerticalAlignment.Center
@@ -7677,9 +7677,21 @@ try {
         var header = new Grid { ColumnSpacing = 14, Padding = new Thickness(14), Background = ThemeBrush("SchoologySurfaceBrush") };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var avatarImage = new Image { Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill };
+        var avatarContent = new Grid();
+        var avatarFallback = Text("U", 25, true);
+        avatarFallback.HorizontalAlignment = HorizontalAlignment.Center;
+        avatarFallback.VerticalAlignment = VerticalAlignment.Center;
+        avatarFallback.TextAlignment = TextAlignment.Center;
+        avatarContent.Children.Add(avatarFallback);
+        var avatarImage = new Image
+        {
+            Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        avatarContent.Children.Add(avatarImage);
         var avatar = new Border { Width = 64, Height = 64, CornerRadius = new CornerRadius(32),
-            Background = ThemeBrush("SchoologySubtleBrush"), Child = avatarImage };
+            Background = ThemeBrush("SchoologySubtleBrush"), Child = avatarContent };
         header.Children.Add(avatar);
         var headerText = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         var nameText = Text("Loading profile…", 21, true);
@@ -7740,6 +7752,7 @@ try {
         IReadOnlyList<SchoologyApiRecord> badgeRecords = [];
         string? updatesError = null;
         string? badgesError = null;
+        string? profileError = null;
         var loaded = false;
 
         StackPanel BuildTabContent(string tab)
@@ -7747,12 +7760,17 @@ try {
             var panel = new StackPanel { Spacing = 8, Margin = new Thickness(8) };
             if (tab == "Info")
             {
+                if (profileError is not null)
+                    panel.Children.Add(EmptyState("Unable to load profile.", profileError));
+                else
+                {
                 AddProfileField(panel, "Email", ProfileValue(userData, "primary_email", "primaryEmail", "email"));
                 AddProfileField(panel, "Username", ProfileValue(userData, "username"));
                 AddProfileField(panel, "First Name", ProfileValue(userData, "first_name", "firstName", "name_first"));
                 AddProfileField(panel, "Last Name", ProfileValue(userData, "last_name", "lastName", "name_last"));
                 AddProfileField(panel, "School", ProfileValue(userData, "school_name", "school_title"));
                 if (panel.Children.Count == 0) panel.Children.Add(EmptyState("No profile information available."));
+                }
             }
             else if (tab == "Badges")
             {
@@ -7817,7 +7835,9 @@ try {
                 userData = profileRoot.ValueKind == JsonValueKind.Object &&
                     profileRoot.TryGetProperty("user", out var nestedUser) ? nestedUser.Clone() : profileRoot.Clone();
 
-                nameText.Text = ProfileValue(userData, "name_display", "display_name", "name", "username") ?? "Schoology user";
+                var displayName = ProfileValue(userData, "name_display", "display_name", "name", "username") ?? "Schoology user";
+                nameText.Text = displayName;
+                avatarFallback.Text = displayName.Length > 0 ? displayName[..1].ToUpperInvariant() : "U";
                 schoolText.Text = ProfileValue(userData, "school_name", "school_title") ??
                     (userData.ValueKind == JsonValueKind.Object && userData.TryGetProperty("school", out var school)
                         ? ProfileValue(school, "school_name", "title", "name") ?? "" : "");
@@ -7853,6 +7873,9 @@ try {
             }
             catch (Exception ex)
             {
+                profileError = ex.Message;
+                updatesError = ex.Message;
+                badgesError = ex.Message;
                 nameText.Text = "Profile";
                 schoolText.Text = "";
                 wideUpdates.Children.Clear();
