@@ -1,5 +1,19 @@
 # Release notes
 
+## [2026.10.0-port.57] - 2026-11-01
+
+- Add a Settings action to download the x64 classic desktop installer and switch from WinUI through a separate PowerShell handoff process. The helper waits for WinUI to exit, runs its per-user uninstaller silently, and then launches the classic installer with /S.
+- Fix the WinUI self-update handoff so Inno Setup starts only after the application process has exited, preventing locked files and incomplete replacement during updates.
+- Override WinUI accent resources with Schoology blue in Light and Dark themes, keep ordinary text and surfaces neutral, and extend semantic control-fill/layer brushes for darker dark-mode surfaces.
+- Use a neutral document glyph for PowerPoint files instead of the misleading slideshow/play glyph.
+- Implement assignment text, file, and Schoology-resource submissions using the official Android 2026.10.0 and classic Tauri endpoint shapes, including FileService multipart upload with the legacy metadata-plus-binary fallback and draft text submissions.
+- Resolve assignment grade-item metadata before loading submission history or creating text submissions, and include nested resource folders in the Schoology-resource picker.
+- Add an assignment attachments action when attachment data exists, with a native ListView dialog for opening each attachment.
+- Preserve assignment description markup through the shared rich-content renderer instead of flattening it to plain text.
+- Route notification BodyArg targets to assignment, discussion, event, assessment, course, group, school, profile, page, and document views, including notification target selection based on notification type.
+- Make all attachment types use the same shared View or Download dialog, with a consistent file identity row and actions.
+- Release PDF page image sources and detach the PDF visual tree before navigating back, then defer the originating page restoration to avoid message-thread PDF teardown crashes.
+
 ## [2026.10.0-port.56] - 2026-11-02
 
 - Use the native WinUI AccentButtonStyle for the title-bar Create action instead of custom button colors and padding.

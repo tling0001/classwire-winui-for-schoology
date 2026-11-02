@@ -56,6 +56,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private readonly Dictionary<long, JsonElement> _userProfileCache = new();
     private long _activeAssignmentSectionId;
     private long _activeAssignmentId;
+    private long _activeAssignmentGradeItemId;
     private bool _activeAssignmentAllowsComments;
     private bool _activeAssignmentAllowsSubmission;
     private WebView2? _sharedWebView;
@@ -1613,14 +1614,240 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private async Task ShowAssignmentActionsDialogAsync()
     {
         if (_session is null || !_activeAssignmentAllowsSubmission) return;
-        var dialog = new ContentDialog
-        {
-            Title = "Assignment actions",
-            Content = Text("This assignment accepts submissions. The current WinUI detail view can display submission information; native upload and text-submission creation are not yet available here.", 13),
-            CloseButtonText = "Close", XamlRoot = _root.XamlRoot
-        };
+        var content = new StackPanel { Spacing = 10, MinWidth = 340 };
+        var upload = new Button { Content = "Upload file", HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
+        var resource = new Button { Content = "Choose Schoology resource", HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
+        var text = new Button { Content = "Create text submission", HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
+        var dialog = new ContentDialog { Title = "Submit assignment", Content = content,
+            CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot };
+        upload.Click += async (_, _) => { dialog.Hide(); await PickAndSubmitAssignmentFileAsync(); };
+        resource.Click += async (_, _) => { dialog.Hide(); await ShowAssignmentResourcePickerAsync(); };
+        text.Click += async (_, _) => { dialog.Hide(); await ShowTextAssignmentSubmissionDialogAsync(); };
+        content.Children.Add(upload);
+        content.Children.Add(resource);
+        content.Children.Add(text);
         await dialog.ShowAsync();
     }
+
+    private async Task ShowAssignmentAttachmentsDialogAsync(
+        IReadOnlyList<(JsonElement Item, string Kind)> attachments, long sectionId)
+    {
+        var list = new ListView
+        {
+            SelectionMode = ListViewSelectionMode.Single,
+            IsItemClickEnabled = false,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            MaxHeight = 480
+        };
+        AutomationProperties.SetAutomationId(list, "AssignmentAttachmentsList");
+        foreach (var attachment in attachments)
+        {
+            var name = ProfileValue(attachment.Item, "filename", "fileName", "file_title", "fileTitle",
+                "title", "name", "link_title", "linkTitle") ?? "Attachment";
+            var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 7, 8, 7) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.Children.Add(new FontIcon { Glyph = MaterialGlyph(attachment.Item), FontSize = 18,
+                Foreground = ThemeBrush("SchoologyMutedTextBrush"), VerticalAlignment = VerticalAlignment.Center });
+            var label = Text(name, 13, true);
+            label.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(label, 1);
+            row.Children.Add(label);
+            list.Items.Add(new ListViewItem { Content = row, Tag = attachment.Item,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch });
+        }
+        var dialog = new ContentDialog
+        {
+            Title = "Assignment attachments",
+            Content = list,
+            PrimaryButtonText = "Open",
+            CloseButtonText = "Close",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            if (list.SelectedItem is ListViewItem selected && selected.Tag is JsonElement attachment)
+            {
+                try { await ShowAttachmentOptionsAsync(attachment, () => ReturnFromAssignment(sectionId)); }
+                catch (Exception ex) { await ShowApiErrorAsync("Unable to open assignment attachment", ex.Message); }
+            }
+            else await ShowApiErrorAsync("Choose an attachment", "Select an attachment before opening it.");
+        }
+    }
+
+    private async Task PickAndSubmitAssignmentFileAsync()
+    {
+        var session = _session;
+        var sectionId = _activeAssignmentSectionId;
+        var assignmentId = _activeAssignmentId;
+        if (session is null || !_activeAssignmentAllowsSubmission || sectionId <= 0 || assignmentId <= 0) return;
+        var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
+        picker.FileTypeFilter.Add("*");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, Win32Interop.GetWindowFromWindowId(AppWindow.Id));
+        var file = await picker.PickSingleFileAsync();
+        if (file is null) return;
+        var fileInfo = new FileInfo(file.Path);
+        if (!fileInfo.Exists || fileInfo.Length <= 0)
+        {
+            await ShowApiErrorAsync("Unable to upload submission", "The selected file is empty or no longer available.");
+            return;
+        }
+        if (fileInfo.Length > 60L * 1024 * 1024)
+        {
+            await ShowApiErrorAsync("Unable to upload submission", "Schoology attachments are limited to 60 MB in this app.");
+            return;
+        }
+        var status = Text("Preparing upload…", 13);
+        var progress = new ProgressBar { IsIndeterminate = true, Minimum = 0, Maximum = 100 };
+        var content = new StackPanel { Spacing = 10, MinWidth = 340 };
+        content.Children.Add(Text(file.Name, 13, true));
+        content.Children.Add(status);
+        content.Children.Add(progress);
+        var dialog = new ContentDialog { Title = "Uploading submission", Content = content, XamlRoot = _root.XamlRoot };
+        var operation = dialog.ShowAsync();
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(file.Path);
+            var mime = GetSubmissionMimeType(file.Name);
+            using var result = await _api.SubmitAssignmentFileAsync(session, sectionId, assignmentId, file.Name, mime, bytes);
+            dialog.Hide();
+            await operation;
+            await ShowAssignmentDetailsAsync(sectionId, new SchoologyApiRecord("Assignment", "",
+                JsonDocument.Parse("{\"id\":" + assignmentId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}").RootElement.Clone()));
+        }
+        catch (Exception ex)
+        {
+            try { dialog.Hide(); } catch { }
+            try { await operation; } catch { }
+            App.WriteStartupLog("Assignment file submission failed.", ex);
+            await ShowApiErrorAsync("Unable to submit file", ex.Message);
+        }
+    }
+
+    private async Task ShowTextAssignmentSubmissionDialogAsync()
+    {
+        var session = _session;
+        var sectionId = _activeAssignmentSectionId;
+        var gradeItemId = _activeAssignmentGradeItemId;
+        if (session is null || !_activeAssignmentAllowsSubmission || sectionId <= 0 || gradeItemId <= 0) return;
+        var body = new TextBox { PlaceholderText = "Enter your submission…", AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap, MinHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var dialog = new ContentDialog
+        {
+            Title = "Create text submission",
+            Content = body,
+            PrimaryButtonText = "Submit",
+            SecondaryButtonText = "Save draft",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot
+        };
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.None) return;
+        if (string.IsNullOrWhiteSpace(body.Text))
+        {
+            await ShowApiErrorAsync("Unable to submit text", "Enter a submission before posting.");
+            return;
+        }
+        try
+        {
+            using var response = await _api.SubmitAssignmentTextAsync(session, sectionId, gradeItemId,
+                body.Text.Trim(), draft: result == ContentDialogResult.Secondary);
+            await ShowAssignmentDetailsAsync(sectionId, new SchoologyApiRecord("Assignment", "",
+                JsonDocument.Parse("{\"id\":" + _activeAssignmentId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}").RootElement.Clone()));
+        }
+        catch (Exception ex) { await ShowApiErrorAsync("Unable to submit text", ex.Message); }
+    }
+
+    private async Task ShowAssignmentResourcePickerAsync()
+    {
+        var session = _session;
+        var sectionId = _activeAssignmentSectionId;
+        var assignmentId = _activeAssignmentId;
+        if (session is null || !_activeAssignmentAllowsSubmission || sectionId <= 0 || assignmentId <= 0) return;
+        try
+        {
+            var choices = new List<(long Id, string Title)>();
+            var seenResources = new HashSet<long>();
+            var visitedFolders = new HashSet<(long CollectionId, long FolderId)>();
+            using var collections = await _api.GetResourceCollectionsAsync(session);
+            var collectionRecords = SchoologyApiClient.ReadRecords(collections.RootElement, "collection", "collections", "items");
+            async Task LoadCollectionFolderAsync(long collectionId, long folderId, int depth)
+            {
+                if (depth > 4 || !visitedFolders.Add((collectionId, folderId))) return;
+                using var resources = await _api.GetCollectionResourcesAsync(session, collectionId, folderId);
+                foreach (var resource in SchoologyApiClient.ReadRecords(resources.RootElement, "resource", "resources", "items"))
+                {
+                    if (IsFolderRecord(resource.Data))
+                    {
+                        var nestedFolderId = JsonLong(resource.Data, "id", "folder_id", "folderId");
+                        if (nestedFolderId > 0)
+                            await LoadCollectionFolderAsync(collectionId, nestedFolderId, depth + 1);
+                        continue;
+                    }
+                    var id = JsonLong(resource.Data, "template_id", "templateID", "resource_id", "resourceId", "id");
+                    if (id <= 0 || !seenResources.Add(id)) continue;
+                    var title = ProfileValue(resource.Data, "title", "name") ?? resource.Title;
+                    choices.Add((id, title));
+                }
+            }
+            foreach (var collection in collectionRecords)
+            {
+                var collectionId = JsonLong(collection.Data, "id", "collection_id", "collectionId");
+                if (collectionId > 0) await LoadCollectionFolderAsync(collectionId, 0, 0);
+            }
+            if (choices.Count == 0)
+            {
+                await ShowApiErrorAsync("No Schoology resources", "No attachable resources were found in your resource collections.");
+                return;
+            }
+            var list = new ListView { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 460,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            AutomationProperties.SetAutomationId(list, "AssignmentResourcePickerList");
+            foreach (var choice in choices)
+                list.Items.Add(new ListViewItem { Content = Text(choice.Title, 13), Tag = choice.Id,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch });
+            var dialog = new ContentDialog { Title = "Choose Schoology resource", Content = list,
+                PrimaryButtonText = "Submit resource", CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (list.SelectedItem is not ListViewItem selected || selected.Tag is not long resourceId)
+            {
+                await ShowApiErrorAsync("Choose a resource", "Select a resource before submitting.");
+                return;
+            }
+            using var response = await _api.SubmitAssignmentResourceAsync(session, sectionId, assignmentId, resourceId);
+            await ShowAssignmentDetailsAsync(sectionId, new SchoologyApiRecord("Assignment", "",
+                JsonDocument.Parse("{\"id\":" + assignmentId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}").RootElement.Clone()));
+        }
+        catch (Exception ex)
+        {
+            App.WriteStartupLog("Assignment resource submission failed.", ex);
+            await ShowApiErrorAsync("Unable to submit resource", ex.Message);
+        }
+    }
+
+    private static string GetSubmissionMimeType(string filename) => Path.GetExtension(filename).ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".doc" => "application/msword",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xls" => "application/vnd.ms-excel",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".ppt" => "application/vnd.ms-powerpoint",
+        ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".txt" => "text/plain",
+        ".csv" => "text/csv",
+        ".zip" => "application/zip",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".png" => "image/png",
+        ".gif" => "image/gif",
+        _ => "application/octet-stream"
+    };
 
     private async Task ShowCreateDiscussionOrEventDialogAsync(bool isEvent)
     {
@@ -2498,24 +2725,213 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return null;
     }
 
+    private static List<JsonElement> CollectNotificationTargets(JsonElement root)
+    {
+        var result = new List<JsonElement>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Walk(JsonElement node, int depth)
+        {
+            if (depth > 10 || node.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) return;
+            if (node.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var child in node.EnumerateArray()) Walk(child, depth + 1);
+                return;
+            }
+            if (node.ValueKind != JsonValueKind.Object) return;
+            var type = ProfileValue(node, "type", "template_type", "templateType") ?? "";
+            var id = JsonLong(node, "id");
+            if (type.Length > 0 && id > 0 && seen.Add(type + ":" + id.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+                result.Add(node.Clone());
+            foreach (var property in node.EnumerateObject()) Walk(property.Value, depth + 1);
+        }
+        Walk(root, 0);
+        return result;
+    }
+
+    private async Task<bool> OpenNotificationTargetAsync(
+        JsonElement argument, string realm, long realmId, string notificationType, string? typeOverride = null)
+    {
+        var targetType = typeOverride ?? ProfileValue(argument, "type", "template_type", "templateType")?.ToLowerInvariant() ?? "";
+        var targetId = JsonLong(argument, "id");
+        if (targetId <= 0) return false;
+        var title = ProfileValue(argument, "title", "name") ?? "Schoology";
+        switch (targetType)
+        {
+            case "assignment" when realm == "sections" && realmId > 0:
+                await ShowAssignmentDetailsAsync(realmId, new SchoologyApiRecord(title, "", argument.Clone()));
+                return true;
+            case "assessment" when realm == "sections" && realmId > 0:
+            case "assessment_v2" when realm == "sections" && realmId > 0:
+            case "managed_assessment" when realm == "sections" && realmId > 0:
+                await OpenSharedWebViewAsync(new Uri(new Uri(_auth.WebSessionUrl), $"assignment/{targetId}").AbsoluteUri,
+                    title, onBack: () => ShowHome("Notifications"));
+                return true;
+            case "discussion" when realmId > 0 && (realm is "sections" or "groups" or "schools"):
+                await ShowDiscussionDetailsAsync(realm == "groups" ? "Groups" :
+                    realm == "schools" ? "School Profile" : "Courses",
+                    realmId, new SchoologyApiRecord(title, "", argument.Clone()));
+                return true;
+            case "event" when realmId > 0 && (realm is "sections" or "groups" or "schools"):
+                await ShowEventDetailsAsync(realm == "groups" ? "Groups" :
+                    realm == "schools" ? "School Profile" : "Courses",
+                    realmId, new SchoologyApiRecord(title, "", argument.Clone()));
+                return true;
+            case "group":
+                ShowThreePane("Groups", _groups.FirstOrDefault(item => item.Id == targetId) ??
+                    new SchoologyEntity(targetId, title, "", null, argument.Clone()));
+                return true;
+            case "section":
+                ShowThreePane("Courses", _courses.FirstOrDefault(item => item.Id == targetId) ??
+                    new SchoologyEntity(targetId, title, "", null, argument.Clone()));
+                return true;
+            case "school":
+                ShowThreePane("School Profile", new SchoologyEntity(targetId, title, "", null, argument.Clone()));
+                return true;
+            case "user":
+                await OpenSharedWebViewAsync(new Uri(new Uri(_auth.WebSessionUrl), $"user/{targetId}").AbsoluteUri,
+                    title, onBack: () => ShowHome("Notifications"));
+                return true;
+            case "document" when realm == "sections" && realmId > 0 && _session is not null:
+                using (var document = await _api.GetDocumentAsync(_session, realmId, targetId))
+                {
+                    var documentRoot = document.RootElement.TryGetProperty("document", out var nestedDocument)
+                        ? nestedDocument : document.RootElement;
+                    var attachments = ReadAttachmentItems(documentRoot);
+                    if (attachments.Count > 0)
+                    {
+                        await ShowAttachmentOptionsAsync(attachments[0].Item, () => ShowHome("Notifications"));
+                        return true;
+                    }
+                }
+                return false;
+            case "page":
+                await OpenSharedWebViewAsync(new Uri(new Uri(_auth.WebSessionUrl), $"page/{targetId}").AbsoluteUri,
+                    title, onBack: () => ShowHome("Notifications"));
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private async Task OpenNotificationAsync(SchoologyApiRecord record, string body)
     {
-        var url = FindNotificationLink(record.Data);
-        if (string.IsNullOrWhiteSpace(url))
+        var target = FindJsonPropertyRecursive(record.Data, "body_args", "bodyArgs", "body_arg", "bodyArg");
+        var topArguments = ReadJsonItems(target, "body_arg", "body_args", "items", "all");
+        var realm = (ProfileValue(record.Data, "realm") ?? "users").ToLowerInvariant() switch
         {
-            var dialog = new ContentDialog
-            {
-                Title = "Notification",
-                Content = Text(StripMarkup(body), 14),
-                CloseButtonText = "Close",
-                XamlRoot = _root.XamlRoot
-            };
-            await dialog.ShowAsync();
-            return;
+            "section" => "sections", "group" => "groups", "school" => "schools", "user" => "users",
+            var value => value
+        };
+        var realmId = JsonLong(record.Data, "realm_id", "realmId", "user_id", "uid");
+        if (realmId <= 0 && realm == "users") realmId = _session?.UserId ?? 0;
+        var notificationType = (ProfileValue(record.Data, "type", "notification_type", "notificationType") ?? "").ToLowerInvariant();
+
+        var candidates = CollectNotificationTargets(target);
+        var lastArgument = topArguments.LastOrDefault();
+        var lastArgumentType = ProfileValue(lastArgument, "type", "template_type", "templateType")?.ToLowerInvariant() ?? "";
+        var expectedType = notificationType switch
+        {
+            var value when value.Contains("badge", StringComparison.Ordinal) => "section",
+            var value when value.Contains("discussion", StringComparison.Ordinal) => "discussion",
+            var value when value.Contains("event", StringComparison.Ordinal) => "event",
+            "grade_item_submit" => lastArgumentType.Length > 0 ? lastArgumentType : "assignment",
+            var value when value.Contains("assessment_v2", StringComparison.Ordinal) || value.Contains("managed_assessment", StringComparison.Ordinal) => "assessment_v2",
+            var value when value.Contains("assessment", StringComparison.Ordinal) || value.Contains("quiz", StringComparison.Ordinal) => "assessment",
+            var value when value.Contains("assignment", StringComparison.Ordinal) => "assignment",
+            var value when value.Contains("document", StringComparison.Ordinal) || value.Contains("resource", StringComparison.Ordinal) => "document",
+            var value when value.Contains("page", StringComparison.Ordinal) => "page",
+            var value when value.Contains("group", StringComparison.Ordinal) => "group",
+            var value when value.Contains("friend", StringComparison.Ordinal) || value.Contains("profile", StringComparison.Ordinal) || value.Contains("user", StringComparison.Ordinal) => "user",
+            _ => ""
+        };
+        bool Matches(JsonElement candidate, string expected)
+        {
+            var actual = ProfileValue(candidate, "type", "template_type", "templateType")?.ToLowerInvariant() ?? "";
+            if (actual == expected) return true;
+            if (expected == "assessment_v2") return actual is "assessment_v2" or "managed_assessment" or "quiz";
+            if (expected == "assessment") return actual is "assessment" or "quiz";
+            return false;
         }
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            uri = new Uri("https://app.schoology.com/" + url.TrimStart('/'));
-        await OpenSharedWebViewAsync(uri.AbsoluteUri, "Notification", onBack: () => ShowHome("Notifications"));
+        var selected = expectedType.Length > 0
+            ? candidates.LastOrDefault(candidate => Matches(candidate, expectedType))
+            : default;
+        if (selected.ValueKind == JsonValueKind.Undefined)
+            selected = candidates.LastOrDefault(candidate =>
+                !string.Equals(ProfileValue(candidate, "type"), "user", StringComparison.OrdinalIgnoreCase));
+        if (selected.ValueKind == JsonValueKind.Undefined)
+            selected = candidates.LastOrDefault();
+
+        var topMore = topArguments.LastOrDefault();
+        if (string.Equals(ProfileValue(topMore, "type"), "more", StringComparison.OrdinalIgnoreCase))
+        {
+            var moreItems = ReadJsonItems(topMore, "all", "items");
+            if (moreItems.Length > 0)
+            {
+                var list = new ListView { SelectionMode = ListViewSelectionMode.None,
+                    IsItemClickEnabled = false, MaxHeight = 440,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                ContentDialog moreDialog = null!;
+                foreach (var option in moreItems)
+                {
+                    var optionTitle = ProfileValue(option, "title") ?? ProfileValue(option, "type") ?? "Open item";
+                    var item = new ListViewItem { Content = Text(optionTitle, 13),
+                        HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                    item.Tapped += async (_, _) =>
+                    {
+                        try
+                        {
+                            var opened = await OpenNotificationTargetAsync(option, realm, realmId, notificationType);
+                            moreDialog.Hide();
+                            if (!opened) await OpenNotificationFallbackAsync(record, body);
+                        }
+                        catch (Exception ex) { await ShowApiErrorAsync("Unable to open notification", ex.Message); }
+                    };
+                    list.Items.Add(item);
+                }
+                moreDialog = new ContentDialog { Title = "Choose notification item", Content = list,
+                    CloseButtonText = "Close", XamlRoot = _root.XamlRoot };
+                await moreDialog.ShowAsync();
+                return;
+            }
+        }
+
+        if (selected.ValueKind != JsonValueKind.Undefined)
+        {
+            var selectedType = ProfileValue(selected, "type", "template_type", "templateType")?.ToLowerInvariant() ?? "";
+            var overrideType = notificationType == "badge_award" && selectedType == "user" ? "section" : null;
+            if (await OpenNotificationTargetAsync(selected, realm, realmId, notificationType, overrideType)) return;
+        }
+        else
+        {
+            var fallbackType = ProfileValue(record.Data, "object_type", "objectType") ??
+                (notificationType == "discussion_add" ? "discussion" :
+                 notificationType == "grade_item_submit" ? "assignment" : "");
+            var fallbackId = JsonLong(record.Data, "object_id", "objectId", "assignment_id", "assignmentId");
+            if (fallbackId > 0 && fallbackType.Length > 0)
+            {
+                using var fallbackDocument = JsonDocument.Parse(JsonSerializer.Serialize(new { id = fallbackId, type = fallbackType, title = record.Title }));
+                if (await OpenNotificationTargetAsync(fallbackDocument.RootElement, realm, realmId, notificationType)) return;
+            }
+        }
+        await OpenNotificationFallbackAsync(record, body);
+    }
+
+    private async Task OpenNotificationFallbackAsync(SchoologyApiRecord record, string body)
+    {
+        var url = FindNotificationLink(record.Data);
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                uri = new Uri(_auth.WebSessionUrl, url.TrimStart('/'));
+            if (uri.Scheme is "https" or "http")
+            {
+                await OpenSharedWebViewAsync(uri.AbsoluteUri, "Notification", onBack: () => ShowHome("Notifications"));
+                return;
+            }
+        }
+        var dialog = new ContentDialog { Title = "Notification", Content = Text(StripMarkup(body), 14),
+            CloseButtonText = "Close", XamlRoot = _root.XamlRoot };
+        await dialog.ShowAsync();
     }
 
     private Grid BuildRequestsPage()
@@ -3051,16 +3467,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             progressDialog.Hide();
             await dialogOperation;
 
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = installerPath,
-                Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS /RESTARTAPP=1",
-                WorkingDirectory = Path.GetDirectoryName(installerPath)!,
-                UseShellExecute = true
-            };
-            var installer = Process.Start(startInfo);
-            if (installer is null) throw new InvalidOperationException("Windows could not start the downloaded Schoology installer.");
-            App.WriteStartupLog($"Started silent Schoology update to {update.Version} using {update.AssetName}.");
+            StartInstallerAfterCurrentProcessExits(installerPath,
+                "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS /RESTARTAPP=1");
+            App.WriteStartupLog($"Scheduled silent Schoology update to {update.Version} using {update.AssetName}; the helper will wait for the app process to exit before starting Inno Setup.");
             _allowExit = true;
             Close();
         }
@@ -3071,6 +3480,192 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             App.WriteStartupLog("Could not download or start the Schoology update.", ex);
             await ShowApiErrorAsync("Unable to install update", ex.Message);
         }
+    }
+
+    private static void StartInstallerAfterCurrentProcessExits(
+        string installerPath, string installerArguments,
+        string? uninstallerPath = null, string? uninstallerArguments = null)
+    {
+        if (!File.Exists(installerPath))
+            throw new FileNotFoundException("The installer file is missing.", installerPath);
+        var helperDirectory = Path.Combine(Path.GetTempPath(), "Schoology", "InstallerHandoff");
+        Directory.CreateDirectory(helperDirectory);
+        var scriptPath = Path.Combine(helperDirectory, "handoff-" + Guid.NewGuid().ToString("N") + ".ps1");
+        const string script = @"
+param(
+    [int]$TargetPid,
+    [string]$InstallerPathBase64,
+    [string]$InstallerArgumentsBase64,
+    [string]$UninstallerPathBase64,
+    [string]$UninstallerArgumentsBase64
+)
+$ErrorActionPreference = 'Stop'
+$installerPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($InstallerPathBase64))
+$installerArguments = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($InstallerArgumentsBase64))
+$uninstallerPath = if ($UninstallerPathBase64) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UninstallerPathBase64)) } else { '' }
+$uninstallerArguments = if ($UninstallerArgumentsBase64) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UninstallerArgumentsBase64)) } else { '' }
+$logPath = Join-Path $env:TEMP ('Schoology-InstallerHandoff-' + $TargetPid + '.log')
+try {
+    try { Wait-Process -Id $TargetPid -ErrorAction SilentlyContinue } catch {}
+    # Give WebView2 child processes a brief opportunity to release profile and app files.
+    Start-Sleep -Seconds 2
+    Add-Content -LiteralPath $logPath -Value ('WinUI process exited at ' + (Get-Date -Format o))
+    if ($uninstallerPath) {
+        if (!(Test-Path -LiteralPath $uninstallerPath -PathType Leaf)) {
+            throw ('WinUI uninstaller was not found: ' + $uninstallerPath)
+        }
+        $uninstall = Start-Process -FilePath $uninstallerPath -ArgumentList $uninstallerArguments -Wait -PassThru
+        if ($uninstall.ExitCode -ne 0) { throw ('WinUI uninstaller exited with code ' + $uninstall.ExitCode) }
+    }
+    $install = Start-Process -FilePath $installerPath -ArgumentList $installerArguments -Wait -PassThru
+    if ($install.ExitCode -ne 0) { throw ('Installer exited with code ' + $install.ExitCode) }
+    Add-Content -LiteralPath $logPath -Value ('Completed successfully at ' + (Get-Date -Format o))
+    Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+} catch {
+    Add-Content -LiteralPath $logPath -Value ('Failed at ' + (Get-Date -Format o) + ': ' + $_.Exception.Message)
+    exit 1
+} finally {
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+}
+";
+        File.WriteAllText(scriptPath, script, new UTF8Encoding(false));
+        static string Encode(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+        var start = new ProcessStartInfo
+        {
+            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-ExecutionPolicy");
+        start.ArgumentList.Add("Bypass");
+        start.ArgumentList.Add("-File");
+        start.ArgumentList.Add(scriptPath);
+        start.ArgumentList.Add("-TargetPid");
+        start.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        start.ArgumentList.Add("-InstallerPathBase64");
+        start.ArgumentList.Add(Encode(Path.GetFullPath(installerPath)));
+        start.ArgumentList.Add("-InstallerArgumentsBase64");
+        start.ArgumentList.Add(Encode(installerArguments));
+        start.ArgumentList.Add("-UninstallerPathBase64");
+        start.ArgumentList.Add(string.IsNullOrWhiteSpace(uninstallerPath) ? "" : Encode(Path.GetFullPath(uninstallerPath)));
+        start.ArgumentList.Add("-UninstallerArgumentsBase64");
+        start.ArgumentList.Add(string.IsNullOrWhiteSpace(uninstallerArguments) ? "" : Encode(uninstallerArguments));
+        var helper = Process.Start(start);
+        if (helper is null) throw new InvalidOperationException("Windows could not start the installer handoff helper.");
+        App.WriteStartupLog($"Started installer handoff helper PID {helper.Id}; it will wait for this process to exit.");
+    }
+
+    private async Task TrySchoologyClassicAsync(Button button)
+    {
+        if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
+        {
+            await ShowApiErrorAsync("Schoology classic unavailable",
+                "The supplied classic installer is x64. This action is only available when running the x64 WinUI app.");
+            return;
+        }
+        var confirm = new ContentDialog
+        {
+            Title = "Switch to Schoology classic?",
+            Content = Text("This downloads the latest classic Schoology installer, closes Schoology WinUI, silently uninstalls the WinUI version, and installs classic Schoology. Your Schoology account and local documents are not intentionally removed.", 13),
+            PrimaryButtonText = "Download and switch",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot
+        };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+        button.IsEnabled = false;
+        var status = Text("Downloading the classic installer…", 13);
+        var progress = new ProgressBar { IsIndeterminate = true, Minimum = 0, Maximum = 100 };
+        var content = new StackPanel { Spacing = 10, MinWidth = 320 };
+        content.Children.Add(status);
+        content.Children.Add(progress);
+        var dialog = new ContentDialog { Title = "Try Schoology classic", Content = content, XamlRoot = _root.XamlRoot };
+        var operation = dialog.ShowAsync();
+        try
+        {
+            const string downloadUrl = "https://github.com/tling0001/schoology-for-desktop-port/releases/latest/download/Schoology_2026.10.35_x64-setup.exe";
+            var installerPath = await DownloadClassicInstallerAsync(new Uri(downloadUrl));
+            dialog.Hide();
+            await operation;
+            var programDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Programs", "Schoology");
+            var uninstaller = Path.Combine(programDirectory, "unins000.exe");
+            if (!File.Exists(uninstaller))
+                throw new FileNotFoundException("The Schoology WinUI uninstaller was not found in the current per-user install directory.", uninstaller);
+            StartInstallerAfterCurrentProcessExits(installerPath, "/S", uninstaller,
+                "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS");
+            App.WriteStartupLog("Scheduled migration from Schoology WinUI to classic Schoology. The helper waits for WinUI to exit, silently uninstalls it, then starts the classic installer.");
+            _allowExit = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            try { dialog.Hide(); } catch { }
+            try { await operation; } catch { }
+            button.IsEnabled = true;
+            App.WriteStartupLog("Could not prepare the Schoology classic migration.", ex);
+            await ShowApiErrorAsync("Unable to switch to Schoology classic", ex.Message);
+        }
+    }
+
+    private static async Task<string> DownloadClassicInstallerAsync(Uri downloadUri)
+    {
+        if (!IsAllowedGitHubDownloadHost(downloadUri))
+            throw new InvalidDataException("The classic installer must be downloaded from GitHub over HTTPS.");
+        var directory = Path.Combine(Path.GetTempPath(), "Schoology", "ClassicMigration");
+        Directory.CreateDirectory(directory);
+        var target = Path.Combine(directory, "Schoology-classic-x64-setup.exe");
+        var temporary = target + ".download";
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        using var request = new HttpRequestMessage(HttpMethod.Get, downloadUri);
+        request.Headers.TryAddWithoutValidation("User-Agent", "Schoology-WinUI-Classic-Migration");
+        using var response = await UpdateDownloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Classic installer download failed (HTTP {(int)response.StatusCode}).");
+        var finalUri = response.RequestMessage?.RequestUri;
+        if (finalUri is null || !IsAllowedGitHubDownloadHost(finalUri))
+            throw new InvalidDataException("The classic installer redirected to an untrusted host.");
+        var length = response.Content.Headers.ContentLength;
+        if (length is > 500 * 1024 * 1024)
+            throw new InvalidDataException("The classic installer exceeds the 500 MB safety limit.");
+        try
+        {
+            await using var input = await response.Content.ReadAsStreamAsync(timeout.Token);
+            await using var output = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
+            var buffer = new byte[81920];
+            var received = 0L;
+            while (true)
+            {
+                var count = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), timeout.Token);
+                if (count == 0) break;
+                received += count;
+                if (received > 500L * 1024 * 1024) throw new InvalidDataException("The classic installer exceeds the 500 MB safety limit.");
+                await output.WriteAsync(buffer.AsMemory(0, count), timeout.Token);
+            }
+            await output.FlushAsync(timeout.Token);
+            if (received < 1024 * 1024 || length is > 0 && received != length.Value)
+                throw new InvalidDataException("The downloaded classic installer is incomplete.");
+        }
+        catch
+        {
+            try { File.Delete(temporary); } catch { }
+            throw;
+        }
+        var header = new byte[2];
+        await using (var check = new FileStream(temporary, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            if (await check.ReadAsync(header.AsMemory(0, 2), timeout.Token) != 2 ||
+                header[0] != (byte)'M' || header[1] != (byte)'Z')
+            {
+                File.Delete(temporary);
+                throw new InvalidDataException("The downloaded classic installer is not a valid Windows executable.");
+            }
+        }
+        File.Move(temporary, target, overwrite: true);
+        return target;
     }
 
     private static bool IsAllowedGitHubDownloadHost(Uri uri) =>
@@ -3202,6 +3797,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         AutomationProperties.SetAutomationId(checkUpdates, "CheckForUpdatesButton");
         AutomationProperties.SetName(checkUpdates, "Check for updates");
         updates.Children.Add(checkUpdates);
+        var tryClassic = new Button
+        {
+            Content = "Try Schoology classic",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(14, 9, 14, 9),
+            IsEnabled = RuntimeInformation.ProcessArchitecture == Architecture.X64
+        };
+        tryClassic.Click += async (_, _) => await TrySchoologyClassicAsync(tryClassic);
+        AutomationProperties.SetAutomationId(tryClassic, "TrySchoologyClassicButton");
+        AutomationProperties.SetName(tryClassic, "Download and install Schoology classic instead of Schoology WinUI");
+        updates.Children.Add(tryClassic);
+        updates.Children.Add(Text("Switches from the WinUI port to the classic desktop app. The WinUI version will be silently uninstalled first.", 12));
         panel.Children.Add(Surface(updates, new Thickness(14)));
 
         panel.Children.Add(Text("About", 18, true));
@@ -3710,14 +4317,35 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var description = ProfileValue(assignment, "description", "body", "description_richtext", "descriptionRichtext");
             var due = ProfileValue(assignment, "due", "due_date", "dueDate");
             var points = ProfileValue(assignment, "max_points", "maxPoints", "points");
+            var gradeItem = assignment;
+            try
+            {
+                using var gradeItemDocument = await _api.GetAssignmentGradeItemAsync(session, sectionId, assignmentId);
+                var gradeItemRoot = gradeItemDocument.RootElement;
+                JsonElement gradeItemCandidate;
+                if (gradeItemRoot.ValueKind == JsonValueKind.Object &&
+                    (gradeItemRoot.TryGetProperty("assignment", out gradeItemCandidate) ||
+                     gradeItemRoot.TryGetProperty("grade_item", out gradeItemCandidate) ||
+                     gradeItemRoot.TryGetProperty("gradeItem", out gradeItemCandidate)))
+                    gradeItem = gradeItemCandidate.Clone();
+                else gradeItem = gradeItemRoot.Clone();
+            }
+            catch (Exception ex) { App.WriteStartupLog("Could not resolve the assignment grade-item metadata; using the assignment object.", ex); }
             var submissionsEnabled = JsonBoolean(assignment,
-                "allow_dropbox", "allowDropbox", "allow_submission", "allowSubmission");
-            var gradeItemId = JsonLong(assignment, "grade_item_id", "gradeItemId");
+                "allow_dropbox", "allowDropbox", "allow_submission", "allowSubmission") ||
+                JsonBoolean(gradeItem, "allow_dropbox", "allowDropbox", "allow_submission", "allowSubmission");
+            var submissionLocked = JsonBoolean(assignment, "dropbox_locked", "dropboxLocked", "submission_locked", "submissionLocked") ||
+                JsonBoolean(gradeItem, "dropbox_locked", "dropboxLocked", "submission_locked", "submissionLocked");
+            submissionsEnabled &= !submissionLocked;
+            var gradeItemId = JsonLong(gradeItem, "id", "grade_item_id", "gradeItemId", "gradeitem_id");
+            if (gradeItemId <= 0) gradeItemId = JsonLong(assignment, "grade_item_id", "gradeItemId");
+            if (gradeItemId <= 0) gradeItemId = assignmentId;
             var commentsEnabled = JsonBoolean(assignment,
                 "allow_discussion", "allowDiscussion", "allow_comments", "allowComments",
                 "comments_enabled", "commentsEnabled");
             _activeAssignmentSectionId = sectionId;
             _activeAssignmentId = assignmentId;
+            _activeAssignmentGradeItemId = gradeItemId;
             _activeAssignmentAllowsComments = commentsEnabled;
             _activeAssignmentAllowsSubmission = submissionsEnabled;
             SetTitleBarCreateContext(string.Empty);
@@ -3733,7 +4361,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             UIElement BuildInfoView()
             {
                 var info = new StackPanel { Spacing = 10, Margin = new Thickness(8) };
-                if (!string.IsNullOrWhiteSpace(description)) info.Children.Add(Text(StripMarkup(description), 14));
+                if (!string.IsNullOrWhiteSpace(description)) info.Children.Add(CreateRichContent(description, 14));
                 if (!string.IsNullOrWhiteSpace(due)) AddProfileField(info, "Due date", due);
                 if (!string.IsNullOrWhiteSpace(points)) AddProfileField(info, "Points", points);
                 if (info.Children.Count == 0) info.Children.Add(EmptyState("No additional assignment information was provided."));
@@ -3857,13 +4485,29 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 return new ScrollViewer { Content = submissions, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             }
 
+            var assignmentAttachments = ReadAttachmentItems(assignment);
             var header = new Grid { ColumnSpacing = 12, Margin = new Thickness(16, 10, 16, 4) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.Children.Add(Action("‹ Back", (_, _) => ReturnFromAssignment(sectionId)));
             var heading = Text(title, 21, true);
             Grid.SetColumn(heading, 1);
             header.Children.Add(heading);
+            if (assignmentAttachments.Count > 0)
+            {
+                var attachmentsButton = new Button
+                {
+                    Content = "Attachments (" + assignmentAttachments.Count + ")",
+                    Padding = new Thickness(12, 7, 12, 7),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                AutomationProperties.SetAutomationId(attachmentsButton, "AssignmentAttachmentsButton");
+                attachmentsButton.Click += async (_, _) =>
+                    await ShowAssignmentAttachmentsDialogAsync(assignmentAttachments, sectionId);
+                Grid.SetColumn(attachmentsButton, 2);
+                header.Children.Add(attachmentsButton);
+            }
 
             var wide = new Grid { RowSpacing = 8, ColumnSpacing = 16, Margin = new Thickness(16, 8, 16, 16) };
             wide.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -4570,13 +5214,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             try
             {
                 pdf = null;
+                image.Source = null;
+                foreach (var pageImage in pdfPageImages) pageImage.Source = null;
+                pdfPageImages.Clear();
+                pdfPagesStack.Children.Clear();
+                viewerScroll.Content = null;
                 pdfStream?.Dispose();
                 pdfStream = null;
-                image.Source = null;
-                viewerScroll.Content = null;
             }
             finally { renderGate.Release(); }
             try { File.Delete(previewPath); } catch { }
+            await Task.Yield();
             onBack();
         });
         var heading = Text(title, 16, true);
@@ -5412,22 +6060,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var previewUrl = convertedReady ? convertedUrl! : originalUrl;
         var previewMime = convertedReady ? "application/pdf" : mime;
         var extension = MaterialExtension(name, previewMime);
-        var isPdf = previewMime.Contains("pdf", StringComparison.OrdinalIgnoreCase) || extension == ".pdf" ||
-            Uri.TryCreate(previewUrl, UriKind.Absolute, out var previewUri) &&
-            Path.GetExtension(previewUri.AbsolutePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
-        var isImage = !isPdf && (previewMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
-            extension is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".svg" or ".heic" or ".heif" or ".avif" ||
-            !string.IsNullOrWhiteSpace(thumbnail));
-        if (!isPdf && !isImage && !convertedReady)
-        {
-            await SaveOriginalMaterialAsync(originalUrl, name, mime, openAfterSave: true);
-            return;
-        }
-
+        var details = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, MinWidth = 300 };
+        details.Children.Add(new FontIcon { Glyph = MaterialGlyph(attachment), FontSize = 28,
+            Foreground = ThemeBrush("SchoologyMutedTextBrush"), VerticalAlignment = VerticalAlignment.Center });
+        var fileDetails = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+        fileDetails.Children.Add(Text(name, 14, true));
+        fileDetails.Children.Add(Text(string.IsNullOrWhiteSpace(mime) ? extension.TrimStart('.').ToUpperInvariant() : mime, 11));
+        details.Children.Add(fileDetails);
         var dialog = new ContentDialog
         {
             Title = "View or Download",
-            Content = Text(name, 14, true),
+            Content = details,
             PrimaryButtonText = "View",
             SecondaryButtonText = "Download",
             CloseButtonText = "Cancel",
@@ -5582,7 +6225,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (kind.Contains("audio") || Regex.IsMatch(name, @"\.(mp3|wav|m4a|aac|ogg|flac)$")) return "\uE8D6";
         if (kind.Contains("link") || kind.Contains("url") || kind.Contains("web_content")) return "\uE71B";
         if (kind.Contains("presentation") || kind.Contains("powerpoint") ||
-            Regex.IsMatch(name, @"\.(ppt|pptx|pptm|pps|ppsx)$")) return "\uE786";
+            Regex.IsMatch(name, @"\.(ppt|pptx|pptm|pps|ppsx)$")) return "\uE8A5";
         if (kind.Contains("spreadsheet") || kind.Contains("excel") ||
             Regex.IsMatch(name, @"\.(xls|xlsx|xlsm|xlsb|csv|ods)$")) return "\uE9F9";
         if (kind.Contains("wordprocessing") || kind.Contains("document") ||

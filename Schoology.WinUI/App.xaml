@@ -11,6 +11,15 @@
       </ResourceDictionary.MergedDictionaries>
       <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Light">
+          <Color x:Key="SystemAccentColor">#FF2E66A3</Color>
+          <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF2E66A3" />
+          <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF2A5E94" />
+          <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF204D7B" />
+          <SolidColorBrush x:Key="AccentFillColorDisabledBrush" Color="#FFC5CBD1" />
+          <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#FFFFFFFF" />
+          <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#FFFFFFFF" />
+          <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#FFF2F5F7" />
+          <SolidColorBrush x:Key="AccentTextFillColorDisabledBrush" Color="#FF777777" />
           <SolidColorBrush x:Key="SchoologyBlueBrush" Color="#FF2E66A3" />
           <SolidColorBrush x:Key="SchoologyBlueDarkBrush" Color="#FF204D7B" />
           <SolidColorBrush x:Key="SchoologySurfaceBrush" Color="#FFFFFFFF" />
@@ -42,8 +51,27 @@
           <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#FFFFFFFF" />
           <SolidColorBrush x:Key="SolidBackgroundFillColorSecondaryBrush" Color="#FFF7F7F7" />
           <SolidColorBrush x:Key="SubtleFillColorSecondaryBrush" Color="#FFF2F5F7" />
+          <SolidColorBrush x:Key="ControlFillColorDefaultBrush" Color="#FFF9F9F9" />
+          <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#FFF3F3F3" />
+          <SolidColorBrush x:Key="ControlFillColorTertiaryBrush" Color="#FFECECEC" />
+          <SolidColorBrush x:Key="ControlFillColorDisabledBrush" Color="#FFF4F4F4" />
+          <SolidColorBrush x:Key="ControlFillColorInputActiveBrush" Color="#FFFFFFFF" />
+          <SolidColorBrush x:Key="ControlStrokeColorOnAccentDefaultBrush" Color="#FFFFFFFF" />
+          <SolidColorBrush x:Key="ControlStrokeColorOnAccentSecondaryBrush" Color="#FFE7F0F8" />
+          <SolidColorBrush x:Key="LayerFillColorDefaultBrush" Color="#FFFFFFFF" />
+          <SolidColorBrush x:Key="LayerFillColorAltBrush" Color="#FFF7F7F7" />
+          <SolidColorBrush x:Key="AcrylicBackgroundFillColorDefaultBrush" Color="#FFF8FAFC" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Dark">
+          <Color x:Key="SystemAccentColor">#FF5B9BD5</Color>
+          <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF5B9BD5" />
+          <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF4988C2" />
+          <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF315F89" />
+          <SolidColorBrush x:Key="AccentFillColorDisabledBrush" Color="#FF454545" />
+          <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#FF101820" />
+          <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#FF101820" />
+          <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#FF202428" />
+          <SolidColorBrush x:Key="AccentTextFillColorDisabledBrush" Color="#FF929292" />
           <SolidColorBrush x:Key="SchoologyBlueBrush" Color="#FF5B9BD5" />
           <SolidColorBrush x:Key="SchoologyBlueDarkBrush" Color="#FF183A5B" />
           <SolidColorBrush x:Key="SchoologySurfaceBrush" Color="#FF202428" />
@@ -75,8 +103,27 @@
           <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#FF202428" />
           <SolidColorBrush x:Key="SolidBackgroundFillColorSecondaryBrush" Color="#FF292F34" />
           <SolidColorBrush x:Key="SubtleFillColorSecondaryBrush" Color="#FF292F34" />
+          <SolidColorBrush x:Key="ControlFillColorDefaultBrush" Color="#FF30363B" />
+          <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#FF282D32" />
+          <SolidColorBrush x:Key="ControlFillColorTertiaryBrush" Color="#FF353B40" />
+          <SolidColorBrush x:Key="ControlFillColorDisabledBrush" Color="#FF25292D" />
+          <SolidColorBrush x:Key="ControlFillColorInputActiveBrush" Color="#FF202428" />
+          <SolidColorBrush x:Key="ControlStrokeColorOnAccentDefaultBrush" Color="#FF101820" />
+          <SolidColorBrush x:Key="ControlStrokeColorOnAccentSecondaryBrush" Color="#FF183A5B" />
+          <SolidColorBrush x:Key="LayerFillColorDefaultBrush" Color="#FF202428" />
+          <SolidColorBrush x:Key="LayerFillColorAltBrush" Color="#FF292F34" />
+          <SolidColorBrush x:Key="AcrylicBackgroundFillColorDefaultBrush" Color="#F2202428" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="HighContrast">
+          <StaticResource x:Key="SystemAccentColor" ResourceKey="SystemColorHighlightColor" />
+          <StaticResource x:Key="AccentFillColorDefaultBrush" ResourceKey="SystemColorHighlightColorBrush" />
+          <StaticResource x:Key="AccentFillColorSecondaryBrush" ResourceKey="SystemColorHighlightColorBrush" />
+          <StaticResource x:Key="AccentFillColorTertiaryBrush" ResourceKey="SystemColorHighlightColorBrush" />
+          <StaticResource x:Key="AccentFillColorDisabledBrush" ResourceKey="SystemColorGrayTextColorBrush" />
+          <StaticResource x:Key="AccentTextFillColorPrimaryBrush" ResourceKey="SystemColorHighlightTextColorBrush" />
+          <StaticResource x:Key="AccentTextFillColorSecondaryBrush" ResourceKey="SystemColorHighlightTextColorBrush" />
+          <StaticResource x:Key="AccentTextFillColorTertiaryBrush" ResourceKey="SystemColorHighlightTextColorBrush" />
+          <StaticResource x:Key="AccentTextFillColorDisabledBrush" ResourceKey="SystemColorGrayTextColorBrush" />
           <StaticResource x:Key="SchoologyBlueBrush" ResourceKey="SystemColorHighlightColorBrush" />
           <StaticResource x:Key="SchoologyBlueDarkBrush" ResourceKey="SystemColorHighlightColorBrush" />
           <StaticResource x:Key="SchoologySurfaceBrush" ResourceKey="SystemColorWindowColorBrush" />
@@ -101,6 +148,16 @@
           <StaticResource x:Key="SolidBackgroundFillColorBaseBrush" ResourceKey="SystemColorWindowColorBrush" />
           <StaticResource x:Key="SolidBackgroundFillColorSecondaryBrush" ResourceKey="SystemColorWindowColorBrush" />
           <StaticResource x:Key="SubtleFillColorSecondaryBrush" ResourceKey="SystemColorWindowColorBrush" />
+          <StaticResource x:Key="ControlFillColorDefaultBrush" ResourceKey="SystemColorButtonFaceColorBrush" />
+          <StaticResource x:Key="ControlFillColorSecondaryBrush" ResourceKey="SystemColorButtonFaceColorBrush" />
+          <StaticResource x:Key="ControlFillColorTertiaryBrush" ResourceKey="SystemColorButtonFaceColorBrush" />
+          <StaticResource x:Key="ControlFillColorDisabledBrush" ResourceKey="SystemColorButtonFaceColorBrush" />
+          <StaticResource x:Key="ControlFillColorInputActiveBrush" ResourceKey="SystemColorWindowColorBrush" />
+          <StaticResource x:Key="ControlStrokeColorOnAccentDefaultBrush" ResourceKey="SystemColorHighlightTextColorBrush" />
+          <StaticResource x:Key="ControlStrokeColorOnAccentSecondaryBrush" ResourceKey="SystemColorHighlightTextColorBrush" />
+          <StaticResource x:Key="LayerFillColorDefaultBrush" ResourceKey="SystemColorWindowColorBrush" />
+          <StaticResource x:Key="LayerFillColorAltBrush" ResourceKey="SystemColorWindowColorBrush" />
+          <StaticResource x:Key="AcrylicBackgroundFillColorDefaultBrush" ResourceKey="SystemColorWindowColorBrush" />
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
       <Style TargetType="TextBlock">

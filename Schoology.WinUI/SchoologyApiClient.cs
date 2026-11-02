@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -256,6 +257,10 @@ internal sealed class SchoologyApiClient
         _auth.GetApiJsonAsync(session, $"sections/{sectionId}/assignments/{assignmentId}",
             new Dictionary<string, string> { ["richtext"] = "1", ["with_attachments"] = "TRUE" }, ct);
 
+    internal Task<JsonDocument> GetAssignmentGradeItemAsync(
+        SchoologyAuthService.Session session, long sectionId, long assignmentId, CancellationToken ct = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/grade_items/{assignmentId}", null, ct);
+
     internal Task<JsonDocument> GetAssignmentCommentsAsync(
         SchoologyAuthService.Session session, long sectionId, long assignmentId,
         CancellationToken ct = default) =>
@@ -288,6 +293,52 @@ internal sealed class SchoologyApiClient
             {
                 ["with_attachments"] = "TRUE", ["all_revisions"] = "TRUE", ["start"] = "0", ["limit"] = "200"
             }, ct);
+    internal async Task<JsonDocument> SubmitAssignmentFileAsync(
+        SchoologyAuthService.Session session, long sectionId, long assignmentId,
+        string filename, string mime, byte[] bytes, CancellationToken ct = default)
+    {
+        if (sectionId <= 0 || assignmentId <= 0 || bytes.Length == 0)
+            throw new InvalidOperationException("Assignment file submission information is incomplete.");
+        if (bytes.Length > 60 * 1024 * 1024)
+            throw new InvalidOperationException("The selected file exceeds the 60 MB upload limit.");
+        var safeName = Path.GetFileName(filename);
+        if (string.IsNullOrWhiteSpace(safeName) || safeName != filename)
+            throw new InvalidOperationException("The selected filename is invalid.");
+        var fileId = await _auth.UploadSchoologyFileAsync(session, safeName,
+            string.IsNullOrWhiteSpace(mime) ? "application/octet-stream" : mime, bytes, ct);
+        return await _auth.SendApiJsonBodyAsync(session, HttpMethod.Post,
+            $"section/{sectionId}/assignment/{assignmentId}/submission",
+            new { files = new[] { new { id = fileId } } }, ct);
+    }
+
+    internal Task<JsonDocument> SubmitAssignmentTextAsync(
+        SchoologyAuthService.Session session, long sectionId, long gradeItemId,
+        string body, bool draft, CancellationToken ct = default)
+    {
+        if (sectionId <= 0 || gradeItemId <= 0 || string.IsNullOrWhiteSpace(body))
+            throw new InvalidOperationException("Text submission information is incomplete.");
+        return _auth.SendApiJsonBodyWithQueryAsync(session, HttpMethod.Post,
+            $"sections/{sectionId}/submissions/{gradeItemId}/create",
+            new Dictionary<string, string>
+            {
+                ["realm"] = "sections",
+                ["realm_id"] = sectionId.ToString(CultureInfo.InvariantCulture),
+                ["grade_item_id"] = gradeItemId.ToString(CultureInfo.InvariantCulture),
+                ["action"] = "create"
+            }, new { body = body.Trim(), draft = draft ? 1 : 0 }, ct);
+    }
+
+    internal Task<JsonDocument> SubmitAssignmentResourceAsync(
+        SchoologyAuthService.Session session, long sectionId, long assignmentId, long resourceId,
+        CancellationToken ct = default)
+    {
+        if (sectionId <= 0 || assignmentId <= 0 || resourceId <= 0)
+            throw new InvalidOperationException("Resource submission information is incomplete.");
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post,
+            $"course/{sectionId}/materials/assignments/{assignmentId}/dropbox/create_resource_submission",
+            new { files = new[] { new { schoology_resource_id = resourceId.ToString(CultureInfo.InvariantCulture) } } }, ct);
+    }
+
     internal Task<JsonDocument> GetDocumentAsync(
         SchoologyAuthService.Session session, long sectionId, long documentId, CancellationToken ct = default) =>
         _auth.GetApiJsonAsync(session, $"sections/{sectionId}/documents/{documentId}", null, ct);
@@ -581,4 +632,138 @@ internal sealed partial class SchoologyAuthService
         try { return JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); }
         catch (JsonException) { return JsonDocument.Parse("{}"); }
     }
+    internal async Task<JsonDocument> SendApiJsonBodyWithQueryAsync(
+        Session session, HttpMethod method, string path, IReadOnlyDictionary<string, string> query,
+        object payload, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var normalized = path.TrimStart('/');
+        if (normalized.Length == 0 || normalized.Split('/').Any(x => x is "." or "..") ||
+            normalized.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '/' or '_' or '-')))
+            throw new InvalidOperationException("The Schoology API path is invalid.");
+        var builder = new UriBuilder($"https://{ApiHost}/v1/{normalized}");
+        if (query.Count > 0)
+            builder.Query = string.Join("&", query.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
+        using var response = await SendSignedRequestAsync(method, builder.Uri.AbsoluteUri,
+            () => new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+            session.Token, session.Secret, null, ct);
+        var body = await ReadResponseTextAsync(response.Content, ct);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(ReadableError(body, "Schoology could not create this submission", response.StatusCode));
+        try { return JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); }
+        catch (JsonException) { return JsonDocument.Parse("{}"); }
+    }
+
+    internal async Task<JsonDocument> SendApiBinaryAsync(
+        Session session, HttpMethod method, string path, byte[] bytes, string contentType,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (bytes.Length == 0) throw new InvalidOperationException("The upload file is empty.");
+        var normalized = path.TrimStart('/');
+        if (normalized.Length == 0 || normalized.Split('/').Any(x => x is "." or "..") ||
+            normalized.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '/' or '_' or '-')))
+            throw new InvalidOperationException("The Schoology API path is invalid.");
+        using var response = await SendSignedRequestAsync(method, $"https://{ApiHost}/v1/{normalized}",
+            () =>
+            {
+                var content = new ByteArrayContent(bytes);
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+                return content;
+            }, session.Token, session.Secret, null, ct);
+        var body = await ReadResponseTextAsync(response.Content, ct);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(ReadableError(body, "Schoology could not upload the selected file", response.StatusCode));
+        try { return JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); }
+        catch (JsonException) { return JsonDocument.Parse("{}"); }
+    }
+
+    internal async Task<string> UploadSchoologyFileAsync(
+        Session session, string filename, string mime, byte[] bytes, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (bytes.Length == 0) throw new InvalidOperationException("The selected file is empty.");
+        var safeName = Path.GetFileName(filename);
+        if (string.IsNullOrWhiteSpace(safeName) || safeName != filename)
+            throw new InvalidOperationException("The selected filename is invalid.");
+
+        string? fileId = null;
+        string primaryError = "FileService upload did not return a file ID.";
+        try
+        {
+            var builder = new UriBuilder($"https://{ApiHost}/v1/file")
+            {
+                Query = "name=" + Uri.EscapeDataString(safeName)
+            };
+            using var multipart = new MultipartFormDataContent();
+            var fileContent = new ByteArrayContent(bytes);
+            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mime);
+            multipart.Add(fileContent, "file", safeName);
+            using var request = new HttpRequestMessage(HttpMethod.Post, builder.Uri) { Content = multipart };
+            AddClientIdentity(request);
+            request.Headers.TryAddWithoutValidation("X-Schoology-Client", "Android");
+            request.Headers.TryAddWithoutValidation("X-Schoology-App-Version", "2026.10.0");
+            AddPlaintextOAuth(request, session.Token, session.Secret);
+            using var response = await OAuthHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            var body = await ReadResponseTextAsync(response.Content, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                try
+                {
+                    using var document = JsonDocument.Parse(body);
+                    fileId = ReadUploadIdentifier(document.RootElement, "fileMetadataId", "id", "file_id");
+                }
+                catch (JsonException) { primaryError = "FileService returned an unreadable response."; }
+                if (fileId is null) primaryError = "FileService response did not contain a file ID.";
+            }
+            else primaryError = $"FileService HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 400)]}";
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // A transport timeout or FileService rejection should still trigger
+            // the legacy upload path. Explicit user cancellation is propagated.
+            primaryError = ex.Message;
+        }
+
+        if (!string.IsNullOrWhiteSpace(fileId)) return fileId;
+        ct.ThrowIfCancellationRequested();
+
+        // Android's legacy FileUploadHelper fallback: POST upload metadata,
+        // then PUT the raw bytes to upload/{id}. The checksum is required by
+        // Schoology's upload service and is intentionally MD5.
+#pragma warning disable CA5351
+        var checksum = Convert.ToHexString(MD5.HashData(bytes)).ToLowerInvariant();
+#pragma warning restore CA5351
+        using var metadata = await SendApiJsonBodyAsync(session, HttpMethod.Post, "upload",
+            new { filename = safeName, md5_checksum = checksum, filesize = bytes.LongLength }, ct);
+        var uploadId = ReadUploadIdentifier(metadata.RootElement, "id", "upload_file_id", "uploadFileID");
+        if (string.IsNullOrWhiteSpace(uploadId))
+            throw new InvalidOperationException($"FileService upload failed ({primaryError}); legacy metadata response did not contain an upload ID.");
+        using var uploaded = await SendApiBinaryAsync(session, HttpMethod.Put, $"upload/{uploadId}",
+            bytes, mime, ct);
+        return uploadId;
+    }
+
+    private static string? ReadUploadIdentifier(JsonElement element, params string[] keys)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+            foreach (var key in keys)
+                if (element.TryGetProperty(key, out var value) && value.ValueKind is JsonValueKind.String or JsonValueKind.Number)
+                {
+                    var text = value.ToString();
+                    if (!string.IsNullOrWhiteSpace(text)) return text.Trim('"');
+                }
+        return null;
+    }
+
+    private static void AddPlaintextOAuth(HttpRequestMessage request, string token, string secret)
+    {
+        var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + Interlocked.Read(ref _serverTimeOffset);
+        var header = $"OAuth oauth_consumer_key=\"{ConsumerKey}\", oauth_nonce=\"{nonce}\", oauth_signature_method=\"PLAINTEXT\", oauth_timestamp=\"{timestamp}\", oauth_token=\"{token}\", oauth_signature=\"{ConsumerSecret}%26{secret}\"";
+        request.Headers.TryAddWithoutValidation("Authorization", header);
+    }
+
+
 }
