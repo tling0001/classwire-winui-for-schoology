@@ -163,14 +163,14 @@ internal sealed class SchoologyApiClient
     internal Task<JsonDocument> SetUpdateLikeAsync(
         SchoologyAuthService.Session session, long updateId, bool like,
         CancellationToken cancellationToken = default) =>
-        _auth.SendApiFormAsync(session, HttpMethod.Post, $"like/{updateId}",
-            new Dictionary<string, string> { ["like_action"] = like ? "true" : "false" }, cancellationToken);
+        _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, $"like/{updateId}",
+            new { like_action = like }, cancellationToken);
 
     internal Task<JsonDocument> GetCommentLikesAsync(SchoologyAuthService.Session session, long entityId, long commentId, CancellationToken ct = default) =>
         _auth.GetApiJsonAsync(session, $"like/{entityId}/comment/{commentId}", null, ct);
     internal Task<JsonDocument> SetCommentLikeAsync(SchoologyAuthService.Session session, long entityId, long commentId, bool like, CancellationToken ct = default) =>
-        _auth.SendApiFormAsync(session, HttpMethod.Post, $"like/{entityId}/comment/{commentId}",
-            new Dictionary<string, string> { ["like_action"] = like ? "true" : "false" }, ct);
+        _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, $"like/{entityId}/comment/{commentId}",
+            new { like_action = like }, ct);
 
     internal Task<JsonDocument> AddUpdateCommentAsync(
         SchoologyAuthService.Session session, string kind, long entityId, long updateId,
@@ -444,8 +444,7 @@ internal sealed record SchoologyApiRecord(string Title, string Subtitle, JsonEle
 
 internal sealed partial class SchoologyAuthService
 {
-    /// <summary>Execute an OAuth-signed form POST. Schoology's like endpoint
-    /// expects like_action in the request body, matching Android ROLike.</summary>
+    /// <summary>Execute an OAuth-signed form POST for legacy form endpoints.</summary>
     internal async Task<JsonDocument> SendApiFormAsync(
         Session session, HttpMethod method, string path,
         IReadOnlyDictionary<string, string> fields,

@@ -1647,7 +1647,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
         if (_titleBarCreateContext == "assignment-actions")
         {
-            _ = ShowAssignmentActionsDialogAsync();
+            ShowAssignmentActionsMenu();
             return;
         }
         ShowCreateMenu();
@@ -1699,28 +1699,60 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { await ShowApiErrorAsync("Unable to post assignment comment", ex.Message); }
     }
 
-    private async Task ShowAssignmentActionsDialogAsync()
+    private void ShowAssignmentActionsMenu()
+    {
+        var target = _titleBarCreateButton;
+        if (target is null || _session is null || !_activeAssignmentAllowsSubmission) return;
+
+        var menu = new MenuFlyout();
+        if (_activeAssignmentAllowsComments)
+        {
+            var comment = new MenuFlyoutItem { Text = "Create Comment" };
+            AutomationProperties.SetAutomationId(comment, "AssignmentCreateCommentMenuItem");
+            comment.Click += async (_, _) => await ShowAssignmentCommentDialogAsync();
+            menu.Items.Add(comment);
+        }
+
+        var upload = new MenuFlyoutItem { Text = "Upload Submission" };
+        AutomationProperties.SetAutomationId(upload, "AssignmentUploadSubmissionMenuItem");
+        upload.Click += async (_, _) => await ShowAssignmentUploadOptionsDialogAsync();
+        menu.Items.Add(upload);
+
+        var text = new MenuFlyoutItem { Text = "Create Text Submission" };
+        AutomationProperties.SetAutomationId(text, "AssignmentTextSubmissionMenuItem");
+        text.Click += async (_, _) => await ShowTextAssignmentSubmissionDialogAsync();
+        menu.Items.Add(text);
+
+        menu.ShowAt(target);
+    }
+
+    private async Task ShowAssignmentUploadOptionsDialogAsync()
     {
         if (_session is null || !_activeAssignmentAllowsSubmission) return;
-        var content = new StackPanel { Spacing = 10, MinWidth = 340 };
-        var upload = new Button { Content = "Upload file", HorizontalAlignment = HorizontalAlignment.Stretch,
+        var content = new StackPanel { Spacing = 10, MinWidth = 320 };
+        var file = new Button { Content = "File", HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
-        var resource = new Button { Content = "Choose Schoology resource", HorizontalAlignment = HorizontalAlignment.Stretch,
+        var resource = new Button { Content = "Resource", HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
-        var text = new Button { Content = "Create text submission", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
-        var comment = new Button { Content = "Create comment", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
-        var dialog = new ContentDialog { Title = "Create assignment content", Content = content,
-            CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot };
-        upload.Click += async (_, _) => { dialog.Hide(); await PickAndSubmitAssignmentFileAsync(); };
-        resource.Click += async (_, _) => { dialog.Hide(); await ShowAssignmentResourcePickerAsync(); };
-        text.Click += async (_, _) => { dialog.Hide(); await ShowTextAssignmentSubmissionDialogAsync(); };
-        comment.Click += async (_, _) => { dialog.Hide(); await ShowAssignmentCommentDialogAsync(); };
-        content.Children.Add(upload);
+        var dialog = new ContentDialog
+        {
+            Title = "Upload Submission",
+            Content = content,
+            CloseButtonText = "Cancel",
+            XamlRoot = _root.XamlRoot
+        };
+        file.Click += async (_, _) =>
+        {
+            dialog.Hide();
+            await PickAndSubmitAssignmentFileAsync();
+        };
+        resource.Click += async (_, _) =>
+        {
+            dialog.Hide();
+            await ShowAssignmentResourcePickerAsync();
+        };
+        content.Children.Add(file);
         content.Children.Add(resource);
-        content.Children.Add(text);
-        if (_activeAssignmentAllowsComments) content.Children.Add(comment);
         await dialog.ShowAsync();
     }
 
@@ -2503,6 +2535,16 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
         return DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
             System.Globalization.DateTimeStyles.AssumeLocal, out var parsed) ? parsed : null;
+    }
+
+    private static string FormatAssignmentDueDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var parsed = ParseSchoologyDate(value);
+        if (parsed is null) return value;
+        var local = parsed.Value.Kind == DateTimeKind.Utc ? parsed.Value.ToLocalTime() : parsed.Value;
+        return local.ToString("ddd, MMM d, yyyy 'at' h:mm tt",
+            System.Globalization.CultureInfo.CurrentCulture);
     }
 
     private void RenderGroupedUpcoming(ListView list, IReadOnlyList<SchoologyApiRecord> records, DateTime? selectedDate = null,
@@ -3335,6 +3377,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         try
         {
             var initialDelay = GetInitialUpdateCheckDelay();
+            App.WriteStartupLog($"A fresh startup update check is scheduled in {initialDelay.TotalSeconds:0} seconds.");
             if (initialDelay > TimeSpan.Zero) await Task.Delay(initialDelay);
             while (!_allowExit)
             {
@@ -3343,9 +3386,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     var update = await CheckForUpdatesAsync();
                     if (update is not null)
                     {
+                        App.WriteStartupLog($"A newer Schoology release is available: {update.Tag}.");
                         if (_isBackgroundHidden) _pendingUpdateInfo = update;
-                        else await ShowUpdateAvailableDialogAsync(update);
+                        else await ShowUpdateAvailableDialogOnUiAsync(update);
                     }
+                    else App.WriteStartupLog("Startup/periodic update check completed; no newer Schoology release is available.");
                     await Task.Delay(UpdateCheckInterval);
                 }
                 catch (Exception ex)
@@ -3363,20 +3408,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private static TimeSpan GetInitialUpdateCheckDelay()
     {
-        try
-        {
-            if (File.Exists(UpdateStatePath))
-            {
-                var state = JsonSerializer.Deserialize<UpdateCheckState>(File.ReadAllText(UpdateStatePath));
-                if (state is { LastSuccessfulCheckUnixMilliseconds: > 0 })
-                {
-                    var last = DateTimeOffset.FromUnixTimeMilliseconds(state.LastSuccessfulCheckUnixMilliseconds);
-                    var remaining = UpdateCheckInterval - (DateTimeOffset.UtcNow - last);
-                    return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromSeconds(8);
-                }
-            }
-        }
-        catch (Exception ex) { App.WriteStartupLog("Could not read update-check state; checking after startup delay.", ex); }
+        // Always perform one fresh check after launch. The saved timestamp is
+        // useful for diagnostics, but must not suppress the startup check.
         return TimeSpan.FromSeconds(8);
     }
 
@@ -3420,6 +3453,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
                 ?? typeof(MainWindow).Assembly.GetName().Version?.ToString()
                 ?? string.Empty;
+            App.WriteStartupLog($"Compared latest WinUI release '{tag}' with installed version '{localVersion}'.");
             if (string.IsNullOrWhiteSpace(tag) || !IsNewerReleaseVersion(tag, localVersion))
             {
                 SaveUpdateCheckState(tag);
@@ -3501,6 +3535,29 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
+    private async Task ShowUpdateAvailableDialogOnUiAsync(UpdateReleaseInfo update)
+    {
+        var dispatcher = _root.DispatcherQueue;
+        if (dispatcher.HasThreadAccess)
+        {
+            await ShowUpdateAvailableDialogAsync(update);
+            return;
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!dispatcher.TryEnqueue(async () =>
+        {
+            try
+            {
+                await ShowUpdateAvailableDialogAsync(update);
+                completion.TrySetResult(true);
+            }
+            catch (Exception ex) { completion.TrySetException(ex); }
+        }))
+            throw new InvalidOperationException("The Windows UI dispatcher is unavailable for the update confirmation dialog.");
+        await completion.Task;
+    }
+
     private async Task ShowUpdateAvailableDialogAsync(UpdateReleaseInfo update)
     {
         if (_isBackgroundHidden)
@@ -3522,7 +3579,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = _root.XamlRoot
             };
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            var result = await dialog.ShowAsync();
+            App.WriteStartupLog(result == ContentDialogResult.Primary
+                ? $"User confirmed installation of Schoology {update.Version}."
+                : $"User deferred installation of Schoology {update.Version}.");
+            if (result == ContentDialogResult.Primary)
                 await DownloadAndInstallUpdateAsync(update);
         }
         finally { _updateDialogOpen = false; }
@@ -3679,8 +3740,8 @@ try {
         var operation = dialog.ShowAsync();
         try
         {
-            const string downloadUrl = "https://github.com/tling0001/schoology-for-desktop-port/releases/latest/download/Schoology_2026.10.35_x64-setup.exe";
-            var installerPath = await DownloadClassicInstallerAsync(new Uri(downloadUrl));
+            var downloadUri = await GetLatestClassicInstallerUriAsync();
+            var installerPath = await DownloadClassicInstallerAsync(downloadUri);
             dialog.Hide();
             await operation;
             var programDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -3702,6 +3763,46 @@ try {
             App.WriteStartupLog("Could not prepare the Schoology classic migration.", ex);
             await ShowApiErrorAsync("Unable to switch to Schoology classic", ex.Message);
         }
+    }
+
+    private static async Task<Uri> GetLatestClassicInstallerUriAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            "https://api.github.com/repos/tling0001/schoology-for-desktop-port/releases/latest");
+        request.Headers.TryAddWithoutValidation("User-Agent", "Schoology-WinUI-Classic-Migration");
+        request.Headers.Accept.ParseAdd("application/vnd.github+json");
+        using var response = await UpdateMetadataClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Could not retrieve the latest classic release (HTTP {(int)response.StatusCode}).");
+
+        using var release = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = release.RootElement;
+        if (JsonBoolean(root, "draft") || JsonBoolean(root, "prerelease"))
+            throw new InvalidDataException("The latest classic Schoology release is not a stable release.");
+        if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("The latest classic Schoology release does not contain downloadable assets.");
+
+        var asset = assets.EnumerateArray().FirstOrDefault(item =>
+            item.ValueKind == JsonValueKind.Object &&
+            item.TryGetProperty("name", out var name) &&
+            name.ValueKind == JsonValueKind.String &&
+            (name.GetString()!.EndsWith("_x64-setup.exe", StringComparison.OrdinalIgnoreCase) ||
+             name.GetString()!.EndsWith("-x64-setup.exe", StringComparison.OrdinalIgnoreCase) ||
+             name.GetString()!.EndsWith("Setup-x64.exe", StringComparison.OrdinalIgnoreCase)));
+        if (asset.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("The latest classic Schoology release does not include an x64 Windows installer.");
+
+        var assetName = asset.GetProperty("name").GetString() ?? string.Empty;
+        var download = asset.TryGetProperty("browser_download_url", out var downloadValue)
+            ? downloadValue.GetString() : null;
+        if (!Uri.TryCreate(download, UriKind.Absolute, out var downloadUri) ||
+            downloadUri.Scheme != Uri.UriSchemeHttps ||
+            !string.Equals(downloadUri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The latest classic installer URL is not a trusted GitHub HTTPS URL.");
+
+        var tag = root.TryGetProperty("tag_name", out var tagValue) ? tagValue.GetString() : null;
+        App.WriteStartupLog($"Resolved classic Schoology installer '{assetName}' from release '{tag}'.");
+        return downloadUri;
     }
 
     private static async Task<string> DownloadClassicInstallerAsync(Uri downloadUri)
@@ -3880,11 +3981,8 @@ try {
         var checkUpdates = new Button
         {
             Content = "Check for updates",
-            Padding = new Thickness(14, 9, 14, 9),
-            Margin = new Thickness(0, 3, 0, 3),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Background = ThemeBrush("SchoologyBlueDarkBrush"),
-            Foreground = Brush("#FFFFFFFF")
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            HorizontalAlignment = HorizontalAlignment.Stretch
         };
         checkUpdates.Click += async (_, _) => await CheckForUpdatesManuallyAsync(checkUpdates);
         AutomationProperties.SetAutomationId(checkUpdates, "CheckForUpdatesButton");
@@ -4455,7 +4553,7 @@ try {
             {
                 var info = new StackPanel { Spacing = 10, Margin = new Thickness(8) };
                 if (!string.IsNullOrWhiteSpace(description)) info.Children.Add(CreateRichContent(description, 14));
-                if (!string.IsNullOrWhiteSpace(due)) AddProfileField(info, "Due date", due);
+                if (!string.IsNullOrWhiteSpace(due)) AddProfileField(info, "Due date", FormatAssignmentDueDate(due));
                 if (!string.IsNullOrWhiteSpace(points)) AddProfileField(info, "Points", points);
                 if (info.Children.Count == 0) info.Children.Add(EmptyState("No additional assignment information was provided."));
                 return new ScrollViewer { Content = info, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -4634,24 +4732,28 @@ try {
                     : null;
                 frame.Content = nextContent;
             }
+            var wideSelectedTab = "Info";
+            var narrowSelectedTab = "Info";
             void UpdateAssignmentCreateContext(bool isWide, string selectedTab)
             {
-                var context = isWide && submissionsEnabled && (selectedTab is "Info" or "Comments")
-                    ? "assignment-actions"
-                    : selectedTab == "Comments" && commentsEnabled && submissionsEnabled
+                var context = isWide
+                    ? submissionsEnabled && (selectedTab is "Info" or "Comments")
                         ? "assignment-actions"
                         : selectedTab == "Comments" && commentsEnabled
                             ? "assignment-comment"
-                            : !isWide && selectedTab == "Submissions" && submissionsEnabled
-                                ? "assignment-actions"
-                                : string.Empty;
+                            : string.Empty
+                    : selectedTab == "Comments" && commentsEnabled
+                        ? "assignment-comment"
+                        : selectedTab == "Submissions" && submissionsEnabled
+                            ? "assignment-actions"
+                            : string.Empty;
                 SetTitleBarCreateContext(context);
             }
             void SelectWide(SelectorBarItem item)
             {
-                var selectedTab = item == wideComments ? "Comments" : "Info";
-                SetConnectedFrameContent(wideFrame, selectedTab == "Comments" ? BuildCommentsView() : BuildInfoView());
-                UpdateAssignmentCreateContext(true, selectedTab);
+                wideSelectedTab = item == wideComments ? "Comments" : "Info";
+                SetConnectedFrameContent(wideFrame, wideSelectedTab == "Comments" ? BuildCommentsView() : BuildInfoView());
+                UpdateAssignmentCreateContext(true, wideSelectedTab);
             }
             wideSelector.SelectionChanged += (_, _) => { if (wideSelector.SelectedItem is SelectorBarItem item) SelectWide(item); };
             wideSelector.SelectedItem = wideInfo;
@@ -4674,12 +4776,12 @@ try {
             narrow.Children.Add(narrowFrame);
             void SelectNarrow(SelectorBarItem item)
             {
-                var selectedTab = item == narrowComments ? "Comments" :
+                narrowSelectedTab = item == narrowComments ? "Comments" :
                     item == narrowSubmissions && submissionsEnabled ? "Submissions" : "Info";
-                var nextContent = selectedTab == "Comments" ? BuildCommentsView() :
-                    selectedTab == "Submissions" ? BuildSubmissionsView() : BuildInfoView();
+                var nextContent = narrowSelectedTab == "Comments" ? BuildCommentsView() :
+                    narrowSelectedTab == "Submissions" ? BuildSubmissionsView() : BuildInfoView();
                 SetConnectedFrameContent(narrowFrame, nextContent);
-                UpdateAssignmentCreateContext(false, selectedTab);
+                UpdateAssignmentCreateContext(false, narrowSelectedTab);
             }
             narrowSelector.SelectionChanged += (_, _) => { if (narrowSelector.SelectedItem is SelectorBarItem item) SelectNarrow(item); };
             narrowSelector.SelectedItem = narrowInfo;
@@ -4697,6 +4799,7 @@ try {
                 var isWide = width >= 900;
                 wide.Visibility = isWide ? Visibility.Visible : Visibility.Collapsed;
                 narrow.Visibility = isWide ? Visibility.Collapsed : Visibility.Visible;
+                UpdateAssignmentCreateContext(isWide, isWide ? wideSelectedTab : narrowSelectedTab);
             }
             responsive.SizeChanged += (_, args) => UpdateLayout(args.NewSize.Width);
             UpdateLayout(_root.ActualWidth);
@@ -4704,6 +4807,10 @@ try {
             page.Children.Add(responsive);
             if (_sectionFrame is not null) NavigateMainSection(page, title);
             else Reset(BuildApplicationShell(title, page));
+            // BuildApplicationShell initializes the generic section Create state.
+            // Reapply the assignment action for the selector's initial active tab.
+            var isWideNow = _root.ActualWidth >= 900;
+            UpdateAssignmentCreateContext(isWideNow, isWideNow ? wideSelectedTab : narrowSelectedTab);
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to load assignment", ex.Message); }
     }
@@ -4944,7 +5051,7 @@ try {
                     var labels = new StackPanel { Spacing = 3 };
                     labels.Children.Add(Text(assignmentRecord.Title, 14, true));
                     var due = ProfileValue(assignmentRecord.Data, "due", "due_date", "dueDate");
-                    if (!string.IsNullOrWhiteSpace(due)) labels.Children.Add(Text("Due " + due, 12));
+                    if (!string.IsNullOrWhiteSpace(due)) labels.Children.Add(Text("Due " + FormatAssignmentDueDate(due), 12));
                     var description = ProfileValue(assignmentRecord.Data, "description", "body", "description_richtext");
                     if (!string.IsNullOrWhiteSpace(description)) labels.Children.Add(Text(StripMarkup(description), 12));
                     Grid.SetColumn(labels, 1);
