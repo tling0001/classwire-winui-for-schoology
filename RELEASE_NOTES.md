@@ -1,5 +1,28 @@
 # Release notes
 
+## [2026.10.0-port.59] - 2026-11-02
+
+- Render mailbox messages immediately and resolve participant profile details in the background so slow profile lookups cannot leave the ListView stuck behind its loading overlay.
+- Place assignment due dates above the description in the assignment Info view.
+- Treat Schoology's missing profile-update component response as an empty updates feed, matching the classic Tauri fallback rather than displaying a misleading API error.
+- Add a Calendar / Upcoming SelectorBar and reuse the existing upcoming list in its own tab.
+- Open assignment attachment View or Download actions immediately after an attachment is selected, without requiring a second Open confirmation.
+- Replace the Resources TreeView with a categorized ListView and course-material-style folder navigation.
+- Defer notification target navigation until the chooser ContentDialog has closed; render notification choices as glyph-bearing ListView rows.
+- Use standard WinUI Button styling for post Comment, Like, and count actions.
+- Replace the discussion comments bottom composer with a title-bar Create action and modal comment/reply composer.
+
+
+## [2026.10.0-port.58] - 2026-11-02
+
+- Replace assignment action dialogs with a native WinUI MenuFlyout; expose Create Comment, Upload Submission, and Create Text Submission where permitted, and show File/Resource choices after selecting Upload Submission.
+- Keep the assignment Create action synchronized with the active Info, Comments, or Submissions selector when the responsive layout and initial shell are created.
+- Format assignment due dates using the localized Schoology date/time presentation used by the Tauri and Android apps.
+- Send post and comment like actions as JSON booleans, matching the official Android ROLike request and classic Tauri API calls.
+- Use the native WinUI AccentButtonStyle for Check for updates.
+- Run a fresh update check shortly after every app launch and dispatch the update confirmation on the WinUI UI thread.
+- Resolve the current x64 classic installer from the latest stable GitHub release metadata instead of a hard-coded old versioned asset URL.
+
 ## [2026.10.0-port.57] - 2026-11-01
 
 - Add a Settings action to download the x64 classic desktop installer and switch from WinUI through a separate PowerShell handoff process. The helper waits for WinUI to exit, runs its per-user uninstaller silently, and then launches the classic installer with /S.

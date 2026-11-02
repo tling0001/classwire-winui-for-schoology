@@ -48,6 +48,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private long _activeProfileUserId;
     private Button? _titleBarCreateButton;
     private string _titleBarCreateContext = string.Empty;
+    private Func<Task>? _titleBarCreateAction;
     private readonly SchoologyAuthService _auth = new(false);
     private bool _highContrastReadAvailable = true;
     private bool _highContrastEnabled;
@@ -1647,20 +1648,26 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
         if (_titleBarCreateContext == "assignment-actions")
         {
-            _ = ShowAssignmentActionsDialogAsync();
+            ShowAssignmentActionsMenu();
+            return;
+        }
+        if (_titleBarCreateContext == "content-comment" && _titleBarCreateAction is not null)
+        {
+            _ = _titleBarCreateAction();
             return;
         }
         ShowCreateMenu();
     }
 
-    private void SetTitleBarCreateContext(string context)
+    private void SetTitleBarCreateContext(string context, Func<Task>? action = null)
     {
         _titleBarCreateContext = context;
+        _titleBarCreateAction = action;
         if (_titleBarCreateButton is null) return;
         _titleBarCreateButton.Visibility = string.IsNullOrEmpty(context) ? Visibility.Collapsed : Visibility.Visible;
         _titleBarCreateButton.Content = context switch
         {
-            "assignment-comment" => "＋ Comment",
+            "assignment-comment" or "content-comment" => "＋ Comment",
             "assignment-actions" => "＋ Create",
             "course-update" or "group-update" => "＋ Post update",
             _ => "＋ Create"
@@ -1668,6 +1675,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         AutomationProperties.SetName(_titleBarCreateButton, context switch
         {
             "assignment-comment" => "Create assignment comment",
+            "content-comment" => "Create comment",
             "assignment-actions" => "Assignment actions",
             "course-update" => "Post a course update",
             "group-update" => "Post a group update",
@@ -1699,28 +1707,60 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { await ShowApiErrorAsync("Unable to post assignment comment", ex.Message); }
     }
 
-    private async Task ShowAssignmentActionsDialogAsync()
+    private void ShowAssignmentActionsMenu()
+    {
+        var target = _titleBarCreateButton;
+        if (target is null || _session is null || !_activeAssignmentAllowsSubmission) return;
+
+        var menu = new MenuFlyout();
+        if (_activeAssignmentAllowsComments)
+        {
+            var comment = new MenuFlyoutItem { Text = "Create Comment" };
+            AutomationProperties.SetAutomationId(comment, "AssignmentCreateCommentMenuItem");
+            comment.Click += async (_, _) => await ShowAssignmentCommentDialogAsync();
+            menu.Items.Add(comment);
+        }
+
+        var upload = new MenuFlyoutItem { Text = "Upload Submission" };
+        AutomationProperties.SetAutomationId(upload, "AssignmentUploadSubmissionMenuItem");
+        upload.Click += async (_, _) => await ShowAssignmentUploadOptionsDialogAsync();
+        menu.Items.Add(upload);
+
+        var text = new MenuFlyoutItem { Text = "Create Text Submission" };
+        AutomationProperties.SetAutomationId(text, "AssignmentTextSubmissionMenuItem");
+        text.Click += async (_, _) => await ShowTextAssignmentSubmissionDialogAsync();
+        menu.Items.Add(text);
+
+        menu.ShowAt(target);
+    }
+
+    private async Task ShowAssignmentUploadOptionsDialogAsync()
     {
         if (_session is null || !_activeAssignmentAllowsSubmission) return;
-        var content = new StackPanel { Spacing = 10, MinWidth = 340 };
-        var upload = new Button { Content = "Upload file", HorizontalAlignment = HorizontalAlignment.Stretch,
+        var content = new StackPanel { Spacing = 10, MinWidth = 320 };
+        var file = new Button { Content = "File", HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
-        var resource = new Button { Content = "Choose Schoology resource", HorizontalAlignment = HorizontalAlignment.Stretch,
+        var resource = new Button { Content = "Resource", HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
-        var text = new Button { Content = "Create text submission", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
-        var comment = new Button { Content = "Create comment", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
-        var dialog = new ContentDialog { Title = "Create assignment content", Content = content,
-            CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot };
-        upload.Click += async (_, _) => { dialog.Hide(); await PickAndSubmitAssignmentFileAsync(); };
-        resource.Click += async (_, _) => { dialog.Hide(); await ShowAssignmentResourcePickerAsync(); };
-        text.Click += async (_, _) => { dialog.Hide(); await ShowTextAssignmentSubmissionDialogAsync(); };
-        comment.Click += async (_, _) => { dialog.Hide(); await ShowAssignmentCommentDialogAsync(); };
-        content.Children.Add(upload);
+        var dialog = new ContentDialog
+        {
+            Title = "Upload Submission",
+            Content = content,
+            CloseButtonText = "Cancel",
+            XamlRoot = _root.XamlRoot
+        };
+        file.Click += async (_, _) =>
+        {
+            dialog.Hide();
+            await PickAndSubmitAssignmentFileAsync();
+        };
+        resource.Click += async (_, _) =>
+        {
+            dialog.Hide();
+            await ShowAssignmentResourcePickerAsync();
+        };
+        content.Children.Add(file);
         content.Children.Add(resource);
-        content.Children.Add(text);
-        if (_activeAssignmentAllowsComments) content.Children.Add(comment);
         await dialog.ShowAsync();
     }
 
@@ -1730,11 +1770,13 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var list = new ListView
         {
             SelectionMode = ListViewSelectionMode.Single,
-            IsItemClickEnabled = false,
+            IsItemClickEnabled = true,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             MaxHeight = 480
         };
         AutomationProperties.SetAutomationId(list, "AssignmentAttachmentsList");
+        JsonElement selectedAttachment = default;
+        ContentDialog dialog = null!;
         foreach (var attachment in attachments)
         {
             var name = ProfileValue(attachment.Item, "filename", "fileName", "file_title", "fileTitle",
@@ -1748,26 +1790,31 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             label.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(label, 1);
             row.Children.Add(label);
-            list.Items.Add(new ListViewItem { Content = row, Tag = attachment.Item,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch });
+            var item = new ListViewItem { Content = row, Tag = attachment.Item,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            AutomationProperties.SetName(item, $"Open attachment {name}");
+            list.Items.Add(item);
         }
-        var dialog = new ContentDialog
+        dialog = new ContentDialog
         {
             Title = "Assignment attachments",
             Content = list,
-            PrimaryButtonText = "Open",
             CloseButtonText = "Close",
-            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = _root.XamlRoot
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        list.ItemClick += (_, args) =>
         {
-            if (list.SelectedItem is ListViewItem selected && selected.Tag is JsonElement attachment)
+            if (args.ClickedItem is ListViewItem { Tag: JsonElement attachment })
             {
-                try { await ShowAttachmentOptionsAsync(attachment, () => ReturnFromAssignment(sectionId)); }
-                catch (Exception ex) { await ShowApiErrorAsync("Unable to open assignment attachment", ex.Message); }
+                selectedAttachment = attachment;
+                dialog.Hide();
             }
-            else await ShowApiErrorAsync("Choose an attachment", "Select an attachment before opening it.");
+        };
+        await dialog.ShowAsync();
+        if (selectedAttachment.ValueKind != JsonValueKind.Undefined)
+        {
+            try { await ShowAttachmentOptionsAsync(selectedAttachment, () => ReturnFromAssignment(sectionId)); }
+            catch (Exception ex) { await ShowApiErrorAsync("Unable to open assignment attachment", ex.Message); }
         }
     }
 
@@ -2505,6 +2552,16 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             System.Globalization.DateTimeStyles.AssumeLocal, out var parsed) ? parsed : null;
     }
 
+    private static string FormatAssignmentDueDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var parsed = ParseSchoologyDate(value);
+        if (parsed is null) return value;
+        var local = parsed.Value.Kind == DateTimeKind.Utc ? parsed.Value.ToLocalTime() : parsed.Value;
+        return local.ToString("ddd, MMM d, yyyy 'at' h:mm tt",
+            System.Globalization.CultureInfo.CurrentCulture);
+    }
+
     private void RenderGroupedUpcoming(ListView list, IReadOnlyList<SchoologyApiRecord> records, DateTime? selectedDate = null,
         string? entityKind = null, long entityId = 0)
     {
@@ -2610,6 +2667,37 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     }
 
     private Grid BuildCalendarPage()
+    {
+        var root = new Grid { Margin = new Thickness(18), RowSpacing = 12 };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var selector = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetAutomationId(selector, "CalendarSelectorBar");
+        var calendarTab = new SelectorBarItem { Text = "Calendar" };
+        var upcomingTab = new SelectorBarItem { Text = "Upcoming" };
+        AutomationProperties.SetAutomationId(calendarTab, "CalendarTab");
+        AutomationProperties.SetAutomationId(upcomingTab, "UpcomingTab");
+        selector.Items.Add(calendarTab);
+        selector.Items.Add(upcomingTab);
+        Grid.SetRow(selector, 0);
+        root.Children.Add(selector);
+        var frame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
+        Grid.SetRow(frame, 1);
+        root.Children.Add(frame);
+        void Select(SelectorBarItem item)
+        {
+            frame.Content = item == upcomingTab ? BuildUpcomingContent() : BuildCalendarCalendarView();
+        }
+        selector.SelectionChanged += (_, _) =>
+        {
+            if (selector.SelectedItem is SelectorBarItem item) Select(item);
+        };
+        selector.SelectedItem = calendarTab;
+        Select(calendarTab);
+        return root;
+    }
+
+    private Grid BuildCalendarCalendarView()
     {
         var layout = new Grid { Margin = new Thickness(18), ColumnSpacing = 16, RowSpacing = 12 };
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(340) });
@@ -2775,6 +2863,27 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             list.Items.Add(new ListViewItem { Content = EmptyState("Unable to load notifications", ex.Message) });
             list.Items.Add(new ListViewItem { Content = Action("Retry", async (_, _) => await LoadNotificationsAsync(list)) });
         }
+    }
+
+    private static string NotificationGlyph(JsonElement item)
+    {
+        var type = (ProfileValue(item, "type", "notification_type", "notificationType",
+            "template_type", "templateType") ?? "").ToLowerInvariant();
+        var realm = (ProfileValue(item, "realm") ?? "").ToLowerInvariant();
+        return type switch
+        {
+            "grade_add" => "\uE8A5",
+            "grade_item_submit" => "\uE8F1",
+            "badge_award" => "\uE734",
+            "course_materials_add" => "\uE8B7",
+            "comment_add" or "comment_private_add" => "\uE90A",
+            "discussion_add" when realm == "schools" => "\uE8BD",
+            "discussion_add" when realm == "groups" => "\uE8B7",
+            "event_add" or "event_update" => "\uE787",
+            _ when type.Contains("assignment") || type.Contains("assessment") => "\uE8F1",
+            _ when type.Contains("event") => "\uE787",
+            _ => MaterialGlyph(item)
+        };
     }
 
     private static string FormatNotificationBody(string body, JsonElement bodyArgs)
@@ -2962,30 +3071,49 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var moreItems = ReadJsonItems(topMore, "all", "items");
             if (moreItems.Length > 0)
             {
-                var list = new ListView { SelectionMode = ListViewSelectionMode.None,
-                    IsItemClickEnabled = false, MaxHeight = 440,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                var list = new ListView
+                {
+                    SelectionMode = ListViewSelectionMode.Single,
+                    IsItemClickEnabled = true,
+                    MaxHeight = 440,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch
+                };
+                AutomationProperties.SetAutomationId(list, "NotificationTargetList");
+                JsonElement chosenTarget = default;
                 ContentDialog moreDialog = null!;
                 foreach (var option in moreItems)
                 {
-                    var optionTitle = ProfileValue(option, "title") ?? ProfileValue(option, "type") ?? "Open item";
-                    var item = new ListViewItem { Content = Text(optionTitle, 13),
+                    var optionTitle = ProfileValue(option, "title", "name") ?? ProfileValue(option, "type") ?? "Open item";
+                    var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(10, 8, 10, 8) };
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    row.Children.Add(new FontIcon { Glyph = NotificationGlyph(option), FontSize = 21,
+                        Foreground = ThemeBrush("SchoologyBlueBrush"), VerticalAlignment = VerticalAlignment.Center });
+                    var label = Text(optionTitle, 13, true);
+                    label.VerticalAlignment = VerticalAlignment.Center;
+                    Grid.SetColumn(label, 1);
+                    row.Children.Add(label);
+                    var item = new ListViewItem { Content = row, Tag = option.Clone(),
                         HorizontalContentAlignment = HorizontalAlignment.Stretch };
-                    item.Tapped += async (_, _) =>
-                    {
-                        try
-                        {
-                            var opened = await OpenNotificationTargetAsync(option, realm, realmId, notificationType);
-                            moreDialog.Hide();
-                            if (!opened) await OpenNotificationFallbackAsync(record, body);
-                        }
-                        catch (Exception ex) { await ShowApiErrorAsync("Unable to open notification", ex.Message); }
-                    };
+                    AutomationProperties.SetName(item, optionTitle);
                     list.Items.Add(item);
                 }
                 moreDialog = new ContentDialog { Title = "Choose notification item", Content = list,
                     CloseButtonText = "Close", XamlRoot = _root.XamlRoot };
+                list.ItemClick += (_, args) =>
+                {
+                    if (args.ClickedItem is ListViewItem { Tag: JsonElement option })
+                    {
+                        chosenTarget = option;
+                        moreDialog.Hide();
+                    }
+                };
                 await moreDialog.ShowAsync();
+                if (chosenTarget.ValueKind != JsonValueKind.Undefined)
+                {
+                    var opened = await OpenNotificationTargetAsync(chosenTarget, realm, realmId, notificationType);
+                    if (!opened) await OpenNotificationFallbackAsync(record, body);
+                }
                 return;
             }
         }
@@ -3148,25 +3276,187 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     {
         var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.Children.Add(Text("Resources", 24, true));
-        var tree = new TreeView { HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch };
-        AutomationProperties.SetAutomationId(tree, "SchoologyResourcesTree");
-        Grid.SetRow(tree, 1); root.Children.Add(tree);
-        tree.RootNodes.Add(new TreeViewNode { Content = LoadingStatus("Loading resources…") });
-        tree.Expanding += async (_, args) =>
+
+        var history = new Stack<(long FolderId, string Title)>();
+        var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        var back = Action("‹ Back", (_, _) => { });
+        AutomationProperties.SetAutomationId(back, "ResourcesBackButton");
+        back.Visibility = Visibility.Collapsed;
+        navigation.Children.Add(back);
+        var breadcrumb = Text("All resources", 13, true);
+        breadcrumb.VerticalAlignment = VerticalAlignment.Center;
+        navigation.Children.Add(breadcrumb);
+        Grid.SetRow(navigation, 1);
+        root.Children.Add(navigation);
+
+        var list = new ListView
         {
-            if (args.Node.Content is ResourceTreeEntry entry &&
-                (entry.Kind is "collection" or "folder") && args.Node.HasUnrealizedChildren)
-                await LoadResourceTreeChildrenAsync(args.Node, entry);
+            SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = true,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Background = new SolidColorBrush(Colors.Transparent)
         };
-        tree.ItemInvoked += async (_, args) =>
+        AutomationProperties.SetAutomationId(list, "SchoologyResourcesList");
+        Grid.SetRow(list, 2);
+        root.Children.Add(list);
+        long collectionId = 0;
+        long currentFolderId = 0;
+        list.ItemClick += async (_, args) =>
         {
-            if (args.InvokedItem is ResourceTreeEntry entry && (entry.Kind is "resource" or "app"))
-                await OpenResourceTreeEntryAsync(entry);
+            if (args.ClickedItem is not ListViewItem { Tag: ResourceTreeEntry entry }) return;
+            if (entry.Kind == "collection")
+            {
+                collectionId = entry.Id;
+                currentFolderId = 0;
+                history.Clear();
+                await LoadCollectionAsync(0, entry.Title);
+            }
+            else if (entry.Kind == "folder")
+            {
+                history.Push((currentFolderId, breadcrumb.Text));
+                await LoadCollectionAsync(entry.Id, entry.Title);
+            }
+            else await OpenResourceTreeEntryAsync(entry);
         };
-        _ = LoadResourcesAsync(tree);
+
+        void AddResourceRow(ResourceTreeEntry entry)
+        {
+            var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(8, 9, 8, 9) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            UIElement icon = entry.Kind is "collection" or "folder"
+                ? FolderIcons.CreateIcon(FolderColorName(entry.Data), 27)
+                : new FontIcon { Glyph = MaterialGlyph(entry.Data), FontSize = 23,
+                    Foreground = ThemeBrush("SchoologyBlueBrush"), VerticalAlignment = VerticalAlignment.Center };
+            row.Children.Add(icon);
+            var labels = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+            labels.Children.Add(Text(entry.Title, 14, true));
+            var subtitle = ProfileValue(entry.Data, "description", "body", "resource_description");
+            if (!string.IsNullOrWhiteSpace(subtitle)) labels.Children.Add(Text(StripMarkup(subtitle), 12));
+            Grid.SetColumn(labels, 1);
+            row.Children.Add(labels);
+            var item = new ListViewItem { Content = row, Tag = entry,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            AutomationProperties.SetName(item, entry.Title);
+            list.Items.Add(item);
+        }
+
+        void AddCategory(string title, IReadOnlyList<ResourceTreeEntry> entries)
+        {
+            list.Items.Add(new ListViewItem
+            {
+                Content = Text(title, 13, true),
+                IsHitTestVisible = false,
+                IsTabStop = false,
+                Padding = new Thickness(12, 12, 12, 6)
+            });
+            if (entries.Count == 0)
+            {
+                list.Items.Add(new ListViewItem { Content = EmptyState("No resources"), IsHitTestVisible = false });
+                return;
+            }
+            foreach (var entry in entries) AddResourceRow(entry);
+        }
+
+        async Task LoadCollectionAsync(long folderId, string title)
+        {
+            try
+            {
+                var session = _session ?? throw new InvalidOperationException("Sign in to view resources.");
+                currentFolderId = folderId;
+                breadcrumb.Text = title;
+                back.Visibility = folderId == 0 && history.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+                list.Items.Clear();
+                list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading resources…") });
+                using var document = await _api.GetCollectionResourcesAsync(session, collectionId, folderId);
+                var records = SchoologyApiClient.ReadRecords(document.RootElement, "resource", "resources", "resource_list");
+                list.Items.Clear();
+                foreach (var record in records)
+                {
+                    var type = (ProfileValue(record.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
+                    var isFolder = type.Contains("folder") || IsFolderRecord(record.Data);
+                    var id = JsonLong(record.Data, "id", "resource_id", "resourceId", "folder_id", "folderId");
+                    var name = ProfileValue(record.Data, "resource_title", "resourceTitle", "title", "name",
+                        "filename", "file_name") ?? record.Title;
+                    AddResourceRow(new ResourceTreeEntry(name, isFolder ? "folder" : "resource",
+                        id, collectionId, record.Data.Clone()));
+                }
+                if (records.Count == 0) list.Items.Add(new ListViewItem { Content = EmptyState("No resources in this folder.") });
+            }
+            catch (Exception ex)
+            {
+                list.Items.Clear();
+                var error = new StackPanel { Spacing = 8, Margin = new Thickness(12) };
+                error.Children.Add(EmptyState("Unable to load resources.", ex.Message));
+                error.Children.Add(Action("Retry", async (_, _) => await LoadCollectionAsync(folderId, title)));
+                list.Items.Add(new ListViewItem { Content = error });
+            }
+        }
+
+        async Task LoadRootAsync()
+        {
+            try
+            {
+                var session = _session ?? throw new InvalidOperationException("Sign in to view resources.");
+                list.Items.Clear();
+                list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading resources…") });
+                using var collectionsDocument = await _api.GetResourceCollectionsAsync(session);
+                var apps = new List<SchoologyApiRecord>();
+                try
+                {
+                    using var appsDocument = await _api.GetResourceAppsAsync(session);
+                    apps.AddRange(SchoologyApiClient.ReadRecords(appsDocument.RootElement,
+                        "resource_apps", "resourceApps", "collection", "collections"));
+                }
+                catch (Exception ex) { App.WriteStartupLog("Schoology resource apps could not be loaded; keeping resource collections available.", ex); }
+                var all = SchoologyApiClient.ReadRecords(collectionsDocument.RootElement, "collection", "collections", "collection_list");
+                var mine = new List<ResourceTreeEntry>();
+                var shared = new List<ResourceTreeEntry>();
+                var groups = new List<ResourceTreeEntry>();
+                foreach (var item in all)
+                {
+                    var owner = JsonLong(item.Data, "collection_owner_id", "collectionOwnerId", "uid", "owner_id");
+                    var realm = (ProfileValue(item.Data, "collection_realm", "collectionRealm", "realm") ?? "").ToLowerInvariant();
+                    var sharedCount = JsonLong(item.Data, "shared_users_count", "sharedUsersCount", "shared_users");
+                    var name = ProfileValue(item.Data, "collection_title", "title", "name") ?? item.Title;
+                    var id = JsonLong(item.Data, "collection_id", "collectionID", "id");
+                    var entry = new ResourceTreeEntry(name, "collection", id, 0, item.Data.Clone());
+                    if (string.IsNullOrWhiteSpace(realm) && owner == session.UserId) mine.Add(entry);
+                    else if (sharedCount > 0) shared.Add(entry);
+                    else if (realm == "group") groups.Add(entry);
+                }
+                list.Items.Clear();
+                AddCategory("My Resources", mine);
+                AddCategory("Shared", shared);
+                AddCategory("Groups", groups);
+                var appEntries = apps.Select(item => new ResourceTreeEntry(
+                    ProfileValue(item.Data, "collection_title", "app_title", "appTitle", "title", "name") ?? item.Title,
+                    "app", JsonLong(item.Data, "collection_id", "collectionID", "id", "app_id", "appId"),
+                    0, item.Data.Clone())).ToArray();
+                AddCategory("Resource Apps", appEntries);
+                if (mine.Count + shared.Count + groups.Count + appEntries.Length == 0)
+                    list.Items.Add(new ListViewItem { Content = EmptyState("No resources") });
+            }
+            catch (Exception ex)
+            {
+                list.Items.Clear();
+                var error = new StackPanel { Spacing = 8, Margin = new Thickness(12) };
+                error.Children.Add(EmptyState("Unable to load resources.", ex.Message));
+                error.Children.Add(Action("Retry", async (_, _) => await LoadRootAsync()));
+                list.Items.Add(new ListViewItem { Content = error });
+            }
+        }
+
+        back.Click += async (_, _) =>
+        {
+            if (history.Count == 0) return;
+            var previous = history.Pop();
+            await LoadCollectionAsync(previous.FolderId, previous.Title);
+        };
+        _ = LoadRootAsync();
         return root;
     }
 
@@ -3335,6 +3625,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         try
         {
             var initialDelay = GetInitialUpdateCheckDelay();
+            App.WriteStartupLog($"A fresh startup update check is scheduled in {initialDelay.TotalSeconds:0} seconds.");
             if (initialDelay > TimeSpan.Zero) await Task.Delay(initialDelay);
             while (!_allowExit)
             {
@@ -3343,9 +3634,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     var update = await CheckForUpdatesAsync();
                     if (update is not null)
                     {
+                        App.WriteStartupLog($"A newer Schoology release is available: {update.Tag}.");
                         if (_isBackgroundHidden) _pendingUpdateInfo = update;
-                        else await ShowUpdateAvailableDialogAsync(update);
+                        else await ShowUpdateAvailableDialogOnUiAsync(update);
                     }
+                    else App.WriteStartupLog("Startup/periodic update check completed; no newer Schoology release is available.");
                     await Task.Delay(UpdateCheckInterval);
                 }
                 catch (Exception ex)
@@ -3363,20 +3656,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private static TimeSpan GetInitialUpdateCheckDelay()
     {
-        try
-        {
-            if (File.Exists(UpdateStatePath))
-            {
-                var state = JsonSerializer.Deserialize<UpdateCheckState>(File.ReadAllText(UpdateStatePath));
-                if (state is { LastSuccessfulCheckUnixMilliseconds: > 0 })
-                {
-                    var last = DateTimeOffset.FromUnixTimeMilliseconds(state.LastSuccessfulCheckUnixMilliseconds);
-                    var remaining = UpdateCheckInterval - (DateTimeOffset.UtcNow - last);
-                    return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromSeconds(8);
-                }
-            }
-        }
-        catch (Exception ex) { App.WriteStartupLog("Could not read update-check state; checking after startup delay.", ex); }
+        // Always perform one fresh check after launch. The saved timestamp is
+        // useful for diagnostics, but must not suppress the startup check.
         return TimeSpan.FromSeconds(8);
     }
 
@@ -3420,6 +3701,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
                 ?? typeof(MainWindow).Assembly.GetName().Version?.ToString()
                 ?? string.Empty;
+            App.WriteStartupLog($"Compared latest WinUI release '{tag}' with installed version '{localVersion}'.");
             if (string.IsNullOrWhiteSpace(tag) || !IsNewerReleaseVersion(tag, localVersion))
             {
                 SaveUpdateCheckState(tag);
@@ -3501,6 +3783,29 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
+    private async Task ShowUpdateAvailableDialogOnUiAsync(UpdateReleaseInfo update)
+    {
+        var dispatcher = _root.DispatcherQueue;
+        if (dispatcher.HasThreadAccess)
+        {
+            await ShowUpdateAvailableDialogAsync(update);
+            return;
+        }
+
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!dispatcher.TryEnqueue(async () =>
+        {
+            try
+            {
+                await ShowUpdateAvailableDialogAsync(update);
+                completion.TrySetResult(true);
+            }
+            catch (Exception ex) { completion.TrySetException(ex); }
+        }))
+            throw new InvalidOperationException("The Windows UI dispatcher is unavailable for the update confirmation dialog.");
+        await completion.Task;
+    }
+
     private async Task ShowUpdateAvailableDialogAsync(UpdateReleaseInfo update)
     {
         if (_isBackgroundHidden)
@@ -3522,7 +3827,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = _root.XamlRoot
             };
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            var result = await dialog.ShowAsync();
+            App.WriteStartupLog(result == ContentDialogResult.Primary
+                ? $"User confirmed installation of Schoology {update.Version}."
+                : $"User deferred installation of Schoology {update.Version}.");
+            if (result == ContentDialogResult.Primary)
                 await DownloadAndInstallUpdateAsync(update);
         }
         finally { _updateDialogOpen = false; }
@@ -3679,8 +3988,8 @@ try {
         var operation = dialog.ShowAsync();
         try
         {
-            const string downloadUrl = "https://github.com/tling0001/schoology-for-desktop-port/releases/latest/download/Schoology_2026.10.35_x64-setup.exe";
-            var installerPath = await DownloadClassicInstallerAsync(new Uri(downloadUrl));
+            var downloadUri = await GetLatestClassicInstallerUriAsync();
+            var installerPath = await DownloadClassicInstallerAsync(downloadUri);
             dialog.Hide();
             await operation;
             var programDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -3702,6 +4011,46 @@ try {
             App.WriteStartupLog("Could not prepare the Schoology classic migration.", ex);
             await ShowApiErrorAsync("Unable to switch to Schoology classic", ex.Message);
         }
+    }
+
+    private static async Task<Uri> GetLatestClassicInstallerUriAsync()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            "https://api.github.com/repos/tling0001/schoology-for-desktop-port/releases/latest");
+        request.Headers.TryAddWithoutValidation("User-Agent", "Schoology-WinUI-Classic-Migration");
+        request.Headers.Accept.ParseAdd("application/vnd.github+json");
+        using var response = await UpdateMetadataClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Could not retrieve the latest classic release (HTTP {(int)response.StatusCode}).");
+
+        using var release = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = release.RootElement;
+        if (JsonBoolean(root, "draft") || JsonBoolean(root, "prerelease"))
+            throw new InvalidDataException("The latest classic Schoology release is not a stable release.");
+        if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("The latest classic Schoology release does not contain downloadable assets.");
+
+        var asset = assets.EnumerateArray().FirstOrDefault(item =>
+            item.ValueKind == JsonValueKind.Object &&
+            item.TryGetProperty("name", out var name) &&
+            name.ValueKind == JsonValueKind.String &&
+            (name.GetString()!.EndsWith("_x64-setup.exe", StringComparison.OrdinalIgnoreCase) ||
+             name.GetString()!.EndsWith("-x64-setup.exe", StringComparison.OrdinalIgnoreCase) ||
+             name.GetString()!.EndsWith("Setup-x64.exe", StringComparison.OrdinalIgnoreCase)));
+        if (asset.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("The latest classic Schoology release does not include an x64 Windows installer.");
+
+        var assetName = asset.GetProperty("name").GetString() ?? string.Empty;
+        var download = asset.TryGetProperty("browser_download_url", out var downloadValue)
+            ? downloadValue.GetString() : null;
+        if (!Uri.TryCreate(download, UriKind.Absolute, out var downloadUri) ||
+            downloadUri.Scheme != Uri.UriSchemeHttps ||
+            !string.Equals(downloadUri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The latest classic installer URL is not a trusted GitHub HTTPS URL.");
+
+        var tag = root.TryGetProperty("tag_name", out var tagValue) ? tagValue.GetString() : null;
+        App.WriteStartupLog($"Resolved classic Schoology installer '{assetName}' from release '{tag}'.");
+        return downloadUri;
     }
 
     private static async Task<string> DownloadClassicInstallerAsync(Uri downloadUri)
@@ -3880,11 +4229,8 @@ try {
         var checkUpdates = new Button
         {
             Content = "Check for updates",
-            Padding = new Thickness(14, 9, 14, 9),
-            Margin = new Thickness(0, 3, 0, 3),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Background = ThemeBrush("SchoologyBlueDarkBrush"),
-            Foreground = Brush("#FFFFFFFF")
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            HorizontalAlignment = HorizontalAlignment.Stretch
         };
         checkUpdates.Click += async (_, _) => await CheckForUpdatesManuallyAsync(checkUpdates);
         AutomationProperties.SetAutomationId(checkUpdates, "CheckForUpdatesButton");
@@ -4454,8 +4800,8 @@ try {
             UIElement BuildInfoView()
             {
                 var info = new StackPanel { Spacing = 10, Margin = new Thickness(8) };
+                if (!string.IsNullOrWhiteSpace(due)) AddProfileField(info, "Due date", FormatAssignmentDueDate(due));
                 if (!string.IsNullOrWhiteSpace(description)) info.Children.Add(CreateRichContent(description, 14));
-                if (!string.IsNullOrWhiteSpace(due)) AddProfileField(info, "Due date", due);
                 if (!string.IsNullOrWhiteSpace(points)) AddProfileField(info, "Points", points);
                 if (info.Children.Count == 0) info.Children.Add(EmptyState("No additional assignment information was provided."));
                 return new ScrollViewer { Content = info, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -4634,24 +4980,28 @@ try {
                     : null;
                 frame.Content = nextContent;
             }
+            var wideSelectedTab = "Info";
+            var narrowSelectedTab = "Info";
             void UpdateAssignmentCreateContext(bool isWide, string selectedTab)
             {
-                var context = isWide && submissionsEnabled && (selectedTab is "Info" or "Comments")
-                    ? "assignment-actions"
-                    : selectedTab == "Comments" && commentsEnabled && submissionsEnabled
+                var context = isWide
+                    ? submissionsEnabled && (selectedTab is "Info" or "Comments")
                         ? "assignment-actions"
                         : selectedTab == "Comments" && commentsEnabled
                             ? "assignment-comment"
-                            : !isWide && selectedTab == "Submissions" && submissionsEnabled
-                                ? "assignment-actions"
-                                : string.Empty;
+                            : string.Empty
+                    : selectedTab == "Comments" && commentsEnabled
+                        ? "assignment-comment"
+                        : selectedTab == "Submissions" && submissionsEnabled
+                            ? "assignment-actions"
+                            : string.Empty;
                 SetTitleBarCreateContext(context);
             }
             void SelectWide(SelectorBarItem item)
             {
-                var selectedTab = item == wideComments ? "Comments" : "Info";
-                SetConnectedFrameContent(wideFrame, selectedTab == "Comments" ? BuildCommentsView() : BuildInfoView());
-                UpdateAssignmentCreateContext(true, selectedTab);
+                wideSelectedTab = item == wideComments ? "Comments" : "Info";
+                SetConnectedFrameContent(wideFrame, wideSelectedTab == "Comments" ? BuildCommentsView() : BuildInfoView());
+                UpdateAssignmentCreateContext(true, wideSelectedTab);
             }
             wideSelector.SelectionChanged += (_, _) => { if (wideSelector.SelectedItem is SelectorBarItem item) SelectWide(item); };
             wideSelector.SelectedItem = wideInfo;
@@ -4674,12 +5024,12 @@ try {
             narrow.Children.Add(narrowFrame);
             void SelectNarrow(SelectorBarItem item)
             {
-                var selectedTab = item == narrowComments ? "Comments" :
+                narrowSelectedTab = item == narrowComments ? "Comments" :
                     item == narrowSubmissions && submissionsEnabled ? "Submissions" : "Info";
-                var nextContent = selectedTab == "Comments" ? BuildCommentsView() :
-                    selectedTab == "Submissions" ? BuildSubmissionsView() : BuildInfoView();
+                var nextContent = narrowSelectedTab == "Comments" ? BuildCommentsView() :
+                    narrowSelectedTab == "Submissions" ? BuildSubmissionsView() : BuildInfoView();
                 SetConnectedFrameContent(narrowFrame, nextContent);
-                UpdateAssignmentCreateContext(false, selectedTab);
+                UpdateAssignmentCreateContext(false, narrowSelectedTab);
             }
             narrowSelector.SelectionChanged += (_, _) => { if (narrowSelector.SelectedItem is SelectorBarItem item) SelectNarrow(item); };
             narrowSelector.SelectedItem = narrowInfo;
@@ -4697,6 +5047,7 @@ try {
                 var isWide = width >= 900;
                 wide.Visibility = isWide ? Visibility.Visible : Visibility.Collapsed;
                 narrow.Visibility = isWide ? Visibility.Collapsed : Visibility.Visible;
+                UpdateAssignmentCreateContext(isWide, isWide ? wideSelectedTab : narrowSelectedTab);
             }
             responsive.SizeChanged += (_, args) => UpdateLayout(args.NewSize.Width);
             UpdateLayout(_root.ActualWidth);
@@ -4704,6 +5055,10 @@ try {
             page.Children.Add(responsive);
             if (_sectionFrame is not null) NavigateMainSection(page, title);
             else Reset(BuildApplicationShell(title, page));
+            // BuildApplicationShell initializes the generic section Create state.
+            // Reapply the assignment action for the selector's initial active tab.
+            var isWideNow = _root.ActualWidth >= 900;
+            UpdateAssignmentCreateContext(isWideNow, isWideNow ? wideSelectedTab : narrowSelectedTab);
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to load assignment", ex.Message); }
     }
@@ -4713,7 +5068,31 @@ try {
     private async Task ShowEventDetailsAsync(string kind, long entityId, SchoologyApiRecord record) =>
         await ShowContentDetailsAsync(kind, entityId, record, true);
 
-    private async Task ShowContentDetailsAsync(string kind, long entityId, SchoologyApiRecord record, bool isEvent)
+    private async Task ShowContentCommentDialogAsync(string kind, long entityId, SchoologyApiRecord record,
+        bool isEvent, long parentCommentId = 0, string? replyAuthor = null)
+    {
+        var session = _session;
+        if (session is null) return;
+        var itemId = JsonLong(record.Data, isEvent ? "event_id" : "discussion_id", "id");
+        if (itemId <= 0) return;
+        var input = new TextBox { Header = parentCommentId > 0 ? $"Reply to {replyAuthor ?? "comment"}" : "Comment",
+            PlaceholderText = parentCommentId > 0 ? "Write a reply…" : "Write a comment…",
+            AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100, MaxHeight = 220 };
+        AutomationProperties.SetAutomationId(input, "DiscussionCommentInput");
+        var dialog = new ContentDialog { Title = parentCommentId > 0 ? "Reply" : "Create comment",
+            Content = input, PrimaryButtonText = "Post", CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(input.Text)) return;
+        try
+        {
+            using var posted = await _api.AddContentCommentAsync(session, kind, entityId, itemId,
+                isEvent, input.Text.Trim(), parentCommentId);
+            await ShowContentDetailsAsync(kind, entityId, record, isEvent, openComments: true);
+        }
+        catch (Exception ex) { await ShowApiErrorAsync("Unable to post comment", ex.Message); }
+    }
+
+    private async Task ShowContentDetailsAsync(string kind, long entityId, SchoologyApiRecord record, bool isEvent, bool openComments = false)
     {
         try
         {
@@ -4749,109 +5128,27 @@ try {
             }
             UIElement BuildComments()
             {
-                var layout = new Grid { RowSpacing = 8, Margin = new Thickness(8) };
-                layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-                layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                 var commentList = new ListView
                 {
                     SelectionMode = ListViewSelectionMode.None,
                     IsItemClickEnabled = false,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    Background = new SolidColorBrush(Colors.Transparent)
                 };
-                long replyParentId = 0;
-                var replyHint = Text("", 12);
-                replyHint.Foreground = ThemeBrush("SchoologyMutedTextBrush");
-                replyHint.Visibility = Visibility.Collapsed;
-                var commentInput = new TextBox
+                AutomationProperties.SetAutomationId(commentList, $"ContentCommentsList_{itemId}");
+                if (commentsError is not null)
+                    commentList.Items.Add(new ListViewItem { Content = EmptyState("Unable to load comments.", commentsError) });
+                else if (comments.Count == 0)
+                    commentList.Items.Add(new ListViewItem { Content = EmptyState("No comments yet.") });
+                else foreach (var comment in comments)
                 {
-                    PlaceholderText = "Write a comment…",
-                    AcceptsReturn = true,
-                    TextWrapping = TextWrapping.Wrap,
-                    MinHeight = 64,
-                    MaxHeight = 120
-                };
-                AutomationProperties.SetAutomationId(commentInput, $"ContentCommentComposer_{itemId}");
-                Button cancelReply = null!;
-                cancelReply = Action("Cancel reply", (_, _) =>
-                {
-                    replyParentId = 0;
-                    replyHint.Visibility = Visibility.Collapsed;
-                    cancelReply.Visibility = Visibility.Collapsed;
-                    commentInput.PlaceholderText = "Write a comment…";
-                });
-                cancelReply.Visibility = Visibility.Collapsed;
-                Button postButton = null!;
-                postButton = Action("Post comment", async (_, _) =>
-                {
-                    var value = commentInput.Text.Trim();
-                    if (value.Length == 0 || _session is null) return;
-                    postButton.IsEnabled = false;
-                    try
+                    commentList.Items.Add(new ListViewItem
                     {
-                        using var posted = await _api.AddContentCommentAsync(_session, kind, entityId, itemId, isEvent, value, replyParentId);
-                        commentInput.Text = string.Empty;
-                        replyParentId = 0;
-                        replyHint.Visibility = Visibility.Collapsed;
-                        cancelReply.Visibility = Visibility.Collapsed;
-                        commentInput.PlaceholderText = "Write a comment…";
-                        using var refreshed = isEvent
-                            ? await _api.GetEventCommentsAsync(_session, kind, entityId, itemId)
-                            : await _api.GetDiscussionCommentsAsync(_session, kind, entityId, itemId);
-                        comments = SchoologyApiClient.ReadRecords(refreshed.RootElement, "comment", "comments");
-                        await ResolveCommentAuthorsAsync(comments, _session);
-                        commentsError = null;
-                        RenderComments();
-                    }
-                    catch (Exception ex) { await ShowApiErrorAsync("Unable to post comment", ex.Message); }
-                    finally { postButton.IsEnabled = true; }
-                }, primary: true);
-                void RenderComments()
-                {
-                    commentList.Items.Clear();
-                    if (commentsError is not null)
-                    {
-                        commentList.Items.Add(new ListViewItem { Content = EmptyState("Unable to load comments.", commentsError) });
-                        return;
-                    }
-                    if (comments.Count == 0)
-                    {
-                        commentList.Items.Add(new ListViewItem { Content = EmptyState("No comments yet.") });
-                        return;
-                    }
-                    foreach (var comment in comments)
-                    {
-                        commentList.Items.Add(new ListViewItem
-                        {
-                            Content = BuildCommentRow(comment, itemId, (parentId, author) =>
-                            {
-                                replyParentId = parentId;
-                                replyHint.Text = $"Replying to {author}";
-                                replyHint.Visibility = Visibility.Visible;
-                                cancelReply.Visibility = Visibility.Visible;
-                                commentInput.PlaceholderText = "Write a reply…";
-                                commentInput.Focus(FocusState.Programmatic);
-                            })
-                        });
-                    }
+                        Content = BuildCommentRow(comment, itemId, (parentId, author) =>
+                            _ = ShowContentCommentDialogAsync(kind, entityId, record, isEvent, parentId, author))
+                    });
                 }
-                var composerContent = new StackPanel { Spacing = 6 };
-                var replyRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                replyRow.Children.Add(replyHint);
-                replyRow.Children.Add(cancelReply);
-                composerContent.Children.Add(replyRow);
-                composerContent.Children.Add(commentInput);
-                composerContent.Children.Add(postButton);
-                var composer = new Border
-                {
-                    Padding = new Thickness(8),
-                    Background = ThemeBrush("SchoologySubtleBrush"),
-                    Child = composerContent
-                };
-                Grid.SetRow(composer, 1);
-                layout.Children.Add(commentList);
-                layout.Children.Add(composer);
-                RenderComments();
-                return layout;
+                return commentList;
             }
             var header = new Grid { ColumnSpacing = 12, Margin = new Thickness(16, 10, 16, 4) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -4870,11 +5167,20 @@ try {
             Grid.SetRow(selector, 1); page.Children.Add(selector);
             var frame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
             Grid.SetRow(frame, 2); page.Children.Add(frame);
-            void Select(SelectorBarItem item) => frame.Content = item == commentsItem ? BuildComments() : BuildInfo();
+            void Select(SelectorBarItem item)
+            {
+                var showingComments = item == commentsItem;
+                frame.Content = showingComments ? BuildComments() : BuildInfo();
+                SetTitleBarCreateContext(showingComments ? "content-comment" : string.Empty,
+                    showingComments ? () => ShowContentCommentDialogAsync(kind, entityId, record, isEvent) : null);
+            }
             selector.SelectionChanged += (_, _) => { if (selector.SelectedItem is SelectorBarItem item) Select(item); };
-            selector.SelectedItem = infoItem; Select(infoItem);
-            SetTitleBarCreateContext(string.Empty);
+            selector.SelectedItem = openComments ? commentsItem : infoItem;
+            Select(openComments ? commentsItem : infoItem);
             if (_sectionFrame is not null) NavigateMainSection(page, title); else Reset(BuildApplicationShell(title, page));
+            // Reapply the comment action after a shell rebuild, which initializes the generic Create button.
+            SetTitleBarCreateContext(openComments ? "content-comment" : string.Empty,
+                openComments ? () => ShowContentCommentDialogAsync(kind, entityId, record, isEvent) : null);
         }
         catch (Exception ex) { await ShowApiErrorAsync(isEvent ? "Unable to load event" : "Unable to load discussion", ex.Message); }
     }
@@ -4944,7 +5250,7 @@ try {
                     var labels = new StackPanel { Spacing = 3 };
                     labels.Children.Add(Text(assignmentRecord.Title, 14, true));
                     var due = ProfileValue(assignmentRecord.Data, "due", "due_date", "dueDate");
-                    if (!string.IsNullOrWhiteSpace(due)) labels.Children.Add(Text("Due " + due, 12));
+                    if (!string.IsNullOrWhiteSpace(due)) labels.Children.Add(Text("Due " + FormatAssignmentDueDate(due), 12));
                     var description = ProfileValue(assignmentRecord.Data, "description", "body", "description_richtext");
                     if (!string.IsNullOrWhiteSpace(description)) labels.Children.Add(Text(StripMarkup(description), 12));
                     Grid.SetColumn(labels, 1);
@@ -6536,11 +6842,8 @@ try {
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         StackPanel previewPanel = new() { Spacing = 6, Visibility = Visibility.Collapsed };
         Button viewMoreButton = null!;
-        var commentCountItem = new MenuFlyoutItem
-        {
-            Text = commentCount > 0 ? $"View {commentCount} comments" : "No comments yet",
-            IsEnabled = commentCount > 0
-        };
+        Button viewCommentsButton = null!;
+        Button viewLikesButton = null!;
         var inlineComposer = new StackPanel
         {
             Spacing = 8,
@@ -6580,8 +6883,8 @@ try {
                 var refreshedComments = SchoologyApiClient.ReadRecords(refreshed.RootElement, "comment", "comments");
                 await ResolveCommentAuthorsAsync(refreshedComments, _session);
                 commentCount = refreshedComments.Count;
-                commentCountItem.Text = commentCount > 0 ? $"View {commentCount} comments" : "No comments yet";
-                commentCountItem.IsEnabled = commentCount > 0;
+                viewCommentsButton.Content = commentCount > 0 ? $"View {commentCount} comments" : "No comments";
+                viewCommentsButton.IsEnabled = commentCount > 0;
                 inlineCommentInput.Text = string.Empty;
                 inlineComposer.Visibility = Visibility.Collapsed;
                 _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
@@ -6592,19 +6895,9 @@ try {
         inlineCommentActions.Children.Add(inlinePostButton);
         inlineComposer.Children.Add(inlineCommentInput);
         inlineComposer.Children.Add(inlineCommentActions);
-        var commentSplit = new SplitButton { Content = "Comment", Padding = new Thickness(8, 5, 8, 5),
-            Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0) };
-        var commentMenu = new MenuFlyout();
-        commentCountItem.Click += async (_, _) =>
-            await ShowUpdateCommentsDialogAsync(commentRealm, commentRealmId, updateId, () =>
-            {
-                commentCount++;
-                commentCountItem.Text = $"View {commentCount} comments";
-                commentCountItem.IsEnabled = true;
-                _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
-            });
-        commentMenu.Items.Add(commentCountItem); commentSplit.Flyout = commentMenu;
-        commentSplit.Click += (_, _) =>
+        var commentButton = new Button { Content = "Comment" };
+        AutomationProperties.SetAutomationId(commentButton, $"UpdateComment_{updateId}");
+        commentButton.Click += (_, _) =>
         {
             if (updateId <= 0 || commentRealmId <= 0 || _session is null) return;
             inlineComposer.Visibility = inlineComposer.Visibility == Visibility.Visible
@@ -6612,41 +6905,62 @@ try {
             if (inlineComposer.Visibility == Visibility.Visible)
                 inlineCommentInput.Focus(FocusState.Programmatic);
         };
-        AutomationProperties.SetAutomationId(commentSplit, $"UpdateComment_{updateId}");
-        var likeSplit = new SplitButton { Content = liked ? "Unlike" : "Like", Padding = new Thickness(8, 5, 8, 5),
-            Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0) };
-        var likeMenu = new MenuFlyout();
-        var likeCountItem = new MenuFlyoutItem { Text = likeCount > 0 ? $"View {likeCount} likes" : "No likes yet", IsEnabled = likeCount > 0 };
-        likeCountItem.Click += async (_, _) => await ShowUpdateLikesDialogAsync(updateId);
-        likeMenu.Items.Add(likeCountItem); likeSplit.Flyout = likeMenu;
-        likeSplit.Click += async (_, _) =>
+        viewCommentsButton = new Button
         {
-            if (updateId <= 0 || _session is null) return;
-            likeSplit.IsEnabled = false;
-            try
-            {
-                using var result = await _api.SetUpdateLikeAsync(_session, updateId, !liked);
-                liked = !liked; likeCount = Math.Max(0, likeCount + (liked ? 1 : -1));
-                likeSplit.Content = liked ? "Unlike" : "Like";
-                likeCountItem.Text = likeCount > 0 ? $"View {likeCount} likes" : "No likes yet"; likeCountItem.IsEnabled = likeCount > 0;
-            }
-            catch (Exception ex) { await ShowApiErrorAsync("Unable to update like", ex.Message); }
-            finally { likeSplit.IsEnabled = true; }
+            Content = commentCount > 0 ? $"View {commentCount} comments" : "No comments",
+            IsEnabled = commentCount > 0
         };
-        AutomationProperties.SetAutomationId(likeSplit, $"UpdateLike_{updateId}");
-        actions.Children.Add(commentSplit); actions.Children.Add(likeSplit); card.Children.Add(actions);
-        card.Children.Add(inlineComposer);
-
-        viewMoreButton = Action("View more comments", async (_, _) =>
+        AutomationProperties.SetAutomationId(viewCommentsButton, $"UpdateViewComments_{updateId}");
+        viewCommentsButton.Click += async (_, _) =>
             await ShowUpdateCommentsDialogAsync(commentRealm, commentRealmId, updateId, () =>
             {
                 commentCount++;
-                commentCountItem.Text = $"View {commentCount} comments";
-                commentCountItem.IsEnabled = true;
+                viewCommentsButton.Content = $"View {commentCount} comments";
+                viewCommentsButton.IsEnabled = true;
                 _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
-            }));
-        viewMoreButton.HorizontalAlignment = HorizontalAlignment.Left;
-        viewMoreButton.Width = double.NaN;
+            });
+        var likeButton = new Button { Content = liked ? "Unlike" : "Like" };
+        AutomationProperties.SetAutomationId(likeButton, $"UpdateLike_{updateId}");
+        likeButton.Click += async (_, _) =>
+        {
+            if (updateId <= 0 || _session is null) return;
+            likeButton.IsEnabled = false;
+            try
+            {
+                using var result = await _api.SetUpdateLikeAsync(_session, updateId, !liked);
+                liked = !liked;
+                likeCount = Math.Max(0, likeCount + (liked ? 1 : -1));
+                likeButton.Content = liked ? "Unlike" : "Like";
+                viewLikesButton.Content = likeCount > 0 ? $"View {likeCount} likes" : "No likes";
+                viewLikesButton.IsEnabled = likeCount > 0;
+            }
+            catch (Exception ex) { await ShowApiErrorAsync("Unable to update like", ex.Message); }
+            finally { likeButton.IsEnabled = true; }
+        };
+        viewLikesButton = new Button
+        {
+            Content = likeCount > 0 ? $"View {likeCount} likes" : "No likes",
+            IsEnabled = likeCount > 0
+        };
+        AutomationProperties.SetAutomationId(viewLikesButton, $"UpdateViewLikes_{updateId}");
+        viewLikesButton.Click += async (_, _) => await ShowUpdateLikesDialogAsync(updateId);
+        actions.Children.Add(commentButton);
+        actions.Children.Add(viewCommentsButton);
+        actions.Children.Add(likeButton);
+        actions.Children.Add(viewLikesButton);
+        card.Children.Add(actions);
+        card.Children.Add(inlineComposer);
+
+        viewMoreButton = new Button { Content = "View more comments", HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetAutomationId(viewMoreButton, $"UpdateViewMoreComments_{updateId}");
+        viewMoreButton.Click += async (_, _) =>
+            await ShowUpdateCommentsDialogAsync(commentRealm, commentRealmId, updateId, () =>
+            {
+                commentCount++;
+                viewCommentsButton.Content = $"View {commentCount} comments";
+                viewCommentsButton.IsEnabled = true;
+                _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
+            });
         card.Children.Add(previewPanel);
         if (commentCount > 0 && commentRealmId > 0 && updateId > 0)
             _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
@@ -7032,7 +7346,7 @@ try {
         {
             if (_session is null) return;
             var ids = records.Select(record => MessagePersonId(record, mode))
-                .Where(id => id > 0 && !_userProfileCache.ContainsKey(id)).Distinct().ToArray();
+                .Where(id => id > 0 && !_userProfileCache.ContainsKey(id)).Distinct().Take(20).ToArray();
             await Task.WhenAll(ids.Select(async id =>
             {
                 try
@@ -7154,10 +7468,11 @@ try {
                     using var inbox = await _api.GetMessagesAsync(_session, false);
                     inboxRecords = SchoologyApiClient.ReadRecords(inbox.RootElement, "message", "messages");
                 }
-                await ResolveMessagePeopleAsync(mode == "Sent" ? sentRecords : inboxRecords, mode);
+                var recordsToResolve = mode == "Sent" ? sentRecords : inboxRecords;
                 loading = false;
                 RenderMessages();
                 SetStatusText(status, recordsCountText(mode));
+                _ = ResolveAndRefreshMessagePeopleAsync(recordsToResolve, mode);
                 if (mode == "Unread" && !inboxRecords.Any(IsUnread))
                     ShowDetailPlaceholder("You're all caught up", "There are no unread messages.");
                 else if (mode == "Sent" && sentRecords.Count == 0)
@@ -7171,6 +7486,15 @@ try {
                 SetStatusText(status, $"Unable to load {mode.ToLowerInvariant()}: {ex.Message}");
                 RenderMessages();
             }
+        }
+
+        async Task ResolveAndRefreshMessagePeopleAsync(IReadOnlyList<SchoologyApiRecord> records, string mode)
+        {
+            await ResolveMessagePeopleAsync(records, mode);
+            _root.DispatcherQueue.TryEnqueue(() =>
+            {
+                if (currentMode == mode && !loading) RenderMessages();
+            });
         }
 
         string recordsCountText(string mode)
@@ -7876,7 +8200,16 @@ try {
                         });
                     updateRecords = SchoologyApiClient.ReadRecords(updatesDocument.RootElement, "update", "updates", "update_list");
                 }
-                catch (Exception ex) { updatesError = ex.Message; }
+                catch (Exception ex)
+                {
+                    if (ex.Message.Contains("No installed components were detected", StringComparison.OrdinalIgnoreCase))
+                    {
+                        updatesError = null;
+                        updateRecords = [];
+                        App.WriteStartupLog($"Profile updates are unavailable for user {userId}; showing the empty updates state.", ex);
+                    }
+                    else updatesError = ex.Message;
+                }
 
                 try
                 {
