@@ -1,5 +1,12 @@
 # Release notes
 
+## [2026.10.0-port.68] - 2026-11-02
+
+- Put File and Resource actions side by side in the assignment upload submission dialog.
+- Add a native Messages composer with recipient search, subject and message fields, file/resource attachments, and Send; refresh Sent after successful delivery.
+- Release shell page content when navigating away so returning from another user's profile safely restores the previous page.
+
+
 ## [2026.10.0-port.67] - 2026-11-02
 
 - Run `taskkill /F /IM Schoology.WinUI.exe` in the installer handoff before starting the update installer, then verify the app process has exited.

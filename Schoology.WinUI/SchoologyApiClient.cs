@@ -61,6 +61,39 @@ internal sealed class SchoologyApiClient
         _auth.GetApiJsonAsync(session, sent ? "messages/sent" : "messages/inbox",
             new Dictionary<string, string> { ["limit"] = "50" }, cancellationToken);
 
+    internal Task<JsonDocument> GetMessageRecipientsAsync(
+        SchoologyAuthService.Session session, string query, CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, "messages/recipients",
+            new Dictionary<string, string> { ["name"] = query.Trim(), ["limit"] = "10" }, cancellationToken);
+
+    internal Task<string> UploadMessageFileAsync(
+        SchoologyAuthService.Session session, string filename, string mime, byte[] bytes,
+        CancellationToken cancellationToken = default) =>
+        _auth.UploadSchoologyFileAsync(session, filename, mime, bytes, cancellationToken);
+
+    internal Task<JsonDocument> CreateMessageAsync(
+        SchoologyAuthService.Session session, IReadOnlyList<long> recipientIds, string subject,
+        string message, IReadOnlyList<string> fileIds, IReadOnlyList<long> resourceIds,
+        CancellationToken cancellationToken = default)
+    {
+        if (recipientIds.Count == 0 || recipientIds.Any(id => id <= 0) ||
+            string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(message))
+            throw new InvalidOperationException("A recipient, subject, and message are required.");
+
+        var payload = new Dictionary<string, object>
+        {
+            ["recipient_ids"] = string.Join(",", recipientIds.Distinct()),
+            ["subject"] = subject.Trim(),
+            ["message"] = message.Trim()
+        };
+        if (fileIds.Count > 0)
+            payload["file-attachment"] = new Dictionary<string, object> { ["id"] = fileIds };
+        if (resourceIds.Count > 0)
+            payload["attachments"] = resourceIds.Distinct()
+                .Select(id => new Dictionary<string, object> { ["resource"] = id }).ToArray();
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, "messages", payload, cancellationToken);
+    }
+
     internal Task<JsonDocument> CreateUpdateAsync(
         SchoologyAuthService.Session session, string kind, long entityId, string body,
         CancellationToken cancellationToken = default)

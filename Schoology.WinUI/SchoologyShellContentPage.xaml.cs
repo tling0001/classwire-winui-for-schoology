@@ -17,7 +17,16 @@ public sealed partial class SchoologyShellContentPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        if (e.Parameter is UIElement content)
+        if (e.Parameter is UIElement content && !ReferenceEquals(Content, content))
             Content = content;
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        // Detach the actual UIElement stored in the navigation parameter before
+        // the page leaves the frame. Frame.GoBack can then reattach that view
+        // without violating XAML's single-parent rule.
+        base.OnNavigatedFrom(e);
+        Content = null;
     }
 }

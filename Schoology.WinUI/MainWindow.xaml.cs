@@ -1763,11 +1763,13 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private async Task ShowAssignmentUploadOptionsDialogAsync()
     {
         if (_session is null || !_activeAssignmentAllowsSubmission) return;
-        var content = new StackPanel { Spacing = 10, MinWidth = 320 };
+        var content = new Grid { MinWidth = 360, ColumnSpacing = 10 };
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var file = new Button { Content = "File", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
+            HorizontalContentAlignment = HorizontalAlignment.Center, Padding = new Thickness(14, 12, 14, 12) };
         var resource = new Button { Content = "Resource", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10, 14, 10) };
+            HorizontalContentAlignment = HorizontalAlignment.Center, Padding = new Thickness(14, 12, 14, 12) };
         var dialog = new ContentDialog
         {
             Title = "Upload Submission",
@@ -1785,6 +1787,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             dialog.Hide();
             await ShowAssignmentResourcePickerAsync();
         };
+        Grid.SetColumn(file, 0);
+        Grid.SetColumn(resource, 1);
         content.Children.Add(file);
         content.Children.Add(resource);
         await dialog.ShowAsync();
@@ -7630,7 +7634,29 @@ try {
         left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        left.Children.Add(Text("Messages", 23, true));
+        var messagesHeader = new Grid { ColumnSpacing = 8 };
+        messagesHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        messagesHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var messagesTitle = Text("Messages", 23, true);
+        messagesTitle.VerticalAlignment = VerticalAlignment.Center;
+        messagesHeader.Children.Add(messagesTitle);
+        var createMessageButton = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Children = { new SymbolIcon(Symbol.Add), Text("Create", 13, true) }
+            },
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        AutomationProperties.SetAutomationId(createMessageButton, "MessagesCreateButton");
+        AutomationProperties.SetName(createMessageButton, "Create a new message");
+        createMessageButton.Click += async (_, _) => await ShowComposeMessageDialogAsync(RefreshSentAfterComposeAsync);
+        Grid.SetColumn(createMessageButton, 1);
+        messagesHeader.Children.Add(createMessageButton);
+        left.Children.Add(messagesHeader);
 
         var modes = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Stretch };
         foreach (var label in new[] { "Inbox", "Unread", "Sent" })
@@ -7917,6 +7943,24 @@ try {
             }
         }
 
+        async Task RefreshSentAfterComposeAsync()
+        {
+            messageViewGeneration++;
+            messageLoadCancellation?.Cancel();
+            messageSelected = false;
+            left.Visibility = Visibility.Visible;
+            detail.Visibility = root.ActualWidth < 760 ? Visibility.Collapsed : Visibility.Visible;
+            ShowDetailPlaceholder("Message sent", "Your message appears in Sent.");
+            sentLoaded = false;
+            sentRecords = [];
+            var sentMode = modes.Items.OfType<SelectorBarItem>()
+                .FirstOrDefault(item => string.Equals(item.Tag as string, "Sent", StringComparison.Ordinal));
+            if (sentMode is not null && !ReferenceEquals(modes.SelectedItem, sentMode))
+                modes.SelectedItem = sentMode;
+            else
+                await LoadMailboxAsync("Sent");
+        }
+
         async Task ResolveAndRefreshMessagePeopleAsync(IReadOnlyList<SchoologyApiRecord> records, string mode)
         {
             await ResolveMessagePeopleAsync(records, mode);
@@ -8120,6 +8164,394 @@ try {
         ShowDetailPlaceholder("Select a message", "Choose a message from the list to read it.");
         _ = LoadMailboxAsync("Inbox");
         return root;
+    }
+
+
+    private async Task ShowComposeMessageDialogAsync(Func<Task> refreshSent)
+    {
+        var session = _session;
+        if (session is null)
+        {
+            await ShowApiErrorAsync("Messages unavailable", "Sign in to create a Schoology message.");
+            return;
+        }
+
+        var recipients = new List<(long Id, string Name)>();
+        var fileAttachments = new List<(string Id, string Name)>();
+        var resourceAttachments = new List<(long Id, string Name)>();
+        var content = new StackPanel { Spacing = 12, MinWidth = 440 };
+
+        var toLabel = Text("To", 12, true);
+        var recipientSearch = new TextBox { PlaceholderText = "Search for a recipient" };
+        AutomationProperties.SetAutomationId(recipientSearch, "MessageRecipientSearch");
+        var selectedRecipientsScroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            MaxHeight = 48
+        };
+        var selectedRecipients = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        selectedRecipientsScroll.Content = selectedRecipients;
+        var suggestions = new ListView
+        {
+            SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = false,
+            MaxHeight = 150,
+            Visibility = Visibility.Collapsed,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetAutomationId(suggestions, "MessageRecipientSuggestions");
+        var subject = new TextBox { Header = "Subject", PlaceholderText = "Subject" };
+        AutomationProperties.SetAutomationId(subject, "MessageSubject");
+        var body = new TextBox
+        {
+            Header = "Message",
+            PlaceholderText = "Write a message…",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 140,
+            VerticalContentAlignment = VerticalAlignment.Top
+        };
+        AutomationProperties.SetAutomationId(body, "MessageBody");
+
+        content.Children.Add(toLabel);
+        content.Children.Add(recipientSearch);
+        content.Children.Add(selectedRecipientsScroll);
+        content.Children.Add(suggestions);
+        content.Children.Add(subject);
+        content.Children.Add(body);
+
+        var attachmentActions = new Grid { ColumnSpacing = 10 };
+        attachmentActions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        attachmentActions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var attachFile = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children = { new SymbolIcon(Symbol.Page), Text("File", 13) }
+            },
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var attachResource = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children = { new SymbolIcon(Symbol.Folder), Text("Resource", 13) }
+            },
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetAutomationId(attachFile, "MessageAttachFileButton");
+        AutomationProperties.SetAutomationId(attachResource, "MessageAttachResourceButton");
+        Grid.SetColumn(attachResource, 1);
+        attachmentActions.Children.Add(attachFile);
+        attachmentActions.Children.Add(attachResource);
+        content.Children.Add(attachmentActions);
+
+        var attachmentList = new StackPanel { Spacing = 5 };
+        content.Children.Add(attachmentList);
+        var status = Text(string.Empty, 12);
+        status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        content.Children.Add(status);
+
+        void RenderRecipients()
+        {
+            selectedRecipients.Children.Clear();
+            selectedRecipientsScroll.Visibility = recipients.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            foreach (var recipient in recipients.ToArray())
+            {
+                var chip = new Button { Content = $"{recipient.Name}  ×", Padding = new Thickness(10, 4, 10, 4) };
+                AutomationProperties.SetName(chip, $"Remove {recipient.Name}");
+                chip.Click += (_, _) =>
+                {
+                    recipients.RemoveAll(item => item.Id == recipient.Id);
+                    RenderRecipients();
+                };
+                selectedRecipients.Children.Add(chip);
+            }
+        }
+
+        void RenderAttachments()
+        {
+            attachmentList.Children.Clear();
+            foreach (var attachment in fileAttachments.ToArray())
+            {
+                var remove = new Button { Content = $"{attachment.Name}  ×", Padding = new Thickness(8, 4, 8, 4) };
+                remove.Click += (_, _) =>
+                {
+                    fileAttachments.RemoveAll(item => item.Id == attachment.Id);
+                    RenderAttachments();
+                };
+                attachmentList.Children.Add(remove);
+            }
+            foreach (var attachment in resourceAttachments.ToArray())
+            {
+                var remove = new Button { Content = $"{attachment.Name}  ×", Padding = new Thickness(8, 4, 8, 4) };
+                remove.Click += (_, _) =>
+                {
+                    resourceAttachments.RemoveAll(item => item.Id == attachment.Id);
+                    RenderAttachments();
+                };
+                attachmentList.Children.Add(remove);
+            }
+        }
+
+        void AddRecipient(long id, string name)
+        {
+            if (id <= 0 || recipients.Any(item => item.Id == id)) return;
+            recipients.Add((id, name));
+            recipientSearch.Text = string.Empty;
+            suggestions.Items.Clear();
+            suggestions.Visibility = Visibility.Collapsed;
+            RenderRecipients();
+            recipientSearch.Focus(FocusState.Programmatic);
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "New Message",
+            Content = content,
+            PrimaryButtonText = "Send",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot
+        };
+
+        var searchGeneration = 0;
+        CancellationTokenSource? searchCancellation = null;
+        recipientSearch.TextChanged += async (_, _) =>
+        {
+            var query = recipientSearch.Text.Trim();
+            var generation = ++searchGeneration;
+            searchCancellation?.Cancel();
+            searchCancellation?.Dispose();
+            searchCancellation = null;
+            suggestions.Items.Clear();
+            if (query.Length < 2)
+            {
+                suggestions.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var cancellation = new CancellationTokenSource();
+            searchCancellation = cancellation;
+            suggestions.Items.Add(new ListViewItem { Content = Text("Searching…", 12), IsEnabled = false });
+            suggestions.Visibility = Visibility.Visible;
+            try
+            {
+                await Task.Delay(250, cancellation.Token);
+                using var result = await _api.GetMessageRecipientsAsync(session, query, cancellation.Token);
+                if (generation != searchGeneration || cancellation.IsCancellationRequested) return;
+                suggestions.Items.Clear();
+                foreach (var record in SchoologyApiClient.ReadRecords(result.RootElement,
+                    "recipient", "recipients", "user", "users"))
+                {
+                    var id = JsonLong(record.Data, "id", "uid", "user_id", "userId", "recipient_id", "recipientId");
+                    var name = ProfileValue(record.Data, "name_display", "nameDisplay", "display_name",
+                        "displayName", "name", "full_name", "fullName") ?? record.Title;
+                    if (id <= 0 || recipients.Any(item => item.Id == id)) continue;
+                    var item = new ListViewItem
+                    {
+                        Content = Text(name, 13),
+                        HorizontalContentAlignment = HorizontalAlignment.Stretch
+                    };
+                    void SelectRecipient() => AddRecipient(id, name);
+                    item.Tapped += (_, _) => SelectRecipient();
+                    item.KeyDown += (_, args) =>
+                    {
+                        if (args.Key is VirtualKey.Enter or VirtualKey.Space)
+                        {
+                            args.Handled = true;
+                            SelectRecipient();
+                        }
+                    };
+                    suggestions.Items.Add(item);
+                }
+                if (suggestions.Items.Count == 0)
+                    suggestions.Items.Add(new ListViewItem { Content = Text("No recipients found.", 12), IsEnabled = false });
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                if (generation != searchGeneration) return;
+                suggestions.Items.Clear();
+                suggestions.Items.Add(new ListViewItem { Content = Text($"Unable to search recipients: {ex.Message}", 12), IsEnabled = false });
+            }
+        };
+
+        attachFile.Click += async (_, _) =>
+        {
+            try
+            {
+                var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
+                picker.FileTypeFilter.Add("*");
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, Win32Interop.GetWindowFromWindowId(AppWindow.Id));
+                var file = await picker.PickSingleFileAsync();
+                if (file is null) return;
+                var info = new FileInfo(file.Path);
+                if (!info.Exists || info.Length <= 0)
+                    throw new InvalidOperationException("The selected file is empty or no longer available.");
+                if (info.Length > 60L * 1024 * 1024)
+                    throw new InvalidOperationException("Message attachments are limited to 60 MB.");
+                status.Text = $"Uploading {file.Name}…";
+                attachFile.IsEnabled = false;
+                var bytes = await File.ReadAllBytesAsync(file.Path);
+                var id = await _api.UploadMessageFileAsync(session, file.Name, GetSubmissionMimeType(file.Name), bytes);
+                fileAttachments.Add((id, file.Name));
+                RenderAttachments();
+                status.Text = "File attached.";
+            }
+            catch (Exception ex) { status.Text = $"Unable to attach file: {ex.Message}"; }
+            finally { attachFile.IsEnabled = true; }
+        };
+
+        var resourceFlyout = new Flyout { Placement = FlyoutPlacementMode.Bottom };
+        var resourceList = new ListView
+        {
+            Width = 380,
+            MaxHeight = 340,
+            SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = false,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetAutomationId(resourceList, "MessageResourcePickerList");
+        resourceFlyout.Content = resourceList;
+        attachResource.Click += async (_, _) =>
+        {
+            resourceList.Items.Clear();
+            resourceList.Items.Add(new ListViewItem { Content = Text("Loading resources…", 12), IsEnabled = false });
+            resourceFlyout.ShowAt(attachResource);
+            try
+            {
+                var choices = await LoadMessageResourceChoicesAsync(session);
+                resourceList.Items.Clear();
+                foreach (var choice in choices)
+                {
+                    var item = new ListViewItem
+                    {
+                        Content = Text(choice.Title, 13),
+                        HorizontalContentAlignment = HorizontalAlignment.Stretch
+                    };
+                    item.Tapped += (_, _) =>
+                    {
+                        if (resourceAttachments.All(existing => existing.Id != choice.Id))
+                        {
+                            resourceAttachments.Add((choice.Id, choice.Title));
+                            RenderAttachments();
+                        }
+                        resourceFlyout.Hide();
+                    };
+                    resourceList.Items.Add(item);
+                }
+                if (choices.Count == 0)
+                    resourceList.Items.Add(new ListViewItem { Content = Text("No resources found.", 12), IsEnabled = false });
+            }
+            catch (Exception ex)
+            {
+                resourceList.Items.Clear();
+                resourceList.Items.Add(new ListViewItem { Content = Text($"Unable to load resources: {ex.Message}", 12), IsEnabled = false });
+            }
+        };
+
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            var deferral = args.GetDeferral();
+            args.Cancel = true;
+            try
+            {
+                if (recipients.Count == 0)
+                {
+                    status.Text = "Choose at least one recipient from the suggestions.";
+                    recipientSearch.Focus(FocusState.Programmatic);
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(subject.Text))
+                {
+                    status.Text = "Enter a subject.";
+                    subject.Focus(FocusState.Programmatic);
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(body.Text))
+                {
+                    status.Text = "Enter a message.";
+                    body.Focus(FocusState.Programmatic);
+                    return;
+                }
+
+                status.Text = "Sending…";
+                dialog.IsPrimaryButtonEnabled = false;
+                using var response = await _api.CreateMessageAsync(session,
+                    recipients.Select(item => item.Id).ToArray(),
+                    subject.Text.Trim(), body.Text.Trim(),
+                    fileAttachments.Select(item => item.Id).ToArray(),
+                    resourceAttachments.Select(item => item.Id).ToArray());
+                status.Text = "Message sent.";
+                await Task.Delay(250);
+                args.Cancel = false;
+            }
+            catch (Exception ex)
+            {
+                status.Text = $"Unable to send message: {ex.Message}";
+                dialog.IsPrimaryButtonEnabled = true;
+            }
+            finally { deferral.Complete(); }
+        };
+
+        dialog.Closed += (_, _) =>
+        {
+            searchGeneration++;
+            searchCancellation?.Cancel();
+            searchCancellation?.Dispose();
+            resourceFlyout.Hide();
+        };
+
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            await refreshSent();
+    }
+
+    private async Task<List<(long Id, string Title)>> LoadMessageResourceChoicesAsync(
+        SchoologyAuthService.Session session)
+    {
+        var choices = new List<(long Id, string Title)>();
+        var seenResources = new HashSet<long>();
+        var visitedFolders = new HashSet<(long CollectionId, long FolderId)>();
+        using var collections = await _api.GetResourceCollectionsAsync(session);
+        var collectionRecords = SchoologyApiClient.ReadRecords(collections.RootElement,
+            "collection", "collections", "items");
+
+        async Task LoadFolderAsync(long collectionId, long folderId, int depth)
+        {
+            if (depth > 4 || choices.Count >= 300 ||
+                !visitedFolders.Add((collectionId, folderId))) return;
+            using var resources = await _api.GetCollectionResourcesAsync(session, collectionId, folderId);
+            foreach (var resource in SchoologyApiClient.ReadRecords(resources.RootElement,
+                "resource", "resources", "items"))
+            {
+                if (IsFolderRecord(resource.Data))
+                {
+                    var nestedFolderId = JsonLong(resource.Data, "id", "folder_id", "folderId");
+                    if (nestedFolderId > 0) await LoadFolderAsync(collectionId, nestedFolderId, depth + 1);
+                    continue;
+                }
+                var id = JsonLong(resource.Data, "template_id", "templateID", "resource_id",
+                    "resourceId", "id");
+                if (id <= 0 || !seenResources.Add(id)) continue;
+                var title = ProfileValue(resource.Data, "title", "name") ?? resource.Title;
+                choices.Add((id, title));
+                if (choices.Count >= 300) break;
+            }
+        }
+
+        foreach (var collection in collectionRecords)
+        {
+            var collectionId = JsonLong(collection.Data, "id", "collection_id", "collectionId");
+            if (collectionId > 0) await LoadFolderAsync(collectionId, 0, 0);
+            if (choices.Count >= 300) break;
+        }
+        return choices;
     }
 
     private static string StripMarkup(string? value)
