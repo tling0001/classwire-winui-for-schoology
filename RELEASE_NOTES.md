@@ -1,5 +1,12 @@
 # Release notes
 
+## [2026.10.0-port.70] - 2026-11-03
+
+- Add native File and Resource attachment controls to Event, Discussion, and Home/Course/Group Update composers, matching the classic Tauri composer behavior.
+- Upload selected files before posting, enforce the 60 MB file limit, support multiple attachments and removal, and prevent duplicate Schoology resources.
+- Send file and resource attachments using Schoology's expected `file-attachment` and `attachments` request payloads while preserving existing no-attachment submission paths.
+
+
 ## [2026.10.0-port.69] - 2026-11-02
 
 - Fix the remaining analyzer warnings in URL-prefix detection and inline post-image URL extraction.
