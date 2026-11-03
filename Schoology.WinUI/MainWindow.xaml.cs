@@ -6271,11 +6271,11 @@ try {{
             var transform = arrow.RenderTransform as RotateTransform;
             if (transform is null)
             {
-                transform = new RotateTransform { Angle = 90 };
+                transform = new RotateTransform { Angle = 0 };
                 arrow.RenderTransform = transform;
                 arrow.RenderTransformOrigin = new Point(0.5, 0.5);
             }
-            var targetAngle = expanded ? 270d : 90d;
+            var targetAngle = expanded ? 180d : 0d;
             if (!AnimationsEnabled)
             {
                 transform.Angle = targetAngle;
@@ -6341,7 +6341,7 @@ try {{
                         Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
                         VerticalAlignment = VerticalAlignment.Center,
                         HorizontalAlignment = HorizontalAlignment.Center,
-                        RenderTransform = new RotateTransform { Angle = 90 }
+                        RenderTransform = new RotateTransform { Angle = 0 }
                     };
                     arrow.RenderTransformOrigin = new Point(0.5, 0.5);
                     Grid.SetColumn(arrow, 2);
