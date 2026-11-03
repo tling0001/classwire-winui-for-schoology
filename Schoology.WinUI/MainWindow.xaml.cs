@@ -4019,12 +4019,12 @@ try {{
 }}";
         var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         var start = new ProcessStartInfo
-        {{
+        {
             FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
             UseShellExecute = false,
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden
-        }};
+        };
         start.ArgumentList.Add("-NoProfile");
         start.ArgumentList.Add("-NonInteractive");
         start.ArgumentList.Add("-WindowStyle");
