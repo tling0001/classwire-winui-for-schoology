@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.71] - 2026-11-03
+
+- Fix Windows update handoff by launching the PowerShell helper through the Windows shell so it can outlive Schoology WinUI.
+- Wait for the exact WinUI process to exit cleanly before replacing installed files; only force-stop that PID after a 90-second timeout.
+- Add staged handoff logging under the user's temporary folder and preserve the optional WinUI uninstall step when switching to classic Schoology.
+
 ## [2026.10.0-port.70] - 2026-11-03
 
 - Add native File and Resource attachment controls to Event, Discussion, and Home/Course/Group Update composers, matching the classic Tauri composer behavior.
