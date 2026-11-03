@@ -6256,64 +6256,192 @@ try {{
     private StackPanel BuildMaterialsList(long sectionId, IReadOnlyList<SchoologyApiRecord> initialRecords)
     {
         var panel = new StackPanel { Spacing = 8 };
-        var breadcrumb = Text("Materials", 13, true);
-        var history = new Stack<(SchoologyApiRecord[] Records, string Title, long FolderId)>();
-        IReadOnlyList<SchoologyApiRecord> current = initialRecords;
-        // Create the list before the Back handler captures Render/list.
-        var list = new ListView { SelectionMode = ListViewSelectionMode.Single, IsItemClickEnabled = false,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxHeight = 680 };
-        AutomationProperties.SetAutomationId(list, "CourseMaterialsList");
-        Button back = null!;
-        back = Action("‹ Back to course materials", (_, _) =>
+        var materialRows = new StackPanel { Spacing = 2 };
+        var scrollViewer = new ScrollViewer
         {
-            if (history.Count == 0) return;
-            var reverseAnimation = AnimationsEnabled
-                ? ConnectedAnimationService.GetForCurrentView().PrepareToAnimate("CourseMaterialFolder", breadcrumb)
-                : null;
-            var previous = history.Pop();
-            Render(previous.Records);
-            breadcrumb.Text = previous.Title;
-            back.Content = $"‹ Back to {breadcrumb.Text}";
-            var targetItem = list.Items.OfType<ListViewItem>().FirstOrDefault(candidate =>
-                candidate.Tag is SchoologyApiRecord parentRecord &&
-                JsonLong(parentRecord.Data, "id", "folder_id", "folderId") == previous.FolderId);
-            if (targetItem?.Content is Grid targetRow && targetRow.Children.Count > 0)
-                reverseAnimation?.TryStart(targetRow.Children[0]);
-            else reverseAnimation?.TryStart(list);
-            back.IsEnabled = history.Count > 0;
-            back.Visibility = history.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        });
-        back.IsEnabled = false;
-        back.Visibility = Visibility.Collapsed;
-        void Render(IReadOnlyList<SchoologyApiRecord> records)
+            Content = materialRows,
+            MaxHeight = 680,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
+        AutomationProperties.SetAutomationId(scrollViewer, "CourseMaterialsList");
+
+        void AnimateFolderArrow(FontIcon arrow, bool expanded)
         {
-            current = records;
-            list.Items.Clear();
+            var transform = arrow.RenderTransform as RotateTransform;
+            if (transform is null)
+            {
+                transform = new RotateTransform { Angle = 90 };
+                arrow.RenderTransform = transform;
+                arrow.RenderTransformOrigin = new Point(0.5, 0.5);
+            }
+            var targetAngle = expanded ? 270d : 90d;
+            if (!AnimationsEnabled)
+            {
+                transform.Angle = targetAngle;
+                return;
+            }
+            var animation = new DoubleAnimation
+            {
+                To = targetAngle,
+                Duration = TimeSpan.FromMilliseconds(180),
+                EnableDependentAnimation = true
+            };
+            var storyboard = new Storyboard();
+            Storyboard.SetTarget(animation, transform);
+            Storyboard.SetTargetProperty(animation, "Angle");
+            storyboard.Children.Add(animation);
+            storyboard.Begin();
+        }
+
+        void AddMaterialRows(StackPanel destination, IReadOnlyList<SchoologyApiRecord> records, int depth)
+        {
             foreach (var record in records)
             {
-                var materialType = (ProfileValue(record.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
                 var title = ProfileValue(record.Data, "title", "name") ?? record.Title;
-                var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(8, 9, 8, 9) };
+                var isFolder = IsFolderRecord(record.Data);
+                var row = new Grid
+                {
+                    ColumnSpacing = 12,
+                    Padding = new Thickness(8 + (depth * 24), 9, 8, 9),
+                    MinHeight = 52
+                };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                if (IsFolderRecord(record.Data))
-                {
+                if (isFolder)
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+
+                if (isFolder)
                     row.Children.Add(FolderIcons.CreateIcon(FolderColorName(record.Data), 25));
-                }
-                else row.Children.Add(new FontIcon { Glyph = MaterialGlyph(record.Data), FontSize = 23,
-                    Foreground = ThemeBrush("SchoologyBlueBrush"), VerticalAlignment = VerticalAlignment.Center });
+                else
+                    row.Children.Add(new FontIcon
+                    {
+                        Glyph = MaterialGlyph(record.Data),
+                        FontSize = 23,
+                        Foreground = ThemeBrush("SchoologyBlueBrush"),
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+
                 var labels = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
                 labels.Children.Add(Text(title, 14, true));
+                var materialType = (ProfileValue(record.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
                 var isAssignment = materialType is "assignment" or "assignment_v2";
                 var subtitle = isAssignment ? null : ProfileValue(record.Data, "description", "body", "due", "due_date");
                 if (!string.IsNullOrWhiteSpace(subtitle)) labels.Children.Add(Text(subtitle, 12));
-                Grid.SetColumn(labels, 1); row.Children.Add(labels);
-                var item = new ListViewItem { Content = row, Tag = record,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch };
-                item.Tapped += async (_, _) => await OpenFolderAsync(record, item);
-                list.Items.Add(item);
+                Grid.SetColumn(labels, 1);
+                row.Children.Add(labels);
+
+                FontIcon? arrow = null;
+                if (isFolder)
+                {
+                    arrow = new FontIcon
+                    {
+                        Glyph = "\uE70D",
+                        FontSize = 14,
+                        Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        RenderTransform = new RotateTransform { Angle = 90 }
+                    };
+                    arrow.RenderTransformOrigin = new Point(0.5, 0.5);
+                    Grid.SetColumn(arrow, 2);
+                    row.Children.Add(arrow);
+                }
+
+                var content = new StackPanel { Spacing = 0 };
+                content.Children.Add(row);
+                StackPanel? children = null;
+                var expanded = false;
+                var loaded = false;
+                var loading = false;
+                var item = new ListViewItem
+                {
+                    Content = content,
+                    Tag = record,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    Padding = new Thickness(0)
+                };
+                item.Tapped += async (_, args) =>
+                {
+                    args.Handled = true;
+                    if (!isFolder)
+                    {
+                        await OpenMaterialAsync(record);
+                        return;
+                    }
+                    if (expanded)
+                    {
+                        expanded = false;
+                        if (children is not null) children.Visibility = Visibility.Collapsed;
+                        if (arrow is not null) AnimateFolderArrow(arrow, false);
+                        return;
+                    }
+                    expanded = true;
+                    if (children is null)
+                    {
+                        children = new StackPanel { Spacing = 2, Visibility = Visibility.Visible };
+                        content.Children.Add(children);
+                    }
+                    children.Visibility = Visibility.Visible;
+                    if (arrow is not null) AnimateFolderArrow(arrow, true);
+                    if (loaded || loading) return;
+
+                    var folderId = JsonLong(record.Data, "id", "folder_id", "folderId");
+                    if (folderId <= 0 || _session is null)
+                    {
+                        expanded = false;
+                        children.Visibility = Visibility.Collapsed;
+                        if (arrow is not null) AnimateFolderArrow(arrow, false);
+                        return;
+                    }
+
+                    loading = true;
+                    var loadingStatus = new TextBlock
+                    {
+                        Text = "Loading folder…",
+                        Style = (Style)Application.Current.Resources["BodyTextBlockStyle"],
+                        Margin = new Thickness(24, 8, 8, 8),
+                        Foreground = ThemeBrush("TextFillColorSecondaryBrush")
+                    };
+                    children.Children.Add(loadingStatus);
+                    try
+                    {
+                        using var folder = await _api.GetCourseFolderAsync(_session, sectionId, folderId);
+                        var nestedRecords = SchoologyApiClient.ReadRecords(folder.RootElement,
+                            "folder-item", "folder_item", "folderItems", "items");
+                        children.Children.Clear();
+                        if (nestedRecords.Count == 0)
+                        {
+                            children.Children.Add(new TextBlock
+                            {
+                                Text = "This folder is empty.",
+                                Style = (Style)Application.Current.Resources["BodyTextBlockStyle"],
+                                Margin = new Thickness(24, 8, 8, 8),
+                                Foreground = ThemeBrush("TextFillColorSecondaryBrush")
+                            });
+                        }
+                        else AddMaterialRows(children, nestedRecords, depth + 1);
+                        loaded = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        children.Children.Clear();
+                        children.Children.Add(new TextBlock
+                        {
+                            Text = $"Unable to load folder: {ex.Message}",
+                            Style = (Style)Application.Current.Resources["BodyTextBlockStyle"],
+                            Margin = new Thickness(24, 8, 8, 8),
+                            Foreground = ThemeBrush("SystemFillColorCriticalBrush"),
+                            TextWrapping = TextWrapping.Wrap
+                        });
+                    }
+                    finally { loading = false; }
+                };
+                destination.Children.Add(item);
             }
         }
+
+        async Task OpenMaterialAsync(SchoologyApiRecord record)
         async Task OpenMaterialAsync(SchoologyApiRecord record)
         {
             var title = ProfileValue(record.Data, "title", "name", "filename", "file_name") ?? record.Title;
@@ -6409,38 +6537,10 @@ try {{
                 CloseButtonText = "Close", XamlRoot = _root.XamlRoot }.ShowAsync();
         }
 
-        async Task OpenFolderAsync(SchoologyApiRecord record, ListViewItem sourceItem)
-        {
-            if (!string.Equals(ProfileValue(record.Data, "type", "document_type", "documentType"), "folder", StringComparison.OrdinalIgnoreCase))
-            {
-                await OpenMaterialAsync(record);
-                return;
-            }
-            var folderId = JsonLong(record.Data, "id", "folder_id", "folderId");
-            if (folderId <= 0 || _session is null) return;
-            try
-            {
-                var connectedAnimation = AnimationsEnabled
-                    ? ConnectedAnimationService.GetForCurrentView().PrepareToAnimate("CourseMaterialFolder", sourceItem)
-                    : null;
-                using var folder = await _api.GetCourseFolderAsync(_session, sectionId, folderId);
-                var records = SchoologyApiClient.ReadRecords(folder.RootElement, "folder-item", "folder_item", "folderItems", "items");
-                history.Push((current.ToArray(), breadcrumb.Text, folderId));
-                back.Content = $"‹ Back to {breadcrumb.Text}";
-                breadcrumb.Text = ProfileValue(record.Data, "title", "name") ?? record.Title;
-                back.IsEnabled = true;
-                back.Visibility = Visibility.Visible;
-                Render(records);
-                connectedAnimation?.TryStart(breadcrumb);
-                if (records.Count == 0) list.Items.Add(new ListViewItem { Content = Text("This folder is empty.", 13) });
-            }
-            catch (Exception ex) { await ShowApiErrorAsync("Unable to open folder", ex.Message); }
-        }
-        panel.Children.Add(back);
-        panel.Children.Add(breadcrumb);
-        panel.Children.Add(list);
-        Render(initialRecords);
-        if (initialRecords.Count == 0) list.Items.Add(new ListViewItem { Content = EmptyState("This folder is empty") });
+        AddMaterialRows(materialRows, initialRecords, 0);
+        if (initialRecords.Count == 0)
+            materialRows.Children.Add(EmptyState("This folder is empty"));
+        panel.Children.Add(scrollViewer);
         return panel;
     }
 
