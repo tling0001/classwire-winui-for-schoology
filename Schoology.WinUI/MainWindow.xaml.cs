@@ -1537,25 +1537,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             IsPaneToggleButtonVisible = false,
             OpenPaneLength = 280,
             CompactPaneLength = 64,
-            Foreground = ThemeBrush("SchoologyTextBrush"),
             CompactModeThresholdWidth = 760,
             ExpandedModeThresholdWidth = 1120,
-            Background = new SolidColorBrush(Colors.Transparent),
             Content = null
         };
-        // WinUI 3 NavigationView has no public PaneBackground property. Its pane
-        // surfaces are supplied by these control-template resources, so provide
-        // the acrylic brush there for expanded and compact navigation modes.
-        var paneMaterial = InAppAcrylicBrush(0.20, 0.28);
-        nav.Resources["NavigationViewDefaultPaneBackground"] = paneMaterial;
-        nav.Resources["NavigationViewExpandedPaneBackground"] = paneMaterial;
-        nav.Resources["NavigationViewCompactPaneBackground"] = paneMaterial;
-        nav.Resources["NavigationViewItemForeground"] = ThemeBrush("SchoologyTextBrush");
-        nav.Resources["NavigationViewItemForegroundPointerOver"] = ThemeBrush("SchoologyTextBrush");
-        nav.Resources["NavigationViewItemForegroundSelected"] = ThemeBrush("SchoologyTextBrush");
-        nav.Resources["NavigationViewItemBackgroundPointerOver"] = ThemeBrush("SchoologySubtleBrush");
-        nav.Resources["NavigationViewItemBackgroundSelected"] = ThemeBrush("SchoologySubtleBrush");
-        nav.Resources["NavigationViewSelectionIndicatorForeground"] = ThemeBrush("SchoologyBlueBrush");
         var animationsEnabled = AnimationsEnabled;
         var initialTransition = new SlideNavigationTransitionInfo { Effect = SlideNavigationTransitionEffect.FromRight };
         var sectionFrame = new Frame
@@ -5738,7 +5723,8 @@ try {
         string previewPath, string title, bool isPdf, string originalUrl, string originalFilename,
         string originalMime, Action onBack)
     {
-        var viewer = new Grid { Background = InAppAcrylicBrush(0.18, 0.26), RowSpacing = 8 };
+        // Keep the document canvas transparent so the app's normal shell surface shows through.
+        var viewer = new Grid { Background = new SolidColorBrush(Colors.Transparent), RowSpacing = 8 };
         viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         viewer.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -5759,7 +5745,7 @@ try {
             MaxZoomFactor = 4f,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Background = InAppAcrylicBrush(0.14, 0.22)
+            Background = new SolidColorBrush(Colors.Transparent)
         };
         var image = new Image
         {
@@ -5920,7 +5906,7 @@ try {
                     pdfPagesStack.Children.Add(new Border
                     {
                         HorizontalAlignment = HorizontalAlignment.Center,
-                        Background = InAppAcrylicBrush(0.18, 0.26),
+                        Background = new SolidColorBrush(Colors.Transparent),
                         BorderBrush = ThemeBrush("SchoologyDividerBrush"),
                         BorderThickness = new Thickness(1),
                         Padding = new Thickness(8),
@@ -5965,8 +5951,8 @@ try {
         _activeNativeFileViewerRoot = viewer;
         _refreshNativeFileViewer = () =>
         {
-            viewer.Background = InAppAcrylicBrush(0.18, 0.26);
-            viewerScroll.Background = InAppAcrylicBrush(0.14, 0.22);
+            viewer.Background = new SolidColorBrush(Colors.Transparent);
+            viewerScroll.Background = new SolidColorBrush(Colors.Transparent);
             status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
             pageLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         };

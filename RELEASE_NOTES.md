@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.65] - 2026-11-02
+
+- Restore the native WinUI NavigationView appearance by removing custom pane, foreground, hover, selection, and background resource overrides.
+- Make the PDF/image viewer canvas, scroll viewport, and PDF page surrounds transparent so the underlying shell surface remains visible instead of applying a separate acrylic tint.
+
+
 ## [2026.10.0-port.64] - 2026-11-02
 
 - Fix the WinUI 3 build by applying the NavigationView acrylic pane through its supported control-template resource keys instead of the unavailable PaneBackground property.
