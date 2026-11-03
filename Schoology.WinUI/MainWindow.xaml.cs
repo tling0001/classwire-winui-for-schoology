@@ -6294,6 +6294,44 @@ try {{
             storyboard.Begin();
         }
 
+        Storyboard? AnimateFolderChildren(StackPanel children, TranslateTransform offset, bool expanded,
+            Action? completed = null)
+        {
+            if (!AnimationsEnabled)
+            {
+                children.Opacity = 1;
+                offset.Y = 0;
+                children.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+                completed?.Invoke();
+                return null;
+            }
+
+            var opacity = new DoubleAnimation
+            {
+                From = expanded ? 0 : 1,
+                To = expanded ? 1 : 0,
+                Duration = TimeSpan.FromMilliseconds(160),
+                EnableDependentAnimation = true
+            };
+            var slide = new DoubleAnimation
+            {
+                From = expanded ? -6 : 0,
+                To = expanded ? 0 : -6,
+                Duration = TimeSpan.FromMilliseconds(180),
+                EnableDependentAnimation = true
+            };
+            var storyboard = new Storyboard();
+            Storyboard.SetTarget(opacity, children);
+            Storyboard.SetTargetProperty(opacity, "Opacity");
+            Storyboard.SetTarget(slide, offset);
+            Storyboard.SetTargetProperty(slide, "Y");
+            storyboard.Children.Add(opacity);
+            storyboard.Children.Add(slide);
+            storyboard.Completed += (_, _) => completed?.Invoke();
+            storyboard.Begin();
+            return storyboard;
+        }
+
         void AddMaterialRows(StackPanel destination, IReadOnlyList<SchoologyApiRecord> records, int depth)
         {
             foreach (var record in records)
@@ -6348,19 +6386,21 @@ try {{
                     row.Children.Add(arrow);
                 }
 
-                var content = new StackPanel { Spacing = 0 };
-                content.Children.Add(row);
+                var wrapper = new StackPanel { Spacing = 0 };
+                var childOffset = new TranslateTransform();
                 StackPanel? children = null;
+                Storyboard? childrenStoryboard = null;
                 var expanded = false;
                 var loaded = false;
                 var loading = false;
                 var item = new ListViewItem
                 {
-                    Content = content,
+                    Content = row,
                     Tag = record,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch,
                     Padding = new Thickness(0)
                 };
+                wrapper.Children.Add(item);
                 item.Tapped += async (_, args) =>
                 {
                     args.Handled = true;
@@ -6372,18 +6412,35 @@ try {{
                     if (expanded)
                     {
                         expanded = false;
-                        if (children is not null) children.Visibility = Visibility.Collapsed;
+                        if (children is not null)
+                        {
+                            childrenStoryboard?.Stop();
+                            childrenStoryboard = null;
+                            childrenStoryboard = AnimateFolderChildren(children, childOffset, false, () =>
+                            {
+                                if (!expanded) children.Visibility = Visibility.Collapsed;
+                            });
+                        }
                         if (arrow is not null) AnimateFolderArrow(arrow, false);
                         return;
                     }
                     expanded = true;
                     if (children is null)
                     {
-                        children = new StackPanel { Spacing = 2, Visibility = Visibility.Visible };
-                        content.Children.Add(children);
+                        children = new StackPanel
+                        {
+                            Spacing = 2,
+                            Visibility = Visibility.Visible,
+                            Opacity = 0,
+                            RenderTransform = childOffset
+                        };
+                        wrapper.Children.Add(children);
                     }
+                    childrenStoryboard?.Stop();
+                    childrenStoryboard = null;
                     children.Visibility = Visibility.Visible;
                     if (arrow is not null) AnimateFolderArrow(arrow, true);
+                    childrenStoryboard = AnimateFolderChildren(children, childOffset, true);
                     if (loaded || loading) return;
 
                     var folderId = JsonLong(record.Data, "id", "folder_id", "folderId");
@@ -6437,7 +6494,7 @@ try {{
                     }
                     finally { loading = false; }
                 };
-                destination.Children.Add(item);
+                destination.Children.Add(wrapper);
             }
         }
 

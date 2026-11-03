@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.74] - 2026-11-03
+
+- Animate nested course-material folder expansion and collapse with a subtle fade/slide that respects reduced-motion settings.
+- Keep each folder's clickable row separate from its nested contents so hovering a child item no longer also highlights the parent row.
+
 ## [2026.10.0-port.73] - 2026-11-03
 
 - Fix WinUI publish failures on x64 and ARM64 by explicitly qualifying the Windows.Foundation.Point type used for course-material folder arrow transforms.
