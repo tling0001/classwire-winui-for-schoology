@@ -2017,8 +2017,231 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         _ => "application/octet-stream"
     };
 
+    private sealed class PostAttachmentState
+    {
+        internal List<(string Id, string Name)> Files { get; } = [];
+        internal List<(long Id, string Name)> Resources { get; } = [];
+        internal string[] FileIds => Files.Select(item => item.Id).ToArray();
+        internal long[] ResourceIds => Resources.Select(item => item.Id).ToArray();
+    }
+
+    private PostAttachmentState AddPostAttachmentControls(
+        StackPanel content, SchoologyAuthService.Session session, string automationPrefix)
+    {
+        var attachments = new PostAttachmentState();
+        var actions = new Grid { ColumnSpacing = 10 };
+        actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var attachFile = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 8,
+                Children = { new SymbolIcon(Symbol.Page), Text("File", 13) }
+            },
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var attachResource = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 8,
+                Children = { new SymbolIcon(Symbol.Folder), Text("Resource", 13) }
+            },
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetAutomationId(attachFile, automationPrefix + "AttachFileButton");
+        AutomationProperties.SetAutomationId(attachResource, automationPrefix + "AttachResourceButton");
+        Grid.SetColumn(attachResource, 1);
+        actions.Children.Add(attachFile);
+        actions.Children.Add(attachResource);
+        content.Children.Add(actions);
+
+        var attachmentList = new StackPanel { Spacing = 5 };
+        content.Children.Add(attachmentList);
+        var status = Text(string.Empty, 12);
+        status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        content.Children.Add(status);
+
+        void RenderAttachments()
+        {
+            attachmentList.Children.Clear();
+            foreach (var attachment in attachments.Files.ToArray())
+            {
+                var remove = new Button
+                {
+                    Content = $"File: {attachment.Name}  ×",
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Padding = new Thickness(8, 4, 8, 4)
+                };
+                AutomationProperties.SetName(remove, $"Remove file attachment {attachment.Name}");
+                remove.Click += (_, _) =>
+                {
+                    attachments.Files.RemoveAll(item => item.Id == attachment.Id);
+                    RenderAttachments();
+                };
+                attachmentList.Children.Add(remove);
+            }
+            foreach (var attachment in attachments.Resources.ToArray())
+            {
+                var remove = new Button
+                {
+                    Content = $"Resource: {attachment.Name}  ×",
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Padding = new Thickness(8, 4, 8, 4)
+                };
+                AutomationProperties.SetName(remove, $"Remove resource attachment {attachment.Name}");
+                remove.Click += (_, _) =>
+                {
+                    attachments.Resources.RemoveAll(item => item.Id == attachment.Id);
+                    RenderAttachments();
+                };
+                attachmentList.Children.Add(remove);
+            }
+        }
+
+        attachFile.Click += async (_, _) =>
+        {
+            try
+            {
+                var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
+                picker.FileTypeFilter.Add("*");
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, Win32Interop.GetWindowFromWindowId(AppWindow.Id));
+                var file = await picker.PickSingleFileAsync();
+                if (file is null) return;
+                var info = new FileInfo(file.Path);
+                if (!info.Exists || info.Length <= 0)
+                    throw new InvalidOperationException("The selected file is empty or no longer available.");
+                if (info.Length > 60L * 1024 * 1024)
+                    throw new InvalidOperationException("Schoology attachments are limited to 60 MB.");
+                attachFile.IsEnabled = false;
+                attachResource.IsEnabled = false;
+                status.Text = $"Uploading {file.Name}…";
+                var bytes = await File.ReadAllBytesAsync(file.Path);
+                var id = await _api.UploadMessageFileAsync(session, file.Name, GetSubmissionMimeType(file.Name), bytes);
+                attachments.Files.Add((id, file.Name));
+                RenderAttachments();
+                status.Text = "File attached.";
+            }
+            catch (Exception ex) { status.Text = $"Unable to attach file: {ex.Message}"; }
+            finally
+            {
+                attachFile.IsEnabled = true;
+                attachResource.IsEnabled = true;
+            }
+        };
+
+        var resourceFlyout = new Flyout();
+        var resourceList = new ListView
+        {
+            Width = 380, MaxHeight = 340, SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetAutomationId(resourceList, automationPrefix + "ResourcePickerList");
+        resourceFlyout.Content = resourceList;
+        attachResource.Click += async (_, _) =>
+        {
+            resourceList.Items.Clear();
+            resourceList.Items.Add(new ListViewItem { Content = Text("Loading resources…", 12), IsEnabled = false });
+            resourceFlyout.ShowAt(attachResource);
+            attachResource.IsEnabled = false;
+            attachFile.IsEnabled = false;
+            try
+            {
+                var choices = await LoadMessageResourceChoicesAsync(session);
+                resourceList.Items.Clear();
+                foreach (var choice in choices)
+                {
+                    var item = new ListViewItem
+                    {
+                        Content = Text(choice.Title, 13),
+                        HorizontalContentAlignment = HorizontalAlignment.Stretch
+                    };
+                    item.Tapped += (_, _) =>
+                    {
+                        if (attachments.Resources.All(existing => existing.Id != choice.Id))
+                        {
+                            attachments.Resources.Add((choice.Id, choice.Title));
+                            RenderAttachments();
+                            status.Text = "Resource attached.";
+                        }
+                        resourceFlyout.Hide();
+                    };
+                    resourceList.Items.Add(item);
+                }
+                if (choices.Count == 0)
+                    resourceList.Items.Add(new ListViewItem { Content = Text("No resources found.", 12), IsEnabled = false });
+            }
+            catch (Exception ex)
+            {
+                resourceList.Items.Clear();
+                resourceList.Items.Add(new ListViewItem { Content = Text($"Unable to load resources: {ex.Message}", 12), IsEnabled = false });
+            }
+            finally
+            {
+                attachResource.IsEnabled = true;
+                attachFile.IsEnabled = true;
+            }
+        };
+        return attachments;
+    }
+
+    private Task<JsonDocument> CreateUpdateWithAttachmentsAsync(
+        SchoologyAuthService.Session session, string kind, SchoologyEntity entity,
+        string body, PostAttachmentState attachments)
+    {
+        if (attachments.Files.Count == 0 && attachments.Resources.Count == 0)
+            return _api.CreateUpdateAsync(session, kind, entity.Id, body);
+        var realm = kind == "Groups" ? "groups" : "sections";
+        var payload = new Dictionary<string, object> { ["body"] = body };
+        AddPostAttachmentPayload(payload, attachments);
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, $"{realm}/{entity.Id}/updates", payload);
+    }
+
+    private Task<JsonDocument> CreateDiscussionWithAttachmentsAsync(
+        SchoologyAuthService.Session session, string kind, SchoologyEntity entity,
+        string title, string body, PostAttachmentState attachments)
+    {
+        if (attachments.Files.Count == 0 && attachments.Resources.Count == 0)
+            return _api.CreateDiscussionAsync(session, kind, entity.Id, title, body);
+        var payload = new Dictionary<string, object> { ["title"] = title, ["body"] = body, ["published"] = 1 };
+        AddPostAttachmentPayload(payload, attachments);
+        var realm = kind == "Groups" ? "groups" : "sections";
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, $"{realm}/{entity.Id}/discussions", payload);
+    }
+
+    private Task<JsonDocument> CreateEventWithAttachmentsAsync(
+        SchoologyAuthService.Session session, string kind, SchoologyEntity entity,
+        string title, string description, string start, bool allDay, bool commentsEnabled,
+        PostAttachmentState attachments)
+    {
+        if (attachments.Files.Count == 0 && attachments.Resources.Count == 0)
+            return _api.CreateEventAsync(session, kind, entity.Id, title, description, start, allDay, commentsEnabled);
+        var payload = new Dictionary<string, object>
+        {
+            ["title"] = title, ["description"] = description, ["start"] = start,
+            ["is_all_day"] = allDay ? 1 : 0, ["rsvp"] = 0,
+            ["comments_enabled"] = commentsEnabled ? 1 : 0
+        };
+        AddPostAttachmentPayload(payload, attachments);
+        var realm = kind == "Groups" ? "groups" : "sections";
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, $"{realm}/{entity.Id}/events", payload);
+    }
+
+    private static void AddPostAttachmentPayload(
+        IDictionary<string, object> payload, PostAttachmentState attachments)
+    {
+        if (attachments.Files.Count > 0)
+            payload["file-attachment"] = new Dictionary<string, object> { ["id"] = attachments.FileIds };
+        if (attachments.Resources.Count > 0)
+            payload["attachments"] = attachments.ResourceIds
+                .Distinct().Select(id => new Dictionary<string, object> { ["resource"] = id }).ToArray();
+    }
+
     private async Task ShowCreateDiscussionOrEventDialogAsync(bool isEvent)
     {
+        var session = _session;
+        if (session is null) return;
         var destinations = _courses.Select(course => ("Courses", course)).Concat(_groups.Select(group => ("Groups", group))).ToList();
         if (destinations.Count == 0) { await ShowApiErrorAsync("Unable to create content", "No course or group destinations are available."); return; }
         var content = new StackPanel { Spacing = 10, MinWidth = 360 };
@@ -2028,6 +2251,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var description = new TextBox { Header = "Description", PlaceholderText = "Add details…", AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap, MinHeight = 100 };
         content.Children.Add(destination); content.Children.Add(title); content.Children.Add(description);
+        var attachments = AddPostAttachmentControls(content, session, isEvent ? "EventComposer" : "DiscussionComposer");
         DatePicker? eventDate = null; TimePicker? eventTime = null;
         if (isEvent)
         {
@@ -2044,8 +2268,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         {
             var start = isEvent ? (eventDate!.Date.DateTime.Date + eventTime!.Time).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) : "";
             using var created = isEvent
-                ? await _api.CreateEventAsync(_session!, selected.Item1, selected.Item2.Id, title.Text.Trim(), description.Text.Trim(), start, true, true)
-                : await _api.CreateDiscussionAsync(_session!, selected.Item1, selected.Item2.Id, title.Text.Trim(), description.Text.Trim());
+                ? await CreateEventWithAttachmentsAsync(session, selected.Item1, selected.Item2,
+                    title.Text.Trim(), description.Text.Trim(), start, true, true, attachments)
+                : await CreateDiscussionWithAttachmentsAsync(session, selected.Item1, selected.Item2,
+                    title.Text.Trim(), description.Text.Trim(), attachments);
             ShowThreePane(selected.Item1, selected.Item2);
         }
         catch (Exception ex) { await ShowApiErrorAsync(isEvent ? "Unable to create event" : "Unable to create discussion", ex.Message); }
@@ -2062,11 +2288,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var body = new TextBox { Header = "Write an update", PlaceholderText = "Share an update…", AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
         content.Children.Add(picker); content.Children.Add(body);
+        var attachments = AddPostAttachmentControls(content, session, "LegacyUpdateComposer");
         var dialog = new ContentDialog { Title = "Create update", Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(body.Text)) return;
         var selected = destinations[Math.Clamp(picker.SelectedIndex, 0, destinations.Count - 1)];
-        try { using var created = await _api.CreateUpdateAsync(session, selected.Item1, selected.Item2.Id, body.Text.Trim()); ShowThreePane(selected.Item1, selected.Item2); }
+        try
+        {
+            using var created = await CreateUpdateWithAttachmentsAsync(session, selected.Item1,
+                selected.Item2, body.Text.Trim(), attachments);
+            ShowThreePane(selected.Item1, selected.Item2);
+        }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to post update", ex.Message); }
     }
 
@@ -8396,7 +8628,7 @@ try {{
             finally { attachFile.IsEnabled = true; }
         };
 
-        var resourceFlyout = new Flyout { Placement = FlyoutPlacementMode.Bottom };
+        var resourceFlyout = new Flyout();
         var resourceList = new ListView
         {
             Width = 380,
@@ -9268,6 +9500,7 @@ try {{
         var bodyBox = new TextBox { Header = "Write an update", PlaceholderText = "Share an update…", AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap, MinHeight = 120, MaxHeight = 260 };
         content.Children.Add(bodyBox);
+        var attachments = AddPostAttachmentControls(content, session, "TitleBarUpdateComposer");
         var dialog = new ContentDialog
         {
             Title = context == "course-update" ? "Post course update" : context == "group-update" ? "Post group update" : "Create update",
@@ -9287,7 +9520,8 @@ try {{
             selected = destinations[picker.SelectedIndex];
         try
         {
-            using var created = await _api.CreateUpdateAsync(session, selected.Kind, selected.Entity.Id, body);
+            using var created = await CreateUpdateWithAttachmentsAsync(session, selected.Kind,
+                selected.Entity, body, attachments);
             if (context == "home") ShowHome("Recent Activity");
             else
             {
