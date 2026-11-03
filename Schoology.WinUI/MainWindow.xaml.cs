@@ -6442,7 +6442,6 @@ try {{
         }
 
         async Task OpenMaterialAsync(SchoologyApiRecord record)
-        async Task OpenMaterialAsync(SchoologyApiRecord record)
         {
             var title = ProfileValue(record.Data, "title", "name", "filename", "file_name") ?? record.Title;
             var materialType = (ProfileValue(record.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
