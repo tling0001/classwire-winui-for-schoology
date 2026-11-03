@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.67] - 2026-11-02
+
+- Run `taskkill /F /IM Schoology.WinUI.exe` in the installer handoff before starting the update installer, then verify the app process has exited.
+- Fix likes-dialog people rows so pointer and keyboard activation open the selected user's profile, following the working Members list item interaction pattern.
+
+
 ## [2026.10.0-port.66] - 2026-11-02
 
 - Show startup release notes only for the exact version installed locally, rather than the newest published release; users now see a release's notes after updating to that release.

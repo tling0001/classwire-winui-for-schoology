@@ -3945,9 +3945,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             progressDialog.Hide();
             await dialogOperation;
 
-            StartInstallerAfterCurrentProcessExits(installerPath,
+            StartInstallerAfterTaskkill(installerPath,
                 "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS /RESTARTAPP=1");
-            App.WriteStartupLog($"Scheduled silent Schoology update to {update.Version} using {update.AssetName}; the helper will wait for the app process to exit before starting Inno Setup.");
+            App.WriteStartupLog($"Scheduled silent Schoology update to {update.Version} using {update.AssetName}; the handoff helper will run taskkill for Schoology.WinUI.exe before starting Inno Setup.");
             _allowExit = true;
             Close();
         }
@@ -3960,7 +3960,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
-    private static void StartInstallerAfterCurrentProcessExits(
+    private static void StartInstallerAfterTaskkill(
         string installerPath, string installerArguments,
         string? uninstallerPath = null, string? uninstallerArguments = null)
     {
@@ -3984,10 +3984,21 @@ $uninstallerPath = if ($UninstallerPathBase64) { [Text.Encoding]::UTF8.GetString
 $uninstallerArguments = if ($UninstallerArgumentsBase64) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UninstallerArgumentsBase64)) } else { '' }
 $logPath = Join-Path $env:TEMP ('Schoology-InstallerHandoff-' + $TargetPid + '.log')
 try {
-    try { Wait-Process -Id $TargetPid -ErrorAction SilentlyContinue } catch {}
+    $taskkillPath = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+    $taskkillOutput = & $taskkillPath /F /IM 'Schoology.WinUI.exe' 2>&1
+    $taskkillExitCode = $LASTEXITCODE
+    $remainingApp = Get-Process -Name 'Schoology.WinUI' -ErrorAction SilentlyContinue
+    if ($taskkillExitCode -ne 0 -and $remainingApp) {
+        throw ('taskkill failed to stop Schoology.WinUI.exe: ' + ($taskkillOutput -join ' '))
+    }
+    Add-Content -LiteralPath $logPath -Value ('taskkill /F /IM Schoology.WinUI.exe completed with exit code ' + $taskkillExitCode + ' at ' + (Get-Date -Format o))
+    # Verify the initiating process has exited before touching installed files.
+    try { Wait-Process -Id $TargetPid -Timeout 15 -ErrorAction SilentlyContinue } catch {}
+    if (Get-Process -Id $TargetPid -ErrorAction SilentlyContinue) {
+        throw 'Schoology.WinUI.exe is still running after taskkill; installer launch was cancelled.'
+    }
     # Give WebView2 child processes a brief opportunity to release profile and app files.
     Start-Sleep -Seconds 2
-    Add-Content -LiteralPath $logPath -Value ('WinUI process exited at ' + (Get-Date -Format o))
     if ($uninstallerPath) {
         if (!(Test-Path -LiteralPath $uninstallerPath -PathType Leaf)) {
             throw ('WinUI uninstaller was not found: ' + $uninstallerPath)
@@ -4033,7 +4044,7 @@ try {
         start.ArgumentList.Add(string.IsNullOrWhiteSpace(uninstallerArguments) ? "" : Encode(uninstallerArguments));
         var helper = Process.Start(start);
         if (helper is null) throw new InvalidOperationException("Windows could not start the installer handoff helper.");
-        App.WriteStartupLog($"Started installer handoff helper PID {helper.Id}; it will wait for this process to exit.");
+        App.WriteStartupLog($"Started installer handoff helper PID {helper.Id}; it will run taskkill /F /IM Schoology.WinUI.exe before launching the installer.");
     }
 
     private async Task TrySchoologyClassicAsync(Button button)
@@ -4073,9 +4084,9 @@ try {
             var uninstaller = Path.Combine(programDirectory, "unins000.exe");
             if (!File.Exists(uninstaller))
                 throw new FileNotFoundException("The Schoology WinUI uninstaller was not found in the current per-user install directory.", uninstaller);
-            StartInstallerAfterCurrentProcessExits(installerPath, "/S", uninstaller,
+            StartInstallerAfterTaskkill(installerPath, "/S", uninstaller,
                 "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS");
-            App.WriteStartupLog("Scheduled migration from Schoology WinUI to classic Schoology. The helper waits for WinUI to exit, silently uninstalls it, then starts the classic installer.");
+            App.WriteStartupLog("Scheduled migration from Schoology WinUI to classic Schoology. The helper terminates Schoology.WinUI.exe, silently uninstalls it, then starts the classic installer.");
             _allowExit = true;
             Close();
         }
@@ -7457,14 +7468,11 @@ try {
                 CloseButtonText = "Close",
                 XamlRoot = _root.XamlRoot
             };
-            list.ItemClick += (_, args) =>
+            WireLikesListNavigation(list, id =>
             {
-                if (args.ClickedItem is ListViewItem item && item.Tag is long id && id > 0)
-                {
-                    selectedUserId = id;
-                    dialog.Hide();
-                }
-            };
+                selectedUserId = id;
+                dialog.Hide();
+            });
             await dialog.ShowAsync();
             if (selectedUserId > 0) ShowUserProfile(selectedUserId);
         }
@@ -7487,14 +7495,11 @@ try {
                 CloseButtonText = "Close",
                 XamlRoot = _root.XamlRoot
             };
-            list.ItemClick += (_, args) =>
+            WireLikesListNavigation(list, id =>
             {
-                if (args.ClickedItem is ListViewItem item && item.Tag is long id && id > 0)
-                {
-                    selectedUserId = id;
-                    dialog.Hide();
-                }
-            };
+                selectedUserId = id;
+                dialog.Hide();
+            });
             await dialog.ShowAsync();
             if (selectedUserId > 0) ShowUserProfile(selectedUserId);
         }
@@ -7506,7 +7511,7 @@ try {
         var list = new ListView
         {
             SelectionMode = ListViewSelectionMode.None,
-            IsItemClickEnabled = true,
+            IsItemClickEnabled = false,
             MaxHeight = 480,
             MinWidth = 340,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
@@ -7550,9 +7555,30 @@ try {
                 HorizontalContentAlignment = HorizontalAlignment.Stretch
             };
             AutomationProperties.SetName(item, string.IsNullOrWhiteSpace(name) ? person.Title : name);
+            AutomationProperties.SetAutomationId(item, $"LikeUser_{userId}");
             list.Items.Add(item);
         }
         return list;
+    }
+
+    private static void WireLikesListNavigation(ListView list, Action<long> onUserSelected)
+    {
+        // Other navigable lists in this app (notably Members) attach actions
+        // directly to each ListViewItem. Keep the same interaction model here.
+        foreach (var item in list.Items.OfType<ListViewItem>())
+        {
+            if (!item.IsEnabled || item.Tag is not long userId || userId <= 0) continue;
+
+            item.Tapped += (_, _) => onUserSelected(userId);
+            item.KeyDown += (_, args) =>
+            {
+                if (args.Key is VirtualKey.Enter or VirtualKey.Space)
+                {
+                    args.Handled = true;
+                    onUserSelected(userId);
+                }
+            };
+        }
     }
 
     private async Task ShowApiErrorAsync(string title, string message)
