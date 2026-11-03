@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.64] - 2026-11-02
+
+- Fix the WinUI 3 build by applying the NavigationView acrylic pane through its supported control-template resource keys instead of the unavailable PaneBackground property.
+
+
 ## [2026.10.0-port.63] - 2026-11-02
 
 - Set the NavigationView pane's actual PaneBackground to translucent acrylic rather than relying on theme resource keys that left the default gray pane visible.

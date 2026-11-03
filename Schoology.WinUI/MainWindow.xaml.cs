@@ -1541,12 +1541,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             CompactModeThresholdWidth = 760,
             ExpandedModeThresholdWidth = 1120,
             Background = new SolidColorBrush(Colors.Transparent),
-            PaneBackground = InAppAcrylicBrush(0.20, 0.28),
             Content = null
         };
-        // Set the actual NavigationView pane surface. Template resource keys alone
-        // did not override the built-in gray pane background on all WinUI versions.
-        var paneMaterial = nav.PaneBackground;
+        // WinUI 3 NavigationView has no public PaneBackground property. Its pane
+        // surfaces are supplied by these control-template resources, so provide
+        // the acrylic brush there for expanded and compact navigation modes.
+        var paneMaterial = InAppAcrylicBrush(0.20, 0.28);
         nav.Resources["NavigationViewDefaultPaneBackground"] = paneMaterial;
         nav.Resources["NavigationViewExpandedPaneBackground"] = paneMaterial;
         nav.Resources["NavigationViewCompactPaneBackground"] = paneMaterial;
