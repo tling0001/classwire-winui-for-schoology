@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.73] - 2026-11-03
+
+- Fix WinUI publish failures on x64 and ARM64 by explicitly qualifying the Windows.Foundation.Point type used for course-material folder arrow transforms.
+
 ## [2026.10.0-port.72] - 2026-11-03
 
 - Replace course-material folder page navigation with an inline expandable hierarchy.

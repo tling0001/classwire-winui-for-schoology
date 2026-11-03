@@ -6273,7 +6273,7 @@ try {{
             {
                 transform = new RotateTransform { Angle = 0 };
                 arrow.RenderTransform = transform;
-                arrow.RenderTransformOrigin = new Point(0.5, 0.5);
+                arrow.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
             }
             var targetAngle = expanded ? 180d : 0d;
             if (!AnimationsEnabled)
@@ -6343,7 +6343,7 @@ try {{
                         HorizontalAlignment = HorizontalAlignment.Center,
                         RenderTransform = new RotateTransform { Angle = 0 }
                     };
-                    arrow.RenderTransformOrigin = new Point(0.5, 0.5);
+                    arrow.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
                     Grid.SetColumn(arrow, 2);
                     row.Children.Add(arrow);
                 }
