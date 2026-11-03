@@ -4203,7 +4203,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     {
         if (!File.Exists(installerPath))
             throw new FileNotFoundException("The installer file is missing.", installerPath);
-        static string Encode(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+
+        static string Encode(string value) =>
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+
         var targetPid = Environment.ProcessId;
         var installerPathBase64 = Encode(Path.GetFullPath(installerPath));
         var installerArgumentsBase64 = Encode(installerArguments);
@@ -4214,8 +4217,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             ? string.Empty
             : Encode(uninstallerArguments);
 
-        // Run shutdown and installation in one detached PowerShell process.
-        // EncodedCommand avoids command-line quoting problems with paths and arguments.
+        // Start the helper through the Windows shell so it is independent of the
+        // WinUI process lifetime. It waits for this exact PID to exit before
+        // touching installed files; it never kills other Schoology instances.
         var script = $@"
 $ErrorActionPreference = 'Stop';
 $TargetPid = {targetPid};
@@ -4227,20 +4231,31 @@ $UninstallerPath = if ($UninstallerPathBase64) {{ [Text.Encoding]::UTF8.GetStrin
 $UninstallerArguments = if ($UninstallerArgumentsBase64) {{ [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UninstallerArgumentsBase64)) }} else {{ '' }};
 $LogPath = Join-Path $env:TEMP ('Schoology-InstallerHandoff-' + $TargetPid + '.log');
 try {{
-    $TaskkillPath = Join-Path $env:SystemRoot 'System32\\taskkill.exe';
-    $TaskkillOutput = & $TaskkillPath /F /IM 'Schoology.WinUI.exe' 2>&1;
-    $TaskkillExitCode = $LASTEXITCODE;
-    $RemainingApp = Get-Process -Name 'Schoology.WinUI' -ErrorAction SilentlyContinue;
-    if ($TaskkillExitCode -ne 0 -and $RemainingApp) {{ throw ('taskkill failed: ' + ($TaskkillOutput -join ' ')) }};
-    Add-Content -LiteralPath $LogPath -Value ('taskkill completed with exit code ' + $TaskkillExitCode + ' at ' + (Get-Date -Format o));
-    try {{ Wait-Process -Id $TargetPid -Timeout 15 -ErrorAction SilentlyContinue }} catch {{}};
-    if (Get-Process -Id $TargetPid -ErrorAction SilentlyContinue) {{ throw 'Schoology is still running; installer launch was cancelled.' }};
+    Add-Content -LiteralPath $LogPath -Value ('Handoff helper started at ' + (Get-Date -Format o) + '; waiting for WinUI PID ' + $TargetPid);
+    $AppProcess = Get-Process -Id $TargetPid -ErrorAction SilentlyContinue;
+    if ($AppProcess) {{
+        try {{
+            Wait-Process -Id $TargetPid -Timeout 90 -ErrorAction Stop;
+            Add-Content -LiteralPath $LogPath -Value ('WinUI process exited normally at ' + (Get-Date -Format o));
+        }} catch {{
+            $StillRunning = Get-Process -Id $TargetPid -ErrorAction SilentlyContinue;
+            if ($StillRunning) {{
+                Add-Content -LiteralPath $LogPath -Value ('WinUI did not exit within 90 seconds; stopping only PID ' + $TargetPid);
+                Stop-Process -Id $TargetPid -Force -ErrorAction Stop;
+                Wait-Process -Id $TargetPid -Timeout 15 -ErrorAction SilentlyContinue;
+            }}
+        }}
+    }};
+    if (Get-Process -Id $TargetPid -ErrorAction SilentlyContinue) {{ throw ('Schoology.WinUI PID ' + $TargetPid + ' is still running; installer launch was cancelled.') }};
     Start-Sleep -Seconds 2;
+    if (!(Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {{ throw ('Installer file was not found: ' + $InstallerPath) }};
     if ($UninstallerPath) {{
         if (!(Test-Path -LiteralPath $UninstallerPath -PathType Leaf)) {{ throw ('WinUI uninstaller was not found: ' + $UninstallerPath) }};
+        Add-Content -LiteralPath $LogPath -Value ('Starting WinUI uninstaller at ' + (Get-Date -Format o));
         $Uninstall = Start-Process -FilePath $UninstallerPath -ArgumentList $UninstallerArguments -Wait -PassThru;
         if ($Uninstall.ExitCode -ne 0) {{ throw ('WinUI uninstaller exited with code ' + $Uninstall.ExitCode) }};
     }};
+    Add-Content -LiteralPath $LogPath -Value ('Starting installer at ' + (Get-Date -Format o) + ': ' + $InstallerPath);
     $Install = Start-Process -FilePath $InstallerPath -ArgumentList $InstallerArguments -Wait -PassThru;
     if ($Install.ExitCode -ne 0) {{ throw ('Installer exited with code ' + $Install.ExitCode) }};
     Add-Content -LiteralPath $LogPath -Value ('Installer completed successfully at ' + (Get-Date -Format o));
@@ -4252,9 +4267,10 @@ try {{
         var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         var start = new ProcessStartInfo
         {
-            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
-            UseShellExecute = false,
-            CreateNoWindow = true,
+            FileName = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                "WindowsPowerShell", "v1.0", "powershell.exe"),
+            UseShellExecute = true,
             WindowStyle = ProcessWindowStyle.Hidden
         };
         start.ArgumentList.Add("-NoProfile");
@@ -4263,9 +4279,12 @@ try {{
         start.ArgumentList.Add("Hidden");
         start.ArgumentList.Add("-EncodedCommand");
         start.ArgumentList.Add(encodedScript);
-        var helper = Process.Start(start);
-        if (helper is null) throw new InvalidOperationException("Windows could not start the PowerShell installer handoff.");
-        App.WriteStartupLog($"Started PowerShell installer handoff PID {helper.Id}; it will taskkill Schoology.WinUI.exe, wait for shutdown, then run the installer.");
+
+        using var helper = Process.Start(start);
+        if (helper is null)
+            throw new InvalidOperationException("Windows could not start the detached PowerShell installer handoff.");
+        App.WriteStartupLog(
+            $"Started detached PowerShell installer handoff PID {helper.Id}; it will wait for WinUI PID {targetPid} to exit before running the installer. Handoff log: %TEMP%\\Schoology-InstallerHandoff-{targetPid}.log");
     }
 
     private async Task TrySchoologyClassicAsync(Button button)
