@@ -1,5 +1,13 @@
 # Release notes
 
+## [2026.10.0-port.62] - 2026-11-02
+
+- Reduce the NavigationView pane's acrylic tint so the native Mica backdrop is visible instead of a nearly opaque gray surface.
+- Apply restrained acrylic to shared custom cards, course dashboard cards, mailbox panes, and message loading surfaces, with an opaque system-colored High Contrast fallback.
+- Give the PDF/image viewer a translucent acrylic canvas while keeping rendered PDF pages themselves readable and opaque.
+- Add a clearly labeled, accessible Back to parent folder control to nested Resources folders and keep it synchronized with folder history.
+
+
 ## [2026.10.0-port.61] - 2026-11-02
 
 - Let the native window Mica backdrop show through transparent application-shell surfaces while preserving an opaque High Contrast fallback.
