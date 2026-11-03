@@ -8,7 +8,9 @@ public sealed partial class SchoologyShellContentPage : Page
 {
     public SchoologyShellContentPage()
     {
-        // This page has no XAML content; avoid loading a standalone ms-appx resource in unpackaged installs.
+        // Keep the shell host transparent; Page's default theme background otherwise
+        // paints an opaque system surface over Mica and every acrylic child surface.
+        Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
         NavigationCacheMode = NavigationCacheMode.Disabled;
     }
 

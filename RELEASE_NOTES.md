@@ -1,5 +1,15 @@
 # Release notes
 
+## [2026.10.0-port.63] - 2026-11-02
+
+- Set the NavigationView pane's actual PaneBackground to translucent acrylic rather than relying on theme resource keys that left the default gray pane visible.
+- Make the shell content Page transparent so Mica and acrylic can show through message panes, cards, and the native PDF/image viewer.
+- Reduce acrylic tint on message sections, shared cards, and viewer surroundings; keep rendered document pages readable.
+- Keep the Resources back control visible and enable it whenever folder history exists.
+- Add a contextual Back button to other users' profiles, restoring the exact previous page when available.
+- Replace likes-dialog card stacks with virtualized WinUI ListViews; activating a person closes the dialog and opens their profile.
+
+
 ## [2026.10.0-port.62] - 2026-11-02
 
 - Reduce the NavigationView pane's acrylic tint so the native Mica backdrop is visible instead of a nearly opaque gray surface.

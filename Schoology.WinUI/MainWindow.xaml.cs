@@ -48,6 +48,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private string _selectedEntityTab = string.Empty;
     private long _activeProfileUserId;
     private string _profileReturnNavigationTag = "Home";
+    private string _profileReturnSection = "Recent Activity";
     private Button? _titleBarCreateButton;
     private string _titleBarCreateContext = string.Empty;
     private Func<Task>? _titleBarCreateAction;
@@ -654,7 +655,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return Brush(colorHex);
     }
 
-    private Brush InAppAcrylicBrush(double lightTintOpacity = 0.58, double darkTintOpacity = 0.64)
+    private Brush InAppAcrylicBrush(double lightTintOpacity = 0.34, double darkTintOpacity = 0.42)
     {
         // Keep system High Contrast fully opaque and system-colored. In normal
         // themes, a restrained in-app acrylic tint lets the window's Mica
@@ -1540,11 +1541,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             CompactModeThresholdWidth = 760,
             ExpandedModeThresholdWidth = 1120,
             Background = new SolidColorBrush(Colors.Transparent),
+            PaneBackground = InAppAcrylicBrush(0.20, 0.28),
             Content = null
         };
-        // A light acrylic wash keeps the NavigationView legible without hiding
-        // the native Mica backdrop behind the navigation pane.
-        var paneMaterial = InAppAcrylicBrush(0.38, 0.46);
+        // Set the actual NavigationView pane surface. Template resource keys alone
+        // did not override the built-in gray pane background on all WinUI versions.
+        var paneMaterial = nav.PaneBackground;
         nav.Resources["NavigationViewDefaultPaneBackground"] = paneMaterial;
         nav.Resources["NavigationViewExpandedPaneBackground"] = paneMaterial;
         nav.Resources["NavigationViewCompactPaneBackground"] = paneMaterial;
@@ -3322,6 +3324,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         var back = new Button
         {
+            IsEnabled = false,
             Content = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -3335,7 +3338,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Padding = new Thickness(12, 7, 14, 7),
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
-            Visibility = Visibility.Collapsed
+            Visibility = Visibility.Visible
         };
         AutomationProperties.SetAutomationId(back, "ResourcesBackButton");
         AutomationProperties.SetName(back, "Back to parent resource folder");
@@ -3366,11 +3369,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 collectionId = entry.Id;
                 currentFolderId = 0;
                 history.Clear();
+                back.IsEnabled = false;
                 await LoadCollectionAsync(0, entry.Title);
             }
             else if (entry.Kind == "folder")
             {
                 history.Push((currentFolderId, breadcrumb.Text));
+                back.IsEnabled = true;
+                back.Visibility = Visibility.Visible;
                 await LoadCollectionAsync(entry.Id, entry.Title);
             }
             else await OpenResourceTreeEntryAsync(entry);
@@ -3424,7 +3430,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 var session = _session ?? throw new InvalidOperationException("Sign in to view resources.");
                 currentFolderId = folderId;
                 breadcrumb.Text = title;
-                back.Visibility = history.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                back.Visibility = Visibility.Visible;
+                back.IsEnabled = history.Count > 0;
                 list.Items.Clear();
                 list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading resources…") });
                 using var document = await _api.GetCollectionResourcesAsync(session, collectionId, folderId);
@@ -3517,8 +3524,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             }
             finally
             {
-                back.IsEnabled = true;
-                back.Visibility = history.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                back.IsEnabled = history.Count > 0;
+                back.Visibility = Visibility.Visible;
             }
         };
         _ = LoadRootAsync();
@@ -4428,7 +4435,7 @@ try {
         wide.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
 
         // The left structural pane holds the course/group/school infobox and its app navigation.
-        var sidebar = new Grid { Background = ThemeBrush("SchoologySurfaceBrush") };
+        var sidebar = new Grid { Background = InAppAcrylicBrush() };
         sidebar.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         sidebar.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var identity = new StackPanel { Spacing = 8, Margin = new Thickness(14) };
@@ -4495,7 +4502,7 @@ try {
         Grid.SetRow(navigation, 1);
         sidebar.Children.Add(navigation);
         var upcoming = new Grid { RowSpacing = 8, Padding = new Thickness(14),
-            Background = ThemeBrush("SchoologySurfaceBrush") };
+            Background = InAppAcrylicBrush() };
         upcoming.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         upcoming.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         upcoming.Children.Add(Text("Upcoming", 19, true));
@@ -5731,7 +5738,7 @@ try {
         string previewPath, string title, bool isPdf, string originalUrl, string originalFilename,
         string originalMime, Action onBack)
     {
-        var viewer = new Grid { Background = InAppAcrylicBrush(0.46, 0.54), RowSpacing = 8 };
+        var viewer = new Grid { Background = InAppAcrylicBrush(0.18, 0.26), RowSpacing = 8 };
         viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         viewer.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -5752,7 +5759,7 @@ try {
             MaxZoomFactor = 4f,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Background = InAppAcrylicBrush(0.36, 0.44)
+            Background = InAppAcrylicBrush(0.14, 0.22)
         };
         var image = new Image
         {
@@ -5913,7 +5920,7 @@ try {
                     pdfPagesStack.Children.Add(new Border
                     {
                         HorizontalAlignment = HorizontalAlignment.Center,
-                        Background = ThemeBrush("SchoologySurfaceBrush"),
+                        Background = InAppAcrylicBrush(0.18, 0.26),
                         BorderBrush = ThemeBrush("SchoologyDividerBrush"),
                         BorderThickness = new Thickness(1),
                         Padding = new Thickness(8),
@@ -5958,8 +5965,8 @@ try {
         _activeNativeFileViewerRoot = viewer;
         _refreshNativeFileViewer = () =>
         {
-            viewer.Background = InAppAcrylicBrush(0.46, 0.54);
-            viewerScroll.Background = InAppAcrylicBrush(0.36, 0.44);
+            viewer.Background = InAppAcrylicBrush(0.18, 0.26);
+            viewerScroll.Background = InAppAcrylicBrush(0.14, 0.22);
             status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
             pageLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         };
@@ -7436,26 +7443,25 @@ try {
         {
             using var document = await _api.GetCommentLikesAsync(_session, entityId, commentId);
             var users = SchoologyApiClient.ReadRecords(document.RootElement, "user", "users", "like", "likes");
-            var content = new StackPanel { Spacing = 8 };
-            if (users.Count == 0) content.Children.Add(Text("No likes were returned.", 13));
-            foreach (var person in users)
+            var list = BuildLikesList(users, "CommentLikesList");
+            long selectedUserId = 0;
+            var dialog = new ContentDialog
             {
-                var data = person.Data;
-                var user = data.ValueKind == JsonValueKind.Object && data.TryGetProperty("user", out var nested) ? nested : data;
-                var id = JsonLong(data, "uid", "user_id", "userId", "id");
-                if (id <= 0) id = JsonLong(user, "id", "uid", "user_id");
-                var name = ProfileValue(user, "name_display", "display_name", "name", "user_name") ??
-                    ProfileValue(data, "name_display", "display_name", "name", "user_name") ?? "Schoology user";
-                var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 6, 8, 6) };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(38) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.Children.Add(BuildProfileAvatar(data, id));
-                var label = Text(name, 13, true); Grid.SetColumn(label, 1); row.Children.Add(label);
-                content.Children.Add(Surface(row, new Thickness(0)));
-            }
-            await new ContentDialog { Title = users.Count == 1 ? "1 like" : $"{users.Count} likes",
-                Content = new ScrollViewer { Content = content, MaxHeight = 480, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
-                CloseButtonText = "Close", XamlRoot = _root.XamlRoot }.ShowAsync();
+                Title = users.Count == 1 ? "1 like" : $"{users.Count} likes",
+                Content = list,
+                CloseButtonText = "Close",
+                XamlRoot = _root.XamlRoot
+            };
+            list.ItemClick += (_, args) =>
+            {
+                if (args.ClickedItem is ListViewItem item && item.Tag is long id && id > 0)
+                {
+                    selectedUserId = id;
+                    dialog.Hide();
+                }
+            };
+            await dialog.ShowAsync();
+            if (selectedUserId > 0) ShowUserProfile(selectedUserId);
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to load comment likes", ex.Message); }
     }
@@ -7467,38 +7473,81 @@ try {
         {
             using var document = await _api.GetUpdateLikesAsync(_session, updateId);
             var users = SchoologyApiClient.ReadRecords(document.RootElement, "user", "users", "like", "likes");
-            var content = new StackPanel { Spacing = 8 };
-            if (users.Count == 0) content.Children.Add(Text("No likes were returned.", 13));
-            foreach (var person in users)
-            {
-                var data = person.Data;
-                var user = data.ValueKind == JsonValueKind.Object && data.TryGetProperty("user", out var nested)
-                    ? nested : data;
-                var userId = JsonLong(data, "uid", "user_id", "userId", "id");
-                if (userId <= 0) userId = JsonLong(user, "id", "uid", "user_id");
-                var name = ProfileValue(user, "name_display", "display_name", "name", "user_name") ??
-                    ProfileValue(data, "name_display", "display_name", "name", "user_name") ??
-                    string.Join(" ", new[] { ProfileValue(user, "name_first", "first_name"), ProfileValue(user, "name_last", "last_name") }
-                        .Where(value => !string.IsNullOrWhiteSpace(value)));
-                var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 6, 8, 6) };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(38) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.Children.Add(BuildProfileAvatar(data, userId));
-                var label = Text(string.IsNullOrWhiteSpace(name) ? person.Title : name, 13, true);
-                Grid.SetColumn(label, 1);
-                row.Children.Add(label);
-                content.Children.Add(Surface(row, new Thickness(0)));
-            }
-            await new ContentDialog
+            var list = BuildLikesList(users, "UpdateLikesList");
+            long selectedUserId = 0;
+            var dialog = new ContentDialog
             {
                 Title = users.Count == 1 ? "1 like" : $"{users.Count} likes",
-                Content = new ScrollViewer { Content = content, MaxHeight = 480,
-                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
+                Content = list,
                 CloseButtonText = "Close",
                 XamlRoot = _root.XamlRoot
-            }.ShowAsync();
+            };
+            list.ItemClick += (_, args) =>
+            {
+                if (args.ClickedItem is ListViewItem item && item.Tag is long id && id > 0)
+                {
+                    selectedUserId = id;
+                    dialog.Hide();
+                }
+            };
+            await dialog.ShowAsync();
+            if (selectedUserId > 0) ShowUserProfile(selectedUserId);
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to load likes", ex.Message); }
+    }
+
+    private ListView BuildLikesList(IReadOnlyList<SchoologyApiRecord> users, string automationId)
+    {
+        var list = new ListView
+        {
+            SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = true,
+            MaxHeight = 480,
+            MinWidth = 340,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Background = new SolidColorBrush(Colors.Transparent)
+        };
+        AutomationProperties.SetAutomationId(list, automationId);
+        AutomationProperties.SetName(list, "People who liked this item");
+        if (users.Count == 0)
+        {
+            list.Items.Add(new ListViewItem
+            {
+                Content = EmptyState("No likes were returned."),
+                IsEnabled = false,
+                IsTabStop = false
+            });
+            return list;
+        }
+        foreach (var person in users)
+        {
+            var data = person.Data;
+            var user = data.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                data.TryGetProperty("user", out var nested) ? nested : data;
+            var userId = JsonLong(data, "uid", "user_id", "userId", "id");
+            if (userId <= 0) userId = JsonLong(user, "id", "uid", "user_id");
+            var name = ProfileValue(user, "name_display", "display_name", "name", "user_name") ??
+                ProfileValue(data, "name_display", "display_name", "name", "user_name") ??
+                string.Join(" ", new[] { ProfileValue(user, "name_first", "first_name"), ProfileValue(user, "name_last", "last_name") }
+                    .Where(value => !string.IsNullOrWhiteSpace(value)));
+            var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 6, 8, 6) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(38) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.Children.Add(BuildProfileAvatar(data, userId));
+            var label = Text(string.IsNullOrWhiteSpace(name) ? person.Title : name, 13, true);
+            Grid.SetColumn(label, 1);
+            row.Children.Add(label);
+            var item = new ListViewItem
+            {
+                Content = row,
+                Tag = userId,
+                IsEnabled = userId > 0,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch
+            };
+            AutomationProperties.SetName(item, string.IsNullOrWhiteSpace(name) ? person.Title : name);
+            list.Items.Add(item);
+        }
+        return list;
     }
 
     private async Task ShowApiErrorAsync(string title, string message)
@@ -7545,7 +7594,7 @@ try {
 
         // One master list: the three mailbox modes share the same selection and
         // detail surface rather than navigating between separate inbox/sent pages.
-        var left = new Grid { RowSpacing = 10, Background = InAppAcrylicBrush(0.50, 0.58),
+        var left = new Grid { RowSpacing = 10, Background = InAppAcrylicBrush(0.24, 0.32),
             Margin = new Thickness(8) };
         left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -7578,11 +7627,11 @@ try {
         empty.VerticalAlignment = VerticalAlignment.Center;
         empty.Visibility = Visibility.Collapsed;
         listHost.Children.Add(empty);
-        var statusOverlay = new Border { Background = InAppAcrylicBrush(0.50, 0.58),
+        var statusOverlay = new Border { Background = InAppAcrylicBrush(0.24, 0.32),
             Padding = new Thickness(8), VerticalAlignment = VerticalAlignment.Top, Child = statusHost };
         listHost.Children.Add(statusOverlay);
 
-        var detail = new Grid { Background = InAppAcrylicBrush(0.50, 0.58) };
+        var detail = new Grid { Background = InAppAcrylicBrush(0.24, 0.32) };
         var detailFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
         detail.Children.Add(detailFrame);
         // The detail Frame exclusively owns its content; never parent a placeholder in both places.
@@ -8381,9 +8430,13 @@ try {
     private void ShowUserProfile(long userId)
     {
         if (_session is null || userId <= 0) return;
-        if (_appNavigation?.SelectedItem is NavigationViewItem selectedNavigationItem &&
-            selectedNavigationItem.Tag is string selectedTag && !string.IsNullOrWhiteSpace(selectedTag))
-            _profileReturnNavigationTag = selectedTag;
+        if (_section != "Profile")
+        {
+            if (_appNavigation?.SelectedItem is NavigationViewItem selectedNavigationItem &&
+                selectedNavigationItem.Tag is string selectedTag && !string.IsNullOrWhiteSpace(selectedTag))
+                _profileReturnNavigationTag = selectedTag;
+            _profileReturnSection = _section;
+        }
         _activeProfileUserId = userId;
         _page = "home";
         _section = "Profile";
@@ -8403,15 +8456,53 @@ try {
         else Reset(BuildApplicationShell("Profile", page));
     }
 
+    private void ReturnFromUserProfile()
+    {
+        _activeProfileUserId = 0;
+        if (_sectionFrame?.CanGoBack == true)
+        {
+            _section = _profileReturnSection;
+            _page = "home";
+            _sectionFrame.GoBack();
+            return;
+        }
+
+        var destination = _profileReturnNavigationTag == "Home" ? "Recent Activity" : _profileReturnNavigationTag;
+        ShowHome(destination);
+    }
+
     private Grid BuildProfilePage()
     {
         var session = _session;
         var userId = _activeProfileUserId > 0 ? _activeProfileUserId : session?.UserId ?? 0;
         var root = new Grid { Margin = new Thickness(20), RowSpacing = 14 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-        var header = new Grid { ColumnSpacing = 14, Padding = new Thickness(14), Background = ThemeBrush("SchoologySurfaceBrush") };
+        if (userId != session?.UserId)
+        {
+            var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            var backButton = new Button
+            {
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    Children = { new SymbolIcon(Symbol.Back), Text("Back", 13, true) }
+                },
+                Padding = new Thickness(12, 7, 16, 7),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            AutomationProperties.SetAutomationId(backButton, "ProfileBackButton");
+            AutomationProperties.SetName(backButton, "Back to previous page");
+            backButton.Click += (_, _) => ReturnFromUserProfile();
+            navigation.Children.Add(backButton);
+            Grid.SetRow(navigation, 0);
+            root.Children.Add(navigation);
+        }
+
+        var header = new Grid { ColumnSpacing = 14, Padding = new Thickness(14), Background = InAppAcrylicBrush() };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var avatarContent = new Grid();
@@ -8438,10 +8529,12 @@ try {
         headerText.Children.Add(schoolText);
         Grid.SetColumn(headerText, 1);
         header.Children.Add(headerText);
-        root.Children.Add(Surface(header, new Thickness(8)));
+        var headerSurface = Surface(header, new Thickness(8));
+        Grid.SetRow(headerSurface, 1);
+        root.Children.Add(headerSurface);
 
         var body = new Grid();
-        Grid.SetRow(body, 1);
+        Grid.SetRow(body, 2);
         root.Children.Add(body);
 
         var wide = new Grid { ColumnSpacing = 12 };
