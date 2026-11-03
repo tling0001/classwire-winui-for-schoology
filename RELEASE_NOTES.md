@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.69] - 2026-11-02
+
+- Fix the remaining analyzer warnings in URL-prefix detection and inline post-image URL extraction.
+
 ## [2026.10.0-port.68] - 2026-11-02
 
 - Put File and Resource actions side by side in the assignment upload submission dialog.

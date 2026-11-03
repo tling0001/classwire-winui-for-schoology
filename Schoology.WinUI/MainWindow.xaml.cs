@@ -6646,7 +6646,7 @@ try {
     {
         if (_session is null || string.IsNullOrWhiteSpace(rawUrl)) return false;
         var candidate = rawUrl.Trim();
-        if (candidate.StartsWith("/", StringComparison.Ordinal))
+        if (candidate.StartsWith('/'))
             candidate = "https://api.schoology.com" + candidate;
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)) return false;
         var match = Regex.Match(uri.AbsolutePath, @"/(?:v1/)?sections/(\d+)/documents/(\d+)(?:/|$)",
@@ -6879,7 +6879,7 @@ try {
         return content;
     }
 
-    private static IReadOnlyList<string> ExtractInlinePostImageUrls(string? markup)
+    private static string[] ExtractInlinePostImageUrls(string? markup)
     {
         if (string.IsNullOrWhiteSpace(markup)) return [];
         var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
