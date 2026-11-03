@@ -1418,17 +1418,36 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     {
         try
         {
+            // Release notes belong to the version that is actually installed.
+            // Looking up /releases/latest here incorrectly shows notes for a
+            // newer release before its installer has been applied.
+            var installedVersion = typeof(MainWindow).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? typeof(MainWindow).Assembly.GetName().Version?.ToString()
+                ?? string.Empty;
+            installedVersion = installedVersion.Trim().Split('+', 2)[0];
+            if (string.IsNullOrWhiteSpace(installedVersion)) return;
+
+            var releaseTag = Uri.EscapeDataString(installedVersion);
             using var request = new HttpRequestMessage(HttpMethod.Get,
-                "https://api.github.com/repos/tling0001/schoology-winui/releases/latest");
+                $"https://api.github.com/repos/tling0001/schoology-winui/releases/tags/{releaseTag}");
             request.Headers.TryAddWithoutValidation("User-Agent", "Schoology-WinUI");
+            request.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var response = await ReleaseNotesClient.SendAsync(request);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                App.WriteStartupLog($"No published release notes exist yet for installed version '{installedVersion}'.");
+                return;
+            }
             if (!response.IsSuccessStatusCode) return;
 
             using var release = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var root = release.RootElement;
             var tag = ProfileValue(root, "tag_name");
             var body = ProfileValue(root, "body");
-            if (string.IsNullOrWhiteSpace(tag) || string.IsNullOrWhiteSpace(body)) return;
+            if (string.IsNullOrWhiteSpace(tag) ||
+                !string.Equals(tag.Trim().TrimStart('v', 'V'), installedVersion.Trim().TrimStart('v', 'V'), StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(body)) return;
 
             var previouslyShown = File.Exists(ReleaseNotesStatePath)
                 ? await File.ReadAllTextAsync(ReleaseNotesStatePath) : string.Empty;

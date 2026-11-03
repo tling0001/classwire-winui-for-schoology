@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.66] - 2026-11-02
+
+- Show startup release notes only for the exact version installed locally, rather than the newest published release; users now see a release's notes after updating to that release.
+
+
 ## [2026.10.0-port.65] - 2026-11-02
 
 - Restore the native WinUI NavigationView appearance by removing custom pane, foreground, hover, selection, and background resource overrides.
