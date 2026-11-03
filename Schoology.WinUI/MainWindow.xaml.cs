@@ -3971,85 +3971,69 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     {
         if (!File.Exists(installerPath))
             throw new FileNotFoundException("The installer file is missing.", installerPath);
-        var helperDirectory = Path.Combine(Path.GetTempPath(), "Schoology", "InstallerHandoff");
-        Directory.CreateDirectory(helperDirectory);
-        var scriptPath = Path.Combine(helperDirectory, "handoff-" + Guid.NewGuid().ToString("N") + ".ps1");
-        const string script = @"
-param(
-    [int]$TargetPid,
-    [string]$InstallerPathBase64,
-    [string]$InstallerArgumentsBase64,
-    [string]$UninstallerPathBase64,
-    [string]$UninstallerArgumentsBase64
-)
-$ErrorActionPreference = 'Stop'
-$installerPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($InstallerPathBase64))
-$installerArguments = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($InstallerArgumentsBase64))
-$uninstallerPath = if ($UninstallerPathBase64) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UninstallerPathBase64)) } else { '' }
-$uninstallerArguments = if ($UninstallerArgumentsBase64) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UninstallerArgumentsBase64)) } else { '' }
-$logPath = Join-Path $env:TEMP ('Schoology-InstallerHandoff-' + $TargetPid + '.log')
-try {
-    $taskkillPath = Join-Path $env:SystemRoot 'System32\taskkill.exe'
-    $taskkillOutput = & $taskkillPath /F /IM 'Schoology.WinUI.exe' 2>&1
-    $taskkillExitCode = $LASTEXITCODE
-    $remainingApp = Get-Process -Name 'Schoology.WinUI' -ErrorAction SilentlyContinue
-    if ($taskkillExitCode -ne 0 -and $remainingApp) {
-        throw ('taskkill failed to stop Schoology.WinUI.exe: ' + ($taskkillOutput -join ' '))
-    }
-    Add-Content -LiteralPath $logPath -Value ('taskkill /F /IM Schoology.WinUI.exe completed with exit code ' + $taskkillExitCode + ' at ' + (Get-Date -Format o))
-    # Verify the initiating process has exited before touching installed files.
-    try { Wait-Process -Id $TargetPid -Timeout 15 -ErrorAction SilentlyContinue } catch {}
-    if (Get-Process -Id $TargetPid -ErrorAction SilentlyContinue) {
-        throw 'Schoology.WinUI.exe is still running after taskkill; installer launch was cancelled.'
-    }
-    # Give WebView2 child processes a brief opportunity to release profile and app files.
-    Start-Sleep -Seconds 2
-    if ($uninstallerPath) {
-        if (!(Test-Path -LiteralPath $uninstallerPath -PathType Leaf)) {
-            throw ('WinUI uninstaller was not found: ' + $uninstallerPath)
-        }
-        $uninstall = Start-Process -FilePath $uninstallerPath -ArgumentList $uninstallerArguments -Wait -PassThru
-        if ($uninstall.ExitCode -ne 0) { throw ('WinUI uninstaller exited with code ' + $uninstall.ExitCode) }
-    }
-    $install = Start-Process -FilePath $installerPath -ArgumentList $installerArguments -Wait -PassThru
-    if ($install.ExitCode -ne 0) { throw ('Installer exited with code ' + $install.ExitCode) }
-    Add-Content -LiteralPath $logPath -Value ('Completed successfully at ' + (Get-Date -Format o))
-    Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
-} catch {
-    Add-Content -LiteralPath $logPath -Value ('Failed at ' + (Get-Date -Format o) + ': ' + $_.Exception.Message)
-    exit 1
-} finally {
-    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
-}
-";
-        File.WriteAllText(scriptPath, script, new UTF8Encoding(false));
         static string Encode(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+        var targetPid = Environment.ProcessId;
+        var installerPathBase64 = Encode(Path.GetFullPath(installerPath));
+        var installerArgumentsBase64 = Encode(installerArguments);
+        var uninstallerPathBase64 = string.IsNullOrWhiteSpace(uninstallerPath)
+            ? string.Empty
+            : Encode(Path.GetFullPath(uninstallerPath));
+        var uninstallerArgumentsBase64 = string.IsNullOrWhiteSpace(uninstallerArguments)
+            ? string.Empty
+            : Encode(uninstallerArguments);
+
+        // Run shutdown and installation in one detached PowerShell process.
+        // EncodedCommand avoids command-line quoting problems with paths and arguments.
+        var script = $@"
+$ErrorActionPreference = 'Stop';
+$TargetPid = {targetPid};
+$InstallerPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{installerPathBase64}'));
+$InstallerArguments = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{installerArgumentsBase64}'));
+$UninstallerPathBase64 = '{uninstallerPathBase64}';
+$UninstallerArgumentsBase64 = '{uninstallerArgumentsBase64}';
+$UninstallerPath = if ($UninstallerPathBase64) {{ [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UninstallerPathBase64)) }} else {{ '' }};
+$UninstallerArguments = if ($UninstallerArgumentsBase64) {{ [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UninstallerArgumentsBase64)) }} else {{ '' }};
+$LogPath = Join-Path $env:TEMP ('Schoology-InstallerHandoff-' + $TargetPid + '.log');
+try {{
+    $TaskkillPath = Join-Path $env:SystemRoot 'System32\\taskkill.exe';
+    $TaskkillOutput = & $TaskkillPath /F /IM 'Schoology.WinUI.exe' 2>&1;
+    $TaskkillExitCode = $LASTEXITCODE;
+    $RemainingApp = Get-Process -Name 'Schoology.WinUI' -ErrorAction SilentlyContinue;
+    if ($TaskkillExitCode -ne 0 -and $RemainingApp) {{ throw ('taskkill failed: ' + ($TaskkillOutput -join ' ')) }};
+    Add-Content -LiteralPath $LogPath -Value ('taskkill completed with exit code ' + $TaskkillExitCode + ' at ' + (Get-Date -Format o));
+    try {{ Wait-Process -Id $TargetPid -Timeout 15 -ErrorAction SilentlyContinue }} catch {{}};
+    if (Get-Process -Id $TargetPid -ErrorAction SilentlyContinue) {{ throw 'Schoology is still running; installer launch was cancelled.' }};
+    Start-Sleep -Seconds 2;
+    if ($UninstallerPath) {{
+        if (!(Test-Path -LiteralPath $UninstallerPath -PathType Leaf)) {{ throw ('WinUI uninstaller was not found: ' + $UninstallerPath) }};
+        $Uninstall = Start-Process -FilePath $UninstallerPath -ArgumentList $UninstallerArguments -Wait -PassThru;
+        if ($Uninstall.ExitCode -ne 0) {{ throw ('WinUI uninstaller exited with code ' + $Uninstall.ExitCode) }};
+    }};
+    $Install = Start-Process -FilePath $InstallerPath -ArgumentList $InstallerArguments -Wait -PassThru;
+    if ($Install.ExitCode -ne 0) {{ throw ('Installer exited with code ' + $Install.ExitCode) }};
+    Add-Content -LiteralPath $LogPath -Value ('Installer completed successfully at ' + (Get-Date -Format o));
+    Remove-Item -LiteralPath $InstallerPath -Force -ErrorAction SilentlyContinue;
+}} catch {{
+    Add-Content -LiteralPath $LogPath -Value ('Installer handoff failed at ' + (Get-Date -Format o) + ': ' + $_.Exception.Message);
+    exit 1;
+}}";
+        var encodedScript = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         var start = new ProcessStartInfo
-        {
+        {{
             FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
             UseShellExecute = false,
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden
-        };
+        }};
         start.ArgumentList.Add("-NoProfile");
         start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-ExecutionPolicy");
-        start.ArgumentList.Add("Bypass");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(scriptPath);
-        start.ArgumentList.Add("-TargetPid");
-        start.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        start.ArgumentList.Add("-InstallerPathBase64");
-        start.ArgumentList.Add(Encode(Path.GetFullPath(installerPath)));
-        start.ArgumentList.Add("-InstallerArgumentsBase64");
-        start.ArgumentList.Add(Encode(installerArguments));
-        start.ArgumentList.Add("-UninstallerPathBase64");
-        start.ArgumentList.Add(string.IsNullOrWhiteSpace(uninstallerPath) ? "" : Encode(Path.GetFullPath(uninstallerPath)));
-        start.ArgumentList.Add("-UninstallerArgumentsBase64");
-        start.ArgumentList.Add(string.IsNullOrWhiteSpace(uninstallerArguments) ? "" : Encode(uninstallerArguments));
+        start.ArgumentList.Add("-WindowStyle");
+        start.ArgumentList.Add("Hidden");
+        start.ArgumentList.Add("-EncodedCommand");
+        start.ArgumentList.Add(encodedScript);
         var helper = Process.Start(start);
-        if (helper is null) throw new InvalidOperationException("Windows could not start the installer handoff helper.");
-        App.WriteStartupLog($"Started installer handoff helper PID {helper.Id}; it will run taskkill /F /IM Schoology.WinUI.exe before launching the installer.");
+        if (helper is null) throw new InvalidOperationException("Windows could not start the PowerShell installer handoff.");
+        App.WriteStartupLog($"Started PowerShell installer handoff PID {helper.Id}; it will taskkill Schoology.WinUI.exe, wait for shutdown, then run the installer.");
     }
 
     private async Task TrySchoologyClassicAsync(Button button)
