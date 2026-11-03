@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.72] - 2026-11-03
+
+- Replace course-material folder page navigation with an inline expandable hierarchy.
+- Load folder contents on demand, retain loaded nested content when collapsing and reopening, and support recursively nested folders.
+- Add indentation for nested levels and animated down/up chevrons that respect the app's reduced-motion setting.
+
 ## [2026.10.0-port.71] - 2026-11-03
 
 - Fix Windows update handoff by launching the PowerShell helper through the Windows shell so it can outlive Schoology WinUI.
