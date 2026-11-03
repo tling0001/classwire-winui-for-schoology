@@ -6446,6 +6446,15 @@ try {{
             var title = ProfileValue(record.Data, "title", "name", "filename", "file_name") ?? record.Title;
             var materialType = (ProfileValue(record.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
             var materialId = JsonLong(record.Data, "assignment_id", "assignmentId", "id", "document_id", "documentId");
+            if (materialType == "discussion")
+            {
+                var discussionId = JsonLong(record.Data, "discussion_id", "discussionId", "id");
+                if (discussionId > 0)
+                {
+                    await ShowDiscussionDetailsAsync("Courses", sectionId, record);
+                    return;
+                }
+            }
             if ((materialType is "assignment" or "assignment_v2") && materialId > 0 && _session is not null)
             {
                 await ShowAssignmentDetailsAsync(sectionId, record);
