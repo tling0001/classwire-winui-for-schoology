@@ -654,24 +654,37 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return Brush(colorHex);
     }
 
-    private Border Surface(UIElement child, Thickness? padding = null)
+    private Brush InAppAcrylicBrush(double lightTintOpacity = 0.58, double darkTintOpacity = 0.64)
     {
-        // WinUI 3 AcrylicBrush is an in-app material. Unlike UWP's brush,
-        // it has no BackgroundSource/AcrylicBackgroundSource API.
-        // MicaBackdrop is applied to the Window; this brush provides a
-        // theme-tinted translucent surface with a safe opaque fallback.
+        // Keep system High Contrast fully opaque and system-colored. In normal
+        // themes, a restrained in-app acrylic tint lets the window's Mica
+        // backdrop remain perceptible through cards and secondary surfaces.
+        if (_highContrastEnabled) return ThemeBrush("SchoologySurfaceBrush");
         var dark = _root.ActualTheme == ElementTheme.Dark;
-        Brush material = new AcrylicBrush
+        return new AcrylicBrush
         {
             TintColor = dark
                 ? Microsoft.UI.ColorHelper.FromArgb(255, 30, 35, 40)
                 : Microsoft.UI.ColorHelper.FromArgb(255, 248, 250, 252),
-            TintOpacity = dark ? 0.82 : 0.76,
+            TintOpacity = dark ? darkTintOpacity : lightTintOpacity,
             FallbackColor = dark
                 ? Microsoft.UI.ColorHelper.FromArgb(255, 32, 36, 40)
                 : Microsoft.UI.ColorHelper.FromArgb(255, 255, 255, 255)
         };
-        return new Border { Background = material, BorderBrush = ThemeBrush("SchoologyDividerBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = padding ?? new Thickness(16), Child = child, Margin = new Thickness(0, 0, 0, 12) };
+    }
+
+    private Border Surface(UIElement child, Thickness? padding = null)
+    {
+        return new Border
+        {
+            Background = InAppAcrylicBrush(),
+            BorderBrush = ThemeBrush("SchoologyDividerBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = padding ?? new Thickness(16),
+            Child = child,
+            Margin = new Thickness(0, 0, 0, 12)
+        };
     }
     private void Reset(UIElement content)
     {
@@ -1529,19 +1542,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Background = new SolidColorBrush(Colors.Transparent),
             Content = null
         };
-        // Give the pane a legible in-app acrylic surface. Transparent pane brushes
-        // expose the page beneath and make navigation labels difficult to read.
-        var darkPane = _root.ActualTheme == ElementTheme.Dark;
-        var paneMaterial = new AcrylicBrush
-        {
-            TintColor = darkPane
-                ? Microsoft.UI.ColorHelper.FromArgb(255, 28, 34, 40)
-                : Microsoft.UI.ColorHelper.FromArgb(255, 238, 244, 249),
-            TintOpacity = darkPane ? 0.86 : 0.82,
-            FallbackColor = darkPane
-                ? Microsoft.UI.ColorHelper.FromArgb(255, 32, 38, 44)
-                : Microsoft.UI.ColorHelper.FromArgb(255, 245, 248, 251)
-        };
+        // A light acrylic wash keeps the NavigationView legible without hiding
+        // the native Mica backdrop behind the navigation pane.
+        var paneMaterial = InAppAcrylicBrush(0.38, 0.46);
         nav.Resources["NavigationViewDefaultPaneBackground"] = paneMaterial;
         nav.Resources["NavigationViewExpandedPaneBackground"] = paneMaterial;
         nav.Resources["NavigationViewCompactPaneBackground"] = paneMaterial;
@@ -2409,7 +2412,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             }
             cardContent.Children.Add(imageSurface);
             var labels = new StackPanel { Spacing = 4, Padding = new Thickness(12, 10, 12, 12),
-                Background = ThemeBrush("SchoologySurfaceBrush") };
+                Background = InAppAcrylicBrush(0.58, 0.64) };
             labels.Children.Add(Text(course.Name, 15, true));
             if (!string.IsNullOrWhiteSpace(course.Subtitle))
             {
@@ -2420,7 +2423,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             cardContent.Children.Add(labels);
             var card = new Border { Width = 250, Height = 205, CornerRadius = new CornerRadius(8),
                 BorderThickness = new Thickness(1), BorderBrush = ThemeBrush("SchoologyDividerBrush"),
-                Background = ThemeBrush("SchoologySurfaceBrush"), Child = cardContent };
+                Background = InAppAcrylicBrush(0.58, 0.64), Child = cardContent };
             var item = new GridViewItem { Content = card, Width = 250, Height = 205,
                 Padding = new Thickness(0), Margin = new Thickness(8), Tag = course };
             AutomationProperties.SetName(item, course.Name);
@@ -3317,9 +3320,26 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
         var history = new Stack<(long FolderId, string Title)>();
         var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        var back = Action("‹ Back", (_, _) => { });
+        var back = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new SymbolIcon(Symbol.Back),
+                    Text("Back to parent folder", 13, true)
+                }
+            },
+            Padding = new Thickness(12, 7, 14, 7),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed
+        };
         AutomationProperties.SetAutomationId(back, "ResourcesBackButton");
-        back.Visibility = Visibility.Collapsed;
+        AutomationProperties.SetName(back, "Back to parent resource folder");
+        ToolTipService.SetToolTip(back, "Back to parent folder");
         navigation.Children.Add(back);
         var breadcrumb = Text("All resources", 13, true);
         breadcrumb.VerticalAlignment = VerticalAlignment.Center;
@@ -3404,7 +3424,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 var session = _session ?? throw new InvalidOperationException("Sign in to view resources.");
                 currentFolderId = folderId;
                 breadcrumb.Text = title;
-                back.Visibility = folderId == 0 && history.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+                back.Visibility = history.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
                 list.Items.Clear();
                 list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading resources…") });
                 using var document = await _api.GetCollectionResourcesAsync(session, collectionId, folderId);
@@ -3489,8 +3509,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         back.Click += async (_, _) =>
         {
             if (history.Count == 0) return;
-            var previous = history.Pop();
-            await LoadCollectionAsync(previous.FolderId, previous.Title);
+            back.IsEnabled = false;
+            try
+            {
+                var previous = history.Pop();
+                await LoadCollectionAsync(previous.FolderId, previous.Title);
+            }
+            finally
+            {
+                back.IsEnabled = true;
+                back.Visibility = history.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
         };
         _ = LoadRootAsync();
         return root;
@@ -5702,7 +5731,7 @@ try {
         string previewPath, string title, bool isPdf, string originalUrl, string originalFilename,
         string originalMime, Action onBack)
     {
-        var viewer = new Grid { Background = ThemeBrush("SchoologySubtleBrush"), RowSpacing = 8 };
+        var viewer = new Grid { Background = InAppAcrylicBrush(0.46, 0.54), RowSpacing = 8 };
         viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         viewer.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -5723,7 +5752,7 @@ try {
             MaxZoomFactor = 4f,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Background = ThemeBrush("SchoologySubtleBrush")
+            Background = InAppAcrylicBrush(0.36, 0.44)
         };
         var image = new Image
         {
@@ -5929,8 +5958,8 @@ try {
         _activeNativeFileViewerRoot = viewer;
         _refreshNativeFileViewer = () =>
         {
-            viewer.Background = ThemeBrush("SchoologySubtleBrush");
-            viewerScroll.Background = ThemeBrush("SchoologySubtleBrush");
+            viewer.Background = InAppAcrylicBrush(0.46, 0.54);
+            viewerScroll.Background = InAppAcrylicBrush(0.36, 0.44);
             status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
             pageLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         };
@@ -7509,13 +7538,14 @@ try {
 
     private Grid BuildMessagesPage()
     {
-        var root = new Grid { Margin = new Thickness(18), ColumnSpacing = 12 };
+        var root = new Grid { Margin = new Thickness(18), ColumnSpacing = 12,
+            Background = new SolidColorBrush(Colors.Transparent) };
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(360) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         // One master list: the three mailbox modes share the same selection and
         // detail surface rather than navigating between separate inbox/sent pages.
-        var left = new Grid { RowSpacing = 10, Background = ThemeBrush("SchoologySurfaceBrush"),
+        var left = new Grid { RowSpacing = 10, Background = InAppAcrylicBrush(0.50, 0.58),
             Margin = new Thickness(8) };
         left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -7548,11 +7578,11 @@ try {
         empty.VerticalAlignment = VerticalAlignment.Center;
         empty.Visibility = Visibility.Collapsed;
         listHost.Children.Add(empty);
-        var statusOverlay = new Border { Background = ThemeBrush("SchoologySurfaceBrush"),
+        var statusOverlay = new Border { Background = InAppAcrylicBrush(0.50, 0.58),
             Padding = new Thickness(8), VerticalAlignment = VerticalAlignment.Top, Child = statusHost };
         listHost.Children.Add(statusOverlay);
 
-        var detail = new Grid { Background = ThemeBrush("SchoologySurfaceBrush") };
+        var detail = new Grid { Background = InAppAcrylicBrush(0.50, 0.58) };
         var detailFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
         detail.Children.Add(detailFrame);
         // The detail Frame exclusively owns its content; never parent a placeholder in both places.
