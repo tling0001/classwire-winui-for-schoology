@@ -1,5 +1,13 @@
 # Release notes
 
+## [2026.10.0-port.61] - 2026-11-02
+
+- Let the native window Mica backdrop show through transparent application-shell surfaces while preserving an opaque High Contrast fallback.
+- Preserve the existing NavigationView selection when opening another user's profile; only the signed-in user's own profile selects the Profile destination.
+- Cache and deduplicate authenticated post/profile image downloads, decode each image once, and limit concurrent image requests to reduce repeated network and decoding work. Render recent-activity cards before resolving author profiles so images start loading immediately.
+- Replace the PDF/image viewer's Download original text with a native Segoe Fluent download glyph and an accessible name/tooltip.
+
+
 ## [2026.10.0-port.60] - 2026-11-02
 
 - Make notification choices, assignment attachment rows, and resource entries activate directly from their ListViewItem, matching the working in-app ListView interaction pattern.

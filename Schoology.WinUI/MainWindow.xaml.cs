@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -46,6 +47,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private long _selectedEntityId;
     private string _selectedEntityTab = string.Empty;
     private long _activeProfileUserId;
+    private string _profileReturnNavigationTag = "Home";
     private Button? _titleBarCreateButton;
     private string _titleBarCreateContext = string.Empty;
     private Func<Task>? _titleBarCreateAction;
@@ -56,6 +58,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private readonly ObservableCollection<SchoologyEntity> _courses = new();
     private readonly ObservableCollection<SchoologyEntity> _groups = new();
     private readonly Dictionary<long, JsonElement> _userProfileCache = new();
+    // Share authenticated post/profile image downloads and decoded bitmaps across the UI.
+    private readonly ConcurrentDictionary<string, Lazy<Task<BitmapImage>>> _postImageCache = new();
+    private readonly SemaphoreSlim _postImageDownloadGate = new(6, 6);
     private long _activeAssignmentSectionId;
     private long _activeAssignmentId;
     private long _activeAssignmentGradeItemId;
@@ -1469,7 +1474,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private Grid BuildApplicationShell(string section, UIElement content)
     {
-        var shell = new Grid { Background = ThemeBrush("SchoologySubtleBrush") };
+        // Let the window's Mica backdrop show through the shell; retain an opaque
+        // semantic surface when High Contrast is active for reliable legibility.
+        var shell = new Grid { Background = _highContrastEnabled
+            ? ThemeBrush("SchoologySubtleBrush")
+            : new SolidColorBrush(Colors.Transparent) };
         // NavigationView fills the window so its acrylic pane continues behind the custom title bar.
         shell.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         shell.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -1582,7 +1591,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         AutomationProperties.SetName(profileItem, profileName + " profile");
         nav.MenuItems.Add(profileItem);
-        if (section == "Profile") nav.SelectedItem = profileItem;
+        if (section == "Profile" && _activeProfileUserId == (_session?.UserId ?? 0))
+            nav.SelectedItem = profileItem;
         nav.MenuItems.Add(new NavigationViewItemSeparator());
 
         var items = new (string Name, Symbol Icon)[]
@@ -1605,8 +1615,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             item.SelectsOnInvoked = entry.Name is not ("Courses" or "Groups");
             if (entry.Name is "Courses" or "Groups") item.IsExpanded = false;
             nav.MenuItems.Add(item);
-            if (entry.Name == (section == "Recent Activity" ? "Home" : section) ||
-                (entry.Name == "Upcoming" && section == "Calendar")) nav.SelectedItem = item;
+            var selectedSection = section == "Profile" ? _profileReturnNavigationTag : section;
+            if (entry.Name == (selectedSection == "Recent Activity" ? "Home" : selectedSection) ||
+                (entry.Name == "Upcoming" && selectedSection == "Calendar")) nav.SelectedItem = item;
         }
         nav.FooterMenuItems.Add(new NavigationViewItem
         {
@@ -1629,7 +1640,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 return;
             }
             if (item.Tag is not string rootTarget) return;
-            if (rootTarget == "Sign out") { SchoologyAuthService.SignOut(); _session = null; _activeProfileUserId = 0; _sharedWebViewInitialized = false; _sharedWebViewSessionUserId = 0; _sectionFrame = null; ShowLogin(); }
+            if (rootTarget == "Sign out") { SchoologyAuthService.SignOut(); _session = null; _postImageCache.Clear(); _activeProfileUserId = 0; _sharedWebViewInitialized = false; _sharedWebViewSessionUserId = 0; _sectionFrame = null; ShowLogin(); }
             else
             {
                 if (rootTarget == "Profile") _activeProfileUserId = _session?.UserId ?? 0;
@@ -2302,20 +2313,44 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             using var document = await _auth.GetApiJsonAsync(session, "recent",
                 new Dictionary<string, string> { ["start"] = "0", ["limit"] = "30", ["with_attachments"] = "TRUE", ["richtext"] = "1" });
             var records = SchoologyApiClient.ReadRecords(document.RootElement, "update", "updates", "update_list");
-            await ResolvePostAuthorsAsync(records, session);
             RemoveLoadingStatus(status);
             if (records.Count == 0) { panel.Children.Add(EmptyState("No recent activity", "Your recent Schoology activity will appear here.")); return; }
-            foreach (var record in records)
-            {
-                var id = JsonLong(record.Data, "user_id", "uid", "author_id", "authorId", "created_by_id");
-                JsonElement? profile = id > 0 && _userProfileCache.TryGetValue(id, out var cached) ? cached : null;
-                panel.Children.Add(BuildUpdateCard("Recent", 0, record, profile));
-            }
+
+            // Render the feed immediately so post text and image requests do not
+            // wait for one profile API lookup per distinct post author.
+            RenderRecentActivityCards(panel, records);
+            _ = RefreshRecentActivityAuthorsAsync(panel, records, session);
         }
         catch (Exception ex)
         {
             SetStatusText(status, $"Unable to load recent activity: {ex.Message}");
             panel.Children.Add(Action("Retry", async (_, _) => await LoadRecentActivityAsync(panel, status)));
+        }
+    }
+
+    private void RenderRecentActivityCards(StackPanel panel, IReadOnlyList<SchoologyApiRecord> records)
+    {
+        panel.Children.Clear();
+        foreach (var record in records)
+        {
+            var id = JsonLong(record.Data, "user_id", "uid", "author_id", "authorId", "created_by_id");
+            JsonElement? profile = id > 0 && _userProfileCache.TryGetValue(id, out var cached) ? cached : null;
+            panel.Children.Add(BuildUpdateCard("Recent", 0, record, profile));
+        }
+    }
+
+    private async Task RefreshRecentActivityAuthorsAsync(
+        StackPanel panel, IReadOnlyList<SchoologyApiRecord> records, SchoologyAuthService.Session session)
+    {
+        try
+        {
+            await ResolvePostAuthorsAsync(records, session);
+            if (_session?.UserId == session.UserId)
+                RenderRecentActivityCards(panel, records);
+        }
+        catch (Exception ex)
+        {
+            App.WriteStartupLog("Could not refresh recent-activity author details.", ex);
         }
     }
 
@@ -5789,8 +5824,16 @@ try {
         });
         var zoomOut = Action("−", (_, _) => viewerScroll.ChangeView(null, null, Math.Max(0.5f, viewerScroll.ZoomFactor - 0.2f)));
         var zoomIn = Action("+", (_, _) => viewerScroll.ChangeView(null, null, Math.Min(4f, viewerScroll.ZoomFactor + 0.2f)));
-        var download = Action("Download original", async (_, _) =>
+        var download = Action(string.Empty, async (_, _) =>
             await SaveOriginalMaterialAsync(originalUrl, originalFilename, originalMime));
+        download.Content = new FontIcon
+        {
+            Glyph = "\uE896",
+            FontFamily = new FontFamily("Segoe Fluent Icons"),
+            FontSize = 16
+        };
+        AutomationProperties.SetName(download, "Download original file");
+        ToolTipService.SetToolTip(download, "Download original");
         Grid.SetColumn(back, 0); toolbar.Children.Add(back);
         Grid.SetColumn(heading, 1); toolbar.Children.Add(heading);
         Grid.SetColumn(pageLabel, 2); toolbar.Children.Add(pageLabel);
@@ -6209,11 +6252,50 @@ try {
 
     private async Task LoadPostImageAsync(Image image, string rawUrl, UIElement? fallback = null)
     {
+        var session = _session;
+        if (session is null || string.IsNullOrWhiteSpace(rawUrl)) return;
+
+        var normalizedUrl = NormalizeSchoologyImageUrl(rawUrl);
+        var cacheKey = $"{session.UserId}:{normalizedUrl}";
+        var cachedLoad = _postImageCache.GetOrAdd(cacheKey, _ =>
+            new Lazy<Task<BitmapImage>>(
+                () => DownloadAndDecodePostImageAsync(session, normalizedUrl),
+                LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
-            var session = _session;
-            if (session is null) return;
-            var bytes = await _auth.GetSchoologyFileBytesAsync(session, NormalizeSchoologyImageUrl(rawUrl));
+            var bitmap = await cachedLoad.Value;
+            if (_session?.UserId != session.UserId) return;
+            image.Source = bitmap;
+            image.Visibility = Visibility.Visible;
+            if (fallback is not null) fallback.Visibility = Visibility.Collapsed;
+
+            // Keep the decoded-image cache bounded for long-lived sessions.
+            if (_postImageCache.Count > 128)
+            {
+                foreach (var staleKey in _postImageCache.Keys.Take(24))
+                {
+                    if (!string.Equals(staleKey, cacheKey, StringComparison.Ordinal))
+                        _postImageCache.TryRemove(staleKey, out _);
+                }
+            }
+        }
+        catch
+        {
+            _postImageCache.TryRemove(cacheKey, out _);
+            image.Visibility = Visibility.Collapsed;
+            if (fallback is not null) fallback.Visibility = Visibility.Visible;
+        }
+    }
+
+    private async Task<BitmapImage> DownloadAndDecodePostImageAsync(
+        SchoologyAuthService.Session session, string normalizedUrl)
+    {
+        await _postImageDownloadGate.WaitAsync();
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+            var bytes = await _auth.GetSchoologyFileBytesAsync(
+                session, normalizedUrl, cancellationToken: timeout.Token);
             using var stream = new InMemoryRandomAccessStream();
             using (var writer = new DataWriter(stream.GetOutputStreamAt(0)))
             {
@@ -6225,13 +6307,11 @@ try {
             stream.Seek(0);
             var bitmap = new BitmapImage();
             await bitmap.SetSourceAsync(stream);
-            image.Source = bitmap;
-            if (fallback is not null) fallback.Visibility = Visibility.Collapsed;
+            return bitmap;
         }
-        catch
+        finally
         {
-            image.Visibility = Visibility.Collapsed;
-            if (fallback is not null) fallback.Visibility = Visibility.Visible;
+            _postImageDownloadGate.Release();
         }
     }
 
@@ -8271,11 +8351,17 @@ try {
     private void ShowUserProfile(long userId)
     {
         if (_session is null || userId <= 0) return;
+        if (_appNavigation?.SelectedItem is NavigationViewItem selectedNavigationItem &&
+            selectedNavigationItem.Tag is string selectedTag && !string.IsNullOrWhiteSpace(selectedTag))
+            _profileReturnNavigationTag = selectedTag;
         _activeProfileUserId = userId;
         _page = "home";
         _section = "Profile";
         UpdateTitleBarCreateButton("Profile", null);
-        if (_appNavigation is not null)
+        // Only the signed-in user's own profile corresponds to the Profile
+        // navigation destination. Viewing another person's profile is a
+        // contextual drill-in and must preserve the current navigation selection.
+        if (userId == _session.UserId && _appNavigation is not null)
         {
             _syncingNavigationSelection = true;
             _appNavigation.SelectedItem = _appNavigation.MenuItems.OfType<NavigationViewItem>()
