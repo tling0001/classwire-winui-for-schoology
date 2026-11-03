@@ -22,6 +22,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -7653,7 +7654,6 @@ try {
         };
         AutomationProperties.SetAutomationId(createMessageButton, "MessagesCreateButton");
         AutomationProperties.SetName(createMessageButton, "Create a new message");
-        createMessageButton.Click += async (_, _) => await ShowComposeMessageDialogAsync(RefreshSentAfterComposeAsync);
         Grid.SetColumn(createMessageButton, 1);
         messagesHeader.Children.Add(createMessageButton);
         left.Children.Add(messagesHeader);
@@ -8161,6 +8161,10 @@ try {
             left.Visibility = narrow && messageSelected ? Visibility.Collapsed : Visibility.Visible;
             detail.Visibility = narrow && !messageSelected ? Visibility.Collapsed : Visibility.Visible;
         };
+
+        // Attach the Create action only after every mailbox local captured by the
+        // Sent-refresh callback has been initialized.
+        createMessageButton.Click += async (_, _) => await ShowComposeMessageDialogAsync(RefreshSentAfterComposeAsync);
         ShowDetailPlaceholder("Select a message", "Choose a message from the list to read it.");
         _ = LoadMailboxAsync("Inbox");
         return root;
