@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.75] - 2026-11-03
+
+- Align comment layout with the Tauri app: place the author avatar beside the name, with comment text, timestamp, and actions below at the full available width.
+
 ## [2026.10.0-port.74] - 2026-11-03
 
 - Animate nested course-material folder expansion and collapse with a subtle fade/slide that respects reduced-motion settings.

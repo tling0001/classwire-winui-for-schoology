@@ -6860,22 +6860,35 @@ try {{
             (authorId > 0 && _userProfileCache.TryGetValue(authorId, out var cachedAuthor)
                 ? ProfileValue(cachedAuthor, "name_display", "display_name", "name", "user_name") : null) ??
             (authorId > 0 ? "Schoology user" : "Unknown author");
-        var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(10, 8, 10, 8) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(38) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.Children.Add(BuildProfileAvatar(data, authorId));
-        var details = new StackPanel { Spacing = 3 };
-        details.Children.Add(Text(author, 12, true));
+
+        // Match the Tauri comment layout: avatar and author share a compact header,
+        // while the comment body, timestamp, and actions use the full row width below.
+        var content = new StackPanel { Spacing = 6, Padding = new Thickness(10, 8, 10, 8) };
+        var header = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Top };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(38) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var avatar = BuildProfileAvatar(data, authorId);
+        avatar.VerticalAlignment = VerticalAlignment.Top;
+        header.Children.Add(avatar);
+        var authorText = Text(author, 12, true);
+        authorText.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(authorText, 1);
+        header.Children.Add(authorText);
+        content.Children.Add(header);
+
+        var body = ProfileValue(data, "comment", "body", "text", "message") ?? comment.Subtitle;
+        if (!string.IsNullOrWhiteSpace(body))
+            content.Children.Add(CreateRichContent(body, 12));
+
         var created = ProfileValue(data, "created", "created_at", "timestamp");
         if (!string.IsNullOrWhiteSpace(created))
         {
             var date = Text(ParseSchoologyDate(created)?.ToString("g",
                 System.Globalization.CultureInfo.CurrentCulture) ?? created, 10);
             date.Foreground = ThemeBrush("SchoologyMutedTextBrush");
-            details.Children.Add(date);
+            content.Children.Add(date);
         }
-        var body = ProfileValue(data, "comment", "body", "text", "message") ?? comment.Subtitle;
-        if (!string.IsNullOrWhiteSpace(body)) details.Children.Add(CreateRichContent(body, 12));
+
         var commentId = JsonLong(data, "id", "comment_id", "commentId");
         if (parentEntityId > 0 && commentId > 0)
         {
@@ -6923,11 +6936,10 @@ try {{
                 finally { likeSplit.IsEnabled = true; }
             };
             commentActions.Children.Add(likeSplit);
-            details.Children.Add(commentActions);
+            content.Children.Add(commentActions);
         }
-        Grid.SetColumn(details, 1);
-        row.Children.Add(details);
-        return Surface(row, new Thickness(0));
+
+        return Surface(content, new Thickness(0));
     }
 
     private static bool IsFolderRecord(JsonElement data)
