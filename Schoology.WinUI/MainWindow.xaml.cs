@@ -1179,7 +1179,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     PrimaryButtonText = "Continue",
                     CloseButtonText = "Cancel",
                     DefaultButton = ContentDialogButton.Primary,
-                    XamlRoot = _root.XamlRoot
+                    XamlRoot = _root.XamlRoot,
+                    RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
                 };
                 var choice = await dialog.ShowAsync();
                 if (choice == ContentDialogResult.Primary)
@@ -1357,7 +1358,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     Title = "Unable to open sign-in help",
                     Content = "Windows could not open the Schoology sign-in help page.",
                     CloseButtonText = "OK",
-                    XamlRoot = _root.XamlRoot
+                    XamlRoot = _root.XamlRoot,
+                    RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
                 };
                 await dialog.ShowAsync();
             }
@@ -1369,7 +1371,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 Title = "Unable to open sign-in help",
                 Content = ex.Message,
                 CloseButtonText = "OK",
-                XamlRoot = _root.XamlRoot
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
             };
             await dialog.ShowAsync();
         }
@@ -1480,7 +1483,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
                 },
                 CloseButtonText = "Got it",
-                XamlRoot = _root.XamlRoot
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
             };
             await dialog.ShowAsync();
 
@@ -1501,7 +1505,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Title = "District single sign-on",
             Content = "District SSO requires a secure embedded authorization window and Schoology session-cookie exchange. That flow is not enabled in this phase; no district password is collected or saved.",
             CloseButtonText = "OK",
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         await dialog.ShowAsync();
     }
@@ -1720,7 +1725,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var dialog = new ContentDialog
         {
             Title = "Create comment", Content = body, PrimaryButtonText = "Post",
-            CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot
+            CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(body.Text)) return;
         try
@@ -1776,7 +1781,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Title = "Upload Submission",
             Content = content,
             CloseButtonText = "Cancel",
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         file.Click += async (_, _) =>
         {
@@ -1836,7 +1842,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Title = "Assignment attachments",
             Content = list,
             CloseButtonText = "Close",
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         await dialog.ShowAsync();
         if (selectedAttachment.ValueKind != JsonValueKind.Undefined)
@@ -1874,7 +1881,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         content.Children.Add(Text(file.Name, 13, true));
         content.Children.Add(status);
         content.Children.Add(progress);
-        var dialog = new ContentDialog { Title = "Uploading submission", Content = content, XamlRoot = _root.XamlRoot };
+        var dialog = new ContentDialog { Title = "Uploading submission", Content = content, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         var operation = dialog.ShowAsync();
         try
         {
@@ -1912,7 +1919,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             SecondaryButtonText = "Save draft",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.None) return;
@@ -1981,7 +1989,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     HorizontalContentAlignment = HorizontalAlignment.Stretch });
             var dialog = new ContentDialog { Title = "Choose Schoology resource", Content = list,
                 PrimaryButtonText = "Submit resource", CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot };
+                DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
             if (list.SelectedItem is not ListViewItem selected || selected.Tag is not long resourceId)
             {
@@ -2260,7 +2268,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             content.Children.Add(eventDate); content.Children.Add(eventTime);
         }
         var dialog = new ContentDialog { Title = isEvent ? "Create event" : "Create discussion", Content = content,
-            PrimaryButtonText = "Create", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot };
+            PrimaryButtonText = "Create", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         if (string.IsNullOrWhiteSpace(title.Text)) { await ShowApiErrorAsync("Unable to create content", "Enter a title before creating this item."); return; }
         var selected = destinations[Math.Clamp(destination.SelectedIndex, 0, destinations.Count - 1)];
@@ -2290,7 +2298,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         content.Children.Add(picker); content.Children.Add(body);
         var attachments = AddPostAttachmentControls(content, session, "LegacyUpdateComposer");
         var dialog = new ContentDialog { Title = "Create update", Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot };
+            DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(body.Text)) return;
         var selected = destinations[Math.Clamp(picker.SelectedIndex, 0, destinations.Count - 1)];
         try
@@ -2932,7 +2940,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (!string.IsNullOrWhiteSpace(date)) content.Children.Add(Text(date, 12));
         var description = ProfileValue(record.Data, "description", "body", "description_richtext");
         if (!string.IsNullOrWhiteSpace(description)) content.Children.Add(Text(StripMarkup(description), 13));
-        await new ContentDialog { Title = "Upcoming item", Content = content, CloseButtonText = "Close", XamlRoot = _root.XamlRoot }.ShowAsync();
+        await new ContentDialog { Title = "Upcoming item", Content = content, CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
     }
 
     private async Task LoadUpcomingAsync(ListView list, TextBlock status)
@@ -3388,7 +3396,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     list.Items.Add(item);
                 }
                 moreDialog = new ContentDialog { Title = "Choose notification item", Content = list,
-                    CloseButtonText = "Close", XamlRoot = _root.XamlRoot };
+                    CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
                 await moreDialog.ShowAsync();
                 if (chosenTarget.ValueKind != JsonValueKind.Undefined)
                 {
@@ -3434,7 +3442,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             }
         }
         var dialog = new ContentDialog { Title = "Notification", Content = Text(StripMarkup(body), 14),
-            CloseButtonText = "Close", XamlRoot = _root.XamlRoot };
+            CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         await dialog.ShowAsync();
     }
 
@@ -3911,7 +3919,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 if (!string.IsNullOrWhiteSpace(description)) details.Children.Add(Text(StripMarkup(description), 13));
                 details.Children.Add(Text("Schoology did not provide a web link for this resource.", 12));
                 await new ContentDialog { Title = "Resource details", Content = details,
-                    CloseButtonText = "Close", XamlRoot = _root.XamlRoot }.ShowAsync();
+                    CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
                 return;
             }
             if (!Uri.TryCreate(url, UriKind.Absolute, out var target))
@@ -4138,7 +4146,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 PrimaryButtonText = "Install update",
                 CloseButtonText = "Later",
                 DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = _root.XamlRoot
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
             };
             var result = await dialog.ShowAsync();
             App.WriteStartupLog(result == ContentDialogResult.Primary
@@ -4167,7 +4176,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         {
             Title = $"Downloading Schoology {update.Version}",
             Content = content,
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         var dialogOperation = progressDialog.ShowAsync();
         try
@@ -4302,7 +4312,8 @@ try {{
             PrimaryButtonText = "Download and switch",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
         button.IsEnabled = false;
@@ -4311,7 +4322,7 @@ try {{
         var content = new StackPanel { Spacing = 10, MinWidth = 320 };
         content.Children.Add(status);
         content.Children.Add(progress);
-        var dialog = new ContentDialog { Title = "Try Schoology classic", Content = content, XamlRoot = _root.XamlRoot };
+        var dialog = new ContentDialog { Title = "Try Schoology classic", Content = content, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         var operation = dialog.ShowAsync();
         try
         {
@@ -5521,7 +5532,7 @@ try {{
         AutomationProperties.SetAutomationId(input, "DiscussionCommentInput");
         var dialog = new ContentDialog { Title = parentCommentId > 0 ? "Reply" : "Create comment",
             Content = input, PrimaryButtonText = "Post", CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot };
+            DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(input.Text)) return;
         try
         {
@@ -5855,7 +5866,8 @@ try {{
                 Content = content,
                 PrimaryButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = _root.XamlRoot
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
             };
             var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var finished = false;
@@ -5919,7 +5931,8 @@ try {{
                     PrimaryButtonText = "Retry",
                     CloseButtonText = "Cancel",
                     DefaultButton = ContentDialogButton.Primary,
-                    XamlRoot = _root.XamlRoot
+                    XamlRoot = _root.XamlRoot,
+                    RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
                 };
                 if (await retry.ShowAsync() != ContentDialogResult.Primary) throw;
             }
@@ -6631,7 +6644,7 @@ try {{
             if (!string.IsNullOrWhiteSpace(description)) details.Children.Add(Text(StripMarkup(description), 13));
             details.Children.Add(Text("Schoology did not provide an embeddable HTTPS link for this material.", 12));
             await new ContentDialog { Title = "Material details", Content = details,
-                CloseButtonText = "Close", XamlRoot = _root.XamlRoot }.ShowAsync();
+                CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
         }
 
         AddMaterialRows(materialRows, initialRecords, 0);
@@ -7155,7 +7168,8 @@ try {{
             SecondaryButtonText = "Download",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         var choice = await dialog.ShowAsync();
         if (choice == ContentDialogResult.Primary)
@@ -7841,7 +7855,8 @@ try {{
             Title = parentCommentId > 0 ? "Reply to comment" : "Add comment",
             Content = content,
             CloseButtonText = "Cancel",
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         Button post = null!;
         post = Action("Post comment", async (_, _) =>
@@ -7876,7 +7891,8 @@ try {{
             PrimaryButtonText = "Add comment",
             CloseButtonText = "Close",
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         try
         {
@@ -7915,7 +7931,8 @@ try {{
                 Title = users.Count == 1 ? "1 like" : $"{users.Count} likes",
                 Content = list,
                 CloseButtonText = "Close",
-                XamlRoot = _root.XamlRoot
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
             };
             WireLikesListNavigation(list, id =>
             {
@@ -7942,7 +7959,8 @@ try {{
                 Title = users.Count == 1 ? "1 like" : $"{users.Count} likes",
                 Content = list,
                 CloseButtonText = "Close",
-                XamlRoot = _root.XamlRoot
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
             };
             WireLikesListNavigation(list, id =>
             {
@@ -8037,7 +8055,8 @@ try {{
             Title = title,
             Content = message,
             CloseButtonText = "OK",
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         await dialog.ShowAsync();
     }
@@ -8765,7 +8784,8 @@ try {{
             PrimaryButtonText = "Send",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = _root.XamlRoot
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
 
         var searchGeneration = 0;
@@ -9732,7 +9752,7 @@ try {{
         var dialog = new ContentDialog
         {
             Title = context == "course-update" ? "Post course update" : context == "group-update" ? "Post group update" : "Create update",
-            Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot,
+            Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme,
             DefaultButton = ContentDialogButton.Primary
         };
         var result = await dialog.ShowAsync();

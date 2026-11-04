@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.76] - 2026-11-03
+
+- Apply the app's active Light or Dark theme to all native ContentDialogs so dialogs match the rest of Schoology instead of following the Windows system theme.
+- Keep Windows High Contrast in control by allowing dialogs to use the system theme when High Contrast is enabled.
+
+
 ## [2026.10.0-port.75] - 2026-11-03
 
 - Align comment layout with the Tauri app: place the author avatar beside the name, with comment text, timestamp, and actions below at the full available width.
