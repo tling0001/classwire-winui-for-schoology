@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.79] - 2026-11-04
+
+- Share one native Resources browser between standalone Resources and group Resources, retaining the standalone page's categorized collections and resource-app entry points.
+- Expand collections and nested resource folders recursively inline with lazy loading, nested indentation, cached contents, animated chevrons, and reduced-motion support.
+- Open group resources through native attachment, link, and shared WebView paths while returning to the originating group.
+
 ## [2026.10.0-port.78] - 2026-11-04
 
 - Fix WinUI x64 and ARM64 publishing by explicitly aliasing the Windows text-formatting types used by the native rich-text renderer.

@@ -3561,160 +3561,225 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { await ShowApiErrorAsync($"Unable to {(accept ? "accept" : "decline")} request", ex.Message); }
     }
 
-    private Grid BuildResourcesPage()
+    private StackPanel BuildResourceEntriesView(
+        IReadOnlyList<(string Title, IReadOnlyList<ResourceTreeEntry> Entries)> categories,
+        string contextKind, long contextId, Action? onBack = null)
     {
-        var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.Children.Add(Text("Resources", 24, true));
-
-        var history = new Stack<(long FolderId, string Title)>();
-        var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        var back = new Button
+        var content = new StackPanel { Spacing = 8, Margin = new Thickness(4, 4, 4, 16) };
+        foreach (var category in categories)
         {
-            IsEnabled = false,
-            Content = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 8,
-                Children =
-                {
-                    new SymbolIcon(Symbol.Back),
-                    Text("Back to parent folder", 13, true)
-                }
-            },
-            Padding = new Thickness(12, 7, 14, 7),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Center,
-            Visibility = Visibility.Visible
-        };
-        AutomationProperties.SetAutomationId(back, "ResourcesBackButton");
-        AutomationProperties.SetName(back, "Back to parent resource folder");
-        ToolTipService.SetToolTip(back, "Back to parent folder");
-        navigation.Children.Add(back);
-        var breadcrumb = Text("All resources", 13, true);
-        breadcrumb.VerticalAlignment = VerticalAlignment.Center;
-        navigation.Children.Add(breadcrumb);
-        Grid.SetRow(navigation, 1);
-        root.Children.Add(navigation);
-
-        var list = new ListView
-        {
-            SelectionMode = ListViewSelectionMode.None,
-            IsItemClickEnabled = false,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Background = new SolidColorBrush(Colors.Transparent)
-        };
-        AutomationProperties.SetAutomationId(list, "SchoologyResourcesList");
-        Grid.SetRow(list, 2);
-        root.Children.Add(list);
-        long collectionId = 0;
-        long currentFolderId = 0;
-        async Task ActivateResourceEntryAsync(ResourceTreeEntry entry)
-        {
-            if (entry.Kind == "collection")
-            {
-                collectionId = entry.Id;
-                currentFolderId = 0;
-                history.Clear();
-                back.IsEnabled = false;
-                await LoadCollectionAsync(0, entry.Title);
-            }
-            else if (entry.Kind == "folder")
-            {
-                history.Push((currentFolderId, breadcrumb.Text));
-                back.IsEnabled = true;
-                back.Visibility = Visibility.Visible;
-                await LoadCollectionAsync(entry.Id, entry.Title);
-            }
-            else await OpenResourceTreeEntryAsync(entry);
+            content.Children.Add(Text(category.Title, 13, true));
+            if (category.Entries.Count == 0) content.Children.Add(EmptyState("No resources"));
+            else AddResourceEntryRows(content, category.Entries, contextKind, contextId, onBack, 0);
         }
+        return content;
+    }
 
-        void AddResourceRow(ResourceTreeEntry entry)
+    private void AddResourceEntryRows(StackPanel destination, IReadOnlyList<ResourceTreeEntry> entries,
+        string contextKind, long contextId, Action? onBack, int depth)
+    {
+        foreach (var entry in entries)
         {
-            var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(8, 9, 8, 9) };
+            var type = (ProfileValue(entry.Data, "type", "resource_type", "document_type",
+                "documentType", "template_type", "templateType") ?? "").ToLowerInvariant();
+            var isFolder = entry.Kind is "collection" or "folder" ||
+                type.Contains("folder", StringComparison.Ordinal) || IsFolderRecord(entry.Data);
+            var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(8 + depth * 24, 9, 8, 9), MinHeight = 52 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            UIElement icon = entry.Kind is "collection" or "folder"
-                ? FolderIcons.CreateIcon(FolderColorName(entry.Data), 27)
-                : new FontIcon { Glyph = MaterialGlyph(entry.Data), FontSize = 23,
-                    Foreground = ThemeBrush("SchoologyBlueBrush"), VerticalAlignment = VerticalAlignment.Center };
-            row.Children.Add(icon);
+            if (isFolder) row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            row.Children.Add(isFolder ? FolderIcons.CreateIcon(FolderColorName(entry.Data), 27) :
+                new FontIcon { Glyph = MaterialGlyph(entry.Data), FontSize = 23,
+                    Foreground = ThemeBrush("SchoologyBlueBrush"), VerticalAlignment = VerticalAlignment.Center });
             var labels = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
             labels.Children.Add(Text(entry.Title, 14, true));
             var subtitle = ProfileValue(entry.Data, "description", "body", "resource_description");
             if (!string.IsNullOrWhiteSpace(subtitle)) labels.Children.Add(Text(StripMarkup(subtitle), 12));
             Grid.SetColumn(labels, 1);
             row.Children.Add(labels);
-            var item = new ListViewItem { Content = row, Tag = entry,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                IsTabStop = true };
-            AutomationProperties.SetName(item, entry.Title);
-            item.Tapped += async (_, _) => await ActivateResourceEntryAsync(entry);
-            list.Items.Add(item);
-        }
 
-        void AddCategory(string title, IReadOnlyList<ResourceTreeEntry> entries)
-        {
-            list.Items.Add(new ListViewItem
+            FontIcon? arrow = null;
+            if (isFolder)
             {
-                Content = Text(title, 13, true),
-                IsHitTestVisible = false,
-                IsTabStop = false,
-                Padding = new Thickness(12, 12, 12, 6)
-            });
-            if (entries.Count == 0)
-            {
-                list.Items.Add(new ListViewItem { Content = EmptyState("No resources"), IsHitTestVisible = false });
-                return;
+                arrow = new FontIcon { Glyph = "\uE70D", FontSize = 14,
+                    Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
+                    VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center,
+                    RenderTransform = new RotateTransform { Angle = 0 } };
+                arrow.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
+                Grid.SetColumn(arrow, 2);
+                row.Children.Add(arrow);
             }
-            foreach (var entry in entries) AddResourceRow(entry);
-        }
 
-        async Task LoadCollectionAsync(long folderId, string title)
-        {
-            try
+            var wrapper = new StackPanel { Spacing = 0 };
+            var offset = new TranslateTransform();
+            StackPanel? children = null;
+            Storyboard? childStoryboard = null;
+            var expanded = false;
+            var loaded = false;
+            var loading = false;
+
+            Storyboard? AnimateChildren(bool show, Action? completed = null)
             {
-                var session = _session ?? throw new InvalidOperationException("Sign in to view resources.");
-                currentFolderId = folderId;
-                breadcrumb.Text = title;
-                back.Visibility = Visibility.Visible;
-                back.IsEnabled = history.Count > 0;
-                list.Items.Clear();
-                list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading resources…") });
-                using var document = await _api.GetCollectionResourcesAsync(session, collectionId, folderId);
-                var records = SchoologyApiClient.ReadRecords(document.RootElement, "resource", "resources", "resource_list");
-                list.Items.Clear();
-                foreach (var record in records)
+                if (children is null) return null;
+                if (!AnimationsEnabled)
                 {
-                    var type = (ProfileValue(record.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
-                    var isFolder = type.Contains("folder") || IsFolderRecord(record.Data);
-                    var id = JsonLong(record.Data, "id", "resource_id", "resourceId", "folder_id", "folderId");
-                    var name = ProfileValue(record.Data, "resource_title", "resourceTitle", "title", "name",
-                        "filename", "file_name") ?? record.Title;
-                    AddResourceRow(new ResourceTreeEntry(name, isFolder ? "folder" : "resource",
-                        id, collectionId, record.Data.Clone()));
+                    children.Opacity = 1; offset.Y = 0;
+                    children.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+                    completed?.Invoke();
+                    return null;
                 }
-                if (records.Count == 0) list.Items.Add(new ListViewItem { Content = EmptyState("No resources in this folder.") });
+                var fade = new DoubleAnimation { From = show ? 0 : 1, To = show ? 1 : 0,
+                    Duration = TimeSpan.FromMilliseconds(160), EnableDependentAnimation = true };
+                var slide = new DoubleAnimation { From = show ? -6 : 0, To = show ? 0 : -6,
+                    Duration = TimeSpan.FromMilliseconds(180), EnableDependentAnimation = true };
+                var storyboard = new Storyboard();
+                Storyboard.SetTarget(fade, children); Storyboard.SetTargetProperty(fade, "Opacity");
+                Storyboard.SetTarget(slide, offset); Storyboard.SetTargetProperty(slide, "Y");
+                storyboard.Children.Add(fade); storyboard.Children.Add(slide);
+                storyboard.Completed += (_, _) => completed?.Invoke();
+                storyboard.Begin();
+                return storyboard;
             }
-            catch (Exception ex)
-            {
-                list.Items.Clear();
-                var error = new StackPanel { Spacing = 8, Margin = new Thickness(12) };
-                error.Children.Add(EmptyState("Unable to load resources.", ex.Message));
-                error.Children.Add(Action("Retry", async (_, _) => await LoadCollectionAsync(folderId, title)));
-                list.Items.Add(new ListViewItem { Content = error });
-            }
-        }
 
+            void AnimateArrow(bool show)
+            {
+                if (arrow?.RenderTransform is not RotateTransform transform) return;
+                if (!AnimationsEnabled) { transform.Angle = show ? 180 : 0; return; }
+                var animation = new DoubleAnimation { To = show ? 180 : 0,
+                    Duration = TimeSpan.FromMilliseconds(180), EnableDependentAnimation = true };
+                var storyboard = new Storyboard();
+                Storyboard.SetTarget(animation, transform); Storyboard.SetTargetProperty(animation, "Angle");
+                storyboard.Children.Add(animation); storyboard.Begin();
+            }
+
+            async Task LoadChildrenAsync()
+            {
+                if (children is null || loading) return;
+                loading = true;
+                children.Children.Clear();
+                children.Children.Add(new TextBlock { Text = "Loading resources…",
+                    Style = (Style)Application.Current.Resources["BodyTextBlockStyle"],
+                    Margin = new Thickness(24, 8, 8, 8), Foreground = ThemeBrush("TextFillColorSecondaryBrush") });
+                try
+                {
+                    var nested = await LoadResourceChildrenAsync(entry, contextKind, contextId);
+                    children.Children.Clear();
+                    if (nested.Count == 0)
+                        children.Children.Add(new TextBlock { Text = "This folder is empty.",
+                            Style = (Style)Application.Current.Resources["BodyTextBlockStyle"],
+                            Margin = new Thickness(24, 8, 8, 8), Foreground = ThemeBrush("TextFillColorSecondaryBrush") });
+                    else AddResourceEntryRows(children, nested, contextKind, contextId, onBack, depth + 1);
+                    loaded = true;
+                }
+                catch (Exception ex)
+                {
+                    children.Children.Clear();
+                    var error = new StackPanel { Spacing = 6, Margin = new Thickness(24, 8, 8, 8) };
+                    error.Children.Add(new TextBlock { Text = $"Unable to load this folder: {ex.Message}",
+                        Style = (Style)Application.Current.Resources["BodyTextBlockStyle"],
+                        Foreground = ThemeBrush("SystemFillColorCriticalBrush"), TextWrapping = TextWrapping.Wrap });
+                    error.Children.Add(Action("Retry", async (_, _) => await LoadChildrenAsync()));
+                    children.Children.Add(error);
+                }
+                finally
+                {
+                    loading = false;
+                    if (expanded && loaded)
+                    {
+                        children.Opacity = 0; offset.Y = -6; children.Visibility = Visibility.Visible;
+                        childStoryboard?.Stop(); childStoryboard = AnimateChildren(true);
+                    }
+                    else if (!expanded)
+                    {
+                        children.Visibility = Visibility.Collapsed; children.Opacity = 0; offset.Y = -6;
+                    }
+                    else { children.Opacity = 1; offset.Y = 0; }
+                }
+            }
+
+            var item = new ListViewItem { Content = row, Tag = entry,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(0) };
+            AutomationProperties.SetName(item, entry.Title);
+            wrapper.Children.Add(item);
+            item.Tapped += async (_, args) =>
+            {
+                args.Handled = true;
+                if (!isFolder) { await OpenResourceTreeEntryAsync(entry, onBack); return; }
+                if (expanded)
+                {
+                    expanded = false;
+                    if (children is not null)
+                    {
+                        childStoryboard?.Stop();
+                        childStoryboard = AnimateChildren(false, () =>
+                        { if (!expanded && children is not null) children.Visibility = Visibility.Collapsed; });
+                    }
+                    AnimateArrow(false);
+                    return;
+                }
+                expanded = true;
+                if (children is null)
+                {
+                    children = new StackPanel { Spacing = 2, Visibility = Visibility.Visible,
+                        Opacity = 1, RenderTransform = offset };
+                    wrapper.Children.Add(children);
+                }
+                childStoryboard?.Stop(); childStoryboard = null;
+                children.Visibility = Visibility.Visible;
+                AnimateArrow(true);
+                if (loaded) { childStoryboard = AnimateChildren(true); return; }
+                if (loading) { children.Opacity = 1; offset.Y = 0; return; }
+                await LoadChildrenAsync();
+            };
+            destination.Children.Add(wrapper);
+        }
+    }
+
+    private async Task<IReadOnlyList<ResourceTreeEntry>> LoadResourceChildrenAsync(
+        ResourceTreeEntry parent, string contextKind, long contextId)
+    {
+        var session = _session ?? throw new InvalidOperationException("Sign in to view resources.");
+        var collectionId = parent.Kind == "collection" ? parent.Id : parent.CollectionId;
+        if (collectionId <= 0) collectionId = JsonLong(parent.Data, "collection_id", "collectionID", "collectionId");
+        var folderId = parent.Kind == "collection"
+            ? JsonLong(parent.Data, "folder_id", "folderId", "collection_folder_id", "collectionFolderId")
+            : parent.Id;
+        using var document = collectionId > 0
+            ? await _api.GetCollectionResourcesAsync(session, collectionId, folderId)
+            : contextKind == "Groups" && contextId > 0
+                ? await _api.GetGroupResourcesAsync(session, contextId, folderId)
+                : throw new InvalidOperationException("Schoology did not provide a resource collection for this folder.");
+        var records = SchoologyApiClient.ReadRecords(document.RootElement, "resource", "resources", "resource_list", "items");
+        return records.Select(record =>
+        {
+            var type = (ProfileValue(record.Data, "type", "resource_type", "document_type",
+                "documentType", "template_type", "templateType") ?? "").ToLowerInvariant();
+            var isFolder = type.Contains("folder", StringComparison.Ordinal) || IsFolderRecord(record.Data);
+            var id = JsonLong(record.Data, "id", "resource_id", "resourceId", "folder_id", "folderId");
+            var title = ProfileValue(record.Data, "resource_title", "resourceTitle", "title", "name",
+                "filename", "file_name") ?? record.Title;
+            var childCollectionId = JsonLong(record.Data, "collection_id", "collectionID", "collectionId");
+            if (childCollectionId <= 0) childCollectionId = collectionId;
+            return new ResourceTreeEntry(title, isFolder ? "folder" : "resource", id, childCollectionId, record.Data.Clone());
+        }).ToArray();
+    }
+
+    private Grid BuildResourcesPage()
+    {
+        var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.Children.Add(Text("Resources", 24, true));
+        var host = new Grid();
+        Grid.SetRow(host, 1);
+        root.Children.Add(host);
         async Task LoadRootAsync()
         {
+            host.Children.Clear();
+            host.Children.Add(LoadingStatus("Loading resources…"));
             try
             {
                 var session = _session ?? throw new InvalidOperationException("Sign in to view resources.");
-                list.Items.Clear();
-                list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading resources…") });
                 using var collectionsDocument = await _api.GetResourceCollectionsAsync(session);
                 var apps = new List<SchoologyApiRecord>();
                 try
@@ -3728,55 +3793,44 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 var mine = new List<ResourceTreeEntry>();
                 var shared = new List<ResourceTreeEntry>();
                 var groups = new List<ResourceTreeEntry>();
-                foreach (var item in all)
+                foreach (var collection in all)
                 {
-                    var owner = JsonLong(item.Data, "collection_owner_id", "collectionOwnerId", "uid", "owner_id");
-                    var realm = (ProfileValue(item.Data, "collection_realm", "collectionRealm", "realm") ?? "").ToLowerInvariant();
-                    var sharedCount = JsonLong(item.Data, "shared_users_count", "sharedUsersCount", "shared_users");
-                    var name = ProfileValue(item.Data, "collection_title", "title", "name") ?? item.Title;
-                    var id = JsonLong(item.Data, "collection_id", "collectionID", "id");
-                    var entry = new ResourceTreeEntry(name, "collection", id, 0, item.Data.Clone());
+                    var owner = JsonLong(collection.Data, "collection_owner_id", "collectionOwnerId", "uid", "owner_id");
+                    var realm = (ProfileValue(collection.Data, "collection_realm", "collectionRealm", "realm") ?? "").ToLowerInvariant();
+                    var sharedCount = JsonLong(collection.Data, "shared_users_count", "sharedUsersCount", "shared_users");
+                    var title = ProfileValue(collection.Data, "collection_title", "title", "name") ?? collection.Title;
+                    var id = JsonLong(collection.Data, "collection_id", "collectionID", "id");
+                    var entry = new ResourceTreeEntry(title, "collection", id, id, collection.Data.Clone());
                     if (string.IsNullOrWhiteSpace(realm) && owner == session.UserId) mine.Add(entry);
                     else if (sharedCount > 0) shared.Add(entry);
                     else if (realm == "group") groups.Add(entry);
                 }
-                list.Items.Clear();
-                AddCategory("My Resources", mine);
-                AddCategory("Shared", shared);
-                AddCategory("Groups", groups);
-                var appEntries = apps.Select(item => new ResourceTreeEntry(
-                    ProfileValue(item.Data, "collection_title", "app_title", "appTitle", "title", "name") ?? item.Title,
-                    "app", JsonLong(item.Data, "collection_id", "collectionID", "id", "app_id", "appId"),
-                    0, item.Data.Clone())).ToArray();
-                AddCategory("Resource Apps", appEntries);
-                if (mine.Count + shared.Count + groups.Count + appEntries.Length == 0)
-                    list.Items.Add(new ListViewItem { Content = EmptyState("No resources") });
+                var appEntries = apps.Select(app => new ResourceTreeEntry(
+                    ProfileValue(app.Data, "collection_title", "app_title", "appTitle", "title", "name") ?? app.Title,
+                    "app", JsonLong(app.Data, "collection_id", "collectionID", "id", "app_id", "appId"),
+                    0, app.Data.Clone())).ToArray();
+                var categories = new List<(string Title, IReadOnlyList<ResourceTreeEntry> Entries)>
+                {
+                    ("My Resources", mine), ("Shared", shared), ("Groups", groups), ("Resource Apps", appEntries)
+                };
+                host.Children.Clear();
+                host.Children.Add(new ScrollViewer
+                {
+                    Content = BuildResourceEntriesView(categories, "Resources", 0, () => ShowHome("Resources")),
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    Background = new SolidColorBrush(Colors.Transparent)
+                });
             }
             catch (Exception ex)
             {
-                list.Items.Clear();
+                host.Children.Clear();
                 var error = new StackPanel { Spacing = 8, Margin = new Thickness(12) };
                 error.Children.Add(EmptyState("Unable to load resources.", ex.Message));
                 error.Children.Add(Action("Retry", async (_, _) => await LoadRootAsync()));
-                list.Items.Add(new ListViewItem { Content = error });
+                host.Children.Add(error);
             }
         }
-
-        back.Click += async (_, _) =>
-        {
-            if (history.Count == 0) return;
-            back.IsEnabled = false;
-            try
-            {
-                var previous = history.Pop();
-                await LoadCollectionAsync(previous.FolderId, previous.Title);
-            }
-            finally
-            {
-                back.IsEnabled = history.Count > 0;
-                back.Visibility = Visibility.Visible;
-            }
-        };
         _ = LoadRootAsync();
         return root;
     }
@@ -3888,11 +3942,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
-    private async Task OpenResourceTreeEntryAsync(ResourceTreeEntry entry)
+    private async Task OpenResourceTreeEntryAsync(ResourceTreeEntry entry, Action? onBack = null)
     {
         try
         {
             if (_session is null) return;
+            onBack ??= () => ShowHome("Resources");
             if (entry.Kind == "app")
             {
                 if (entry.Id <= 0) throw new InvalidOperationException("This resource app is missing its ID.");
@@ -3903,36 +3958,61 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     launchUrl = ProfileValue(data, "url", "launchTokenUrl", "launch_token_url");
                 if (string.IsNullOrWhiteSpace(launchUrl))
                     throw new InvalidOperationException("Schoology did not return a resource-app launch URL.");
-                await OpenSharedWebViewAsync(launchUrl, entry.Title, allowLtiExternal: true,
-                    onBack: () => ShowHome("Resources"));
+                await OpenSharedWebViewAsync(launchUrl, entry.Title, allowLtiExternal: true, onBack: onBack);
                 return;
             }
 
+            var type = (ProfileValue(entry.Data, "type", "resource_type", "document_type",
+                "documentType", "template_type", "templateType") ?? "").ToLowerInvariant();
+            var file = FirstFileAttachment(entry.Data);
+            if (file.ValueKind == JsonValueKind.Object)
+            {
+                await ShowAttachmentOptionsAsync(file, onBack);
+                return;
+            }
             var url = ProfileValue(entry.Data, "web_url", "webUrl", "launch_url", "launchUrl",
-                "url", "link", "download_url", "downloadUrl", "file_download_url", "fileDownloadURL", "download_path", "downloadPath", "file_url", "fileUrl");
-            var type = (ProfileValue(entry.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
+                "url", "link", "download_url", "downloadUrl", "file_download_url", "fileDownloadURL",
+                "download_path", "downloadPath", "file_url", "fileUrl", "location");
+            if (string.IsNullOrWhiteSpace(url) && entry.Data.ValueKind == JsonValueKind.Object &&
+                (entry.Data.TryGetProperty("attachments", out var attachments) ||
+                 entry.Data.TryGetProperty("attachment", out attachments)) &&
+                attachments.ValueKind == JsonValueKind.Object && attachments.TryGetProperty("links", out var links))
+            {
+                var link = links.ValueKind == JsonValueKind.Object && links.TryGetProperty("link", out var nestedLink)
+                    ? nestedLink : links;
+                if (link.ValueKind == JsonValueKind.Array && link.GetArrayLength() > 0) link = link[0];
+                url = ProfileValue(link, "url", "link_url", "linkURL", "href");
+            }
+            var resourceId = JsonLong(entry.Data, "id", "resource_id", "resourceId", "template_id", "templateID");
+            if (string.IsNullOrWhiteSpace(url) && (type is "assignment" or "assignment_v2") && resourceId > 0)
+                url = $"https://app.schoology.com/assignment/{resourceId}";
             if (string.IsNullOrWhiteSpace(url))
             {
                 var details = new StackPanel { Spacing = 8 };
                 details.Children.Add(Text(entry.Title, 18, true));
                 var description = ProfileValue(entry.Data, "description", "body", "text");
                 if (!string.IsNullOrWhiteSpace(description)) details.Children.Add(Text(StripMarkup(description), 13));
-                details.Children.Add(Text("Schoology did not provide a web link for this resource.", 12));
+                details.Children.Add(Text("Schoology did not provide a destination for this resource.", 12));
                 await new ContentDialog { Title = "Resource details", Content = details,
-                    CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
+                    CloseButtonText = "Close", XamlRoot = _root.XamlRoot,
+                    RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
                 return;
             }
             if (!Uri.TryCreate(url, UriKind.Absolute, out var target))
                 target = new Uri("https://app.schoology.com/" + url.TrimStart('/'));
+            if (target.Scheme is not ("https" or "http"))
+                throw new InvalidOperationException("Schoology returned an unsupported resource URL.");
+            if (type is "file" or "document" || url.Contains("download", StringComparison.OrdinalIgnoreCase))
+                if (await TryOpenDocumentAttachmentAsync(target.AbsoluteUri, onBack)) return;
+
             var embeddedExternal = type.Contains("lti") || type.Contains("external_tool") ||
                 type.Contains("assessment") || type.Contains("quiz") || type.Contains("test") ||
-                        type.Contains("embed") || type.Contains("scorm");
-            await OpenSharedWebViewAsync(target.AbsoluteUri, entry.Title, embeddedExternal,
-                () => ShowHome("Resources"));
+                type.Contains("embed") || type.Contains("scorm");
+            if (type is "link" or "video") await OpenExternalLinkAsync(target.AbsoluteUri);
+            else await OpenSharedWebViewAsync(target.AbsoluteUri, entry.Title, embeddedExternal, onBack);
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to open resource", ex.Message); }
     }
-
 
     private void StartAutomaticUpdateChecks()
     {
@@ -5148,7 +5228,7 @@ try {{
         heading.Children.Add(Text(tab, 17, true));
         Grid.SetRow(heading, 0); layout.Children.Add(heading);
         var body = new StackPanel { Spacing = 14 };
-        FrameworkElement bodyContent = tab is "Materials" or "Assignments" or "Members" or "Discussions" or "Grades" or "Resources"
+        FrameworkElement bodyContent = tab is "Materials" or "Assignments" or "Members" or "Discussions" or "Grades"
             ? body
             : new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
@@ -5659,9 +5739,11 @@ try {{
             if (session is null || entityId <= 0) throw new InvalidOperationException("Select a Schoology item after signing in.");
             using var document = tab == "Materials" && kind == "Courses"
                 ? await _api.GetCourseFolderAsync(session, entityId, 0)
-                : tab == "Grades"
-                    ? await _api.GetUserGradesAsync(session)
-                    : await _api.GetEntityTabAsync(session, kind, entityId, tab);
+                : tab == "Resources" && kind == "Groups"
+                    ? await _api.GetGroupResourcesAsync(session, entityId)
+                    : tab == "Grades"
+                        ? await _api.GetUserGradesAsync(session)
+                        : await _api.GetEntityTabAsync(session, kind, entityId, tab);
             if (kind == "School Profile" && tab == "Info")
             {
                 RemoveLoadingStatus(status);
@@ -5680,6 +5762,26 @@ try {{
                 tab == "Members" ? ["enrollment", "enrollments", "member", "members", "user", "users"] :
                 tab == "Materials" ? ["folder-item", "folder_item", "folderItems", "items"] : []);
             RemoveLoadingStatus(status);
+            if (tab == "Resources" && kind == "Groups")
+            {
+                var entries = records.Select(record =>
+                {
+                    var type = (ProfileValue(record.Data, "type", "resource_type", "document_type",
+                        "documentType", "template_type", "templateType") ?? "").ToLowerInvariant();
+                    var isFolder = type.Contains("folder", StringComparison.Ordinal) || IsFolderRecord(record.Data);
+                    var id = JsonLong(record.Data, "id", "resource_id", "resourceId", "folder_id", "folderId");
+                    var collectionId = JsonLong(record.Data, "collection_id", "collectionID", "collectionId");
+                    var title = ProfileValue(record.Data, "resource_title", "resourceTitle", "title", "name",
+                        "filename", "file_name") ?? record.Title;
+                    return new ResourceTreeEntry(title, isFolder ? "folder" : "resource", id, collectionId, record.Data.Clone());
+                }).ToArray();
+                if (entries.Length == 0) body.Children.Add(EmptyState("No resources."));
+                else body.Children.Add(BuildResourceEntriesView(
+                    new[] { ("Resources", (IReadOnlyList<ResourceTreeEntry>)entries) },
+                    "Groups", entityId,
+                    () => ShowThreePane("Groups", _groups.FirstOrDefault(group => group.Id == entityId))));
+                return;
+            }
             if (tab == "Members") { body.Children.Add(BuildMembersList(records, kind)); return; }
             if (tab == "Materials") { body.Children.Add(BuildMaterialsList(entityId, records)); return; }
             if (tab == "Assignments")

@@ -248,6 +248,17 @@ internal sealed class SchoologyApiClient
         if (folderId > 0) query["f"] = folderId.ToString(CultureInfo.InvariantCulture);
         return _auth.GetApiJsonAsync(session, $"collections/{collectionId}/resources", query, ct);
     }
+
+    internal Task<JsonDocument> GetGroupResourcesAsync(
+        SchoologyAuthService.Session session, long groupId, long folderId = 0, CancellationToken ct = default)
+    {
+        var query = new Dictionary<string, string>
+        {
+            ["start"] = "0", ["limit"] = "200", ["with_attachments"] = "TRUE"
+        };
+        if (folderId > 0) query["f"] = folderId.ToString(CultureInfo.InvariantCulture);
+        return _auth.GetApiJsonAsync(session, $"groups/{groupId}/resources", query, ct);
+    }
     internal Task<JsonDocument> LaunchResourceAppAsync(SchoologyAuthService.Session session, long appId, CancellationToken ct = default) =>
         _auth.GetApiJsonAtVersionAsync(session, "v2", $"resources/applications/{appId}/launch", null, ct);
 
