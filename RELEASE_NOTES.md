@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.78] - 2026-11-04
+
+- Fix WinUI x64 and ARM64 publishing by explicitly aliasing the Windows text-formatting types used by the native rich-text renderer.
+
 ## [2026.10.0-port.77] - 2026-11-04
 
 - Preserve clickable inline links and nested rich-text formatting in posts, comments, messages, and assignment information.
