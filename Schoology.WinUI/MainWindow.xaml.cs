@@ -6431,7 +6431,7 @@ try {{
                         {
                             Spacing = 2,
                             Visibility = Visibility.Visible,
-                            Opacity = 0,
+                            Opacity = 1,
                             RenderTransform = childOffset
                         };
                         wrapper.Children.Add(children);
@@ -6440,8 +6440,21 @@ try {{
                     childrenStoryboard = null;
                     children.Visibility = Visibility.Visible;
                     if (arrow is not null) AnimateFolderArrow(arrow, true);
-                    childrenStoryboard = AnimateFolderChildren(children, childOffset, true);
-                    if (loaded || loading) return;
+
+                    // Loaded folders animate immediately. During the first request,
+                    // keep the loading indicator stable and animate the real contents
+                    // only after they have been inserted.
+                    if (loaded)
+                    {
+                        childrenStoryboard = AnimateFolderChildren(children, childOffset, true);
+                        return;
+                    }
+                    if (loading)
+                    {
+                        children.Opacity = 1;
+                        childOffset.Y = 0;
+                        return;
+                    }
 
                     var folderId = JsonLong(record.Data, "id", "folder_id", "folderId");
                     if (folderId <= 0 || _session is null)
@@ -6453,6 +6466,8 @@ try {{
                     }
 
                     loading = true;
+                    children.Opacity = 1;
+                    childOffset.Y = 0;
                     var loadingStatus = new TextBlock
                     {
                         Text = "Loading folder…",
@@ -6492,7 +6507,24 @@ try {{
                             TextWrapping = TextWrapping.Wrap
                         });
                     }
-                    finally { loading = false; }
+                    finally
+                    {
+                        loading = false;
+                        if (expanded)
+                        {
+                            children.Opacity = 0;
+                            childOffset.Y = -6;
+                            children.Visibility = Visibility.Visible;
+                            childrenStoryboard?.Stop();
+                            childrenStoryboard = AnimateFolderChildren(children, childOffset, true);
+                        }
+                        else
+                        {
+                            children.Visibility = Visibility.Collapsed;
+                            children.Opacity = 0;
+                            childOffset.Y = -6;
+                        }
+                    }
                 };
                 destination.Children.Add(wrapper);
             }
