@@ -1,5 +1,12 @@
 # Release notes
 
+## [2026.10.0-port.77] - 2026-11-04
+
+- Preserve clickable inline links and nested rich-text formatting in posts, comments, messages, and assignment information.
+- Support Schoology HTML font-family and font-size metadata, CSS font styling, headings, lists, and encoded rich-text fragments in the native WinUI renderer.
+- Request rich-text message bodies from Schoology for inbox, sent, and message-thread views.
+
+
 ## [2026.10.0-port.76] - 2026-11-03
 
 - Apply the app's active Light or Dark theme to all native ContentDialogs so dialogs match the rest of Schoology instead of following the Windows system theme.

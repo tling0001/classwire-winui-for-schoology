@@ -59,7 +59,7 @@ internal sealed class SchoologyApiClient
     internal Task<JsonDocument> GetMessagesAsync(
         SchoologyAuthService.Session session, bool sent, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, sent ? "messages/sent" : "messages/inbox",
-            new Dictionary<string, string> { ["limit"] = "50" }, cancellationToken);
+            new Dictionary<string, string> { ["limit"] = "50", ["richtext"] = "1" }, cancellationToken);
 
     internal Task<JsonDocument> GetMessageRecipientsAsync(
         SchoologyAuthService.Session session, string query, CancellationToken cancellationToken = default) =>
@@ -113,7 +113,7 @@ internal sealed class SchoologyApiClient
         SchoologyAuthService.Session session, long messageId, bool sent,
         CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, $"messages/{(sent ? "sent" : "inbox")}/{messageId}",
-            new Dictionary<string, string> { ["with_attachments"] = "TRUE" }, cancellationToken);
+            new Dictionary<string, string> { ["with_attachments"] = "TRUE", ["richtext"] = "1" }, cancellationToken);
 
     internal async Task<JsonDocument> GetEntityTabAsync(
         SchoologyAuthService.Session session, string kind, long entityId, string tab,

@@ -4,18 +4,30 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
+using Microsoft.UI.Xaml.Media;
 
 namespace Schoology.WinUI;
 
 /// <summary>
-/// Converts Schoology rich-text fragments into selectable native WinUI text.
-/// Only common text-formatting tags and safe HTTP(S) links are interpreted.
+/// Converts Schoology HTML fragments into selectable native WinUI rich text.
+/// Keeps inline HTTP(S) links clickable and preserves nested formatting and font
+/// family/size metadata without allowing active or embedded content.
 /// </summary>
 internal static class SchoologyRichContent
 {
-    private static readonly Regex Tokens = new(@"(<[^>]*>|[^<]+)", RegexOptions.Compiled);
-    private static readonly Regex Tag = new(@"^<\s*(/?)\s*([a-zA-Z0-9]+)([^>]*)>$", RegexOptions.Compiled);
-    private static readonly Regex Href = new(@"\bhref\s*=\s*(['""])(.*?)\1", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex Tokens = new(@"<!--[\s\S]*?-->|<![^>]*>|<[^>]*>|[^<]+|<",
+        RegexOptions.Compiled);
+    private static readonly Regex Tag = new(@"^<\s*(/?)\s*([a-zA-Z][a-zA-Z0-9:-]*)\b([^>]*)>$",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex Attribute = new(
+        @"(?<name>[a-zA-Z_:][\w:.-]*)\s*=\s*(?:""(?<double>[^""]*)""|'(?<single>[^']*)'|(?<bare>[^\s>]+))",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Uri SchoologyBaseUri = new("https://app.schoology.com/");
+
+    private readonly record struct InlineStyle(
+        string? FontFamily, double FontSize, FontWeight FontWeight, FontStyle FontStyle, bool Underline);
+
+    private readonly record struct StyleFrame(string Tag, InlineStyle PreviousStyle, Uri? PreviousLink);
 
     internal static RichTextBlock Create(string? markup, double fontSize, Func<Uri, Task>? openLink = null)
     {
@@ -27,18 +39,36 @@ internal static class SchoologyRichContent
         };
         if (string.IsNullOrWhiteSpace(markup)) return block;
 
+        // Some Schoology responses return the entire rich-text fragment HTML-encoded.
+        var markupWasEncoded = !markup.Contains('<') && markup.Contains("&lt;", StringComparison.OrdinalIgnoreCase);
+        if (markupWasEncoded) markup = WebUtility.HtmlDecode(markup);
+
         var paragraph = new Paragraph { Margin = new Thickness(0) };
         block.Blocks.Add(paragraph);
-        var bold = false;
-        var italic = false;
-        var underline = false;
-        var skipping = false;
+        var style = new InlineStyle(null, fontSize, FontWeights.Normal, FontStyle.Normal, false);
+        var frames = new Stack<StyleFrame>();
+        Uri? activeUri = null;
         Hyperlink? activeLink = null;
+        string? skippedTag = null;
+        var skippedDepth = 0;
 
-        void NewParagraph()
+        void EnsureLink()
+        {
+            if (activeUri is null || activeLink is not null) return;
+            var uri = activeUri;
+            activeLink = new Hyperlink();
+            if (openLink is not null)
+                activeLink.Click += async (_, _) => await openLink(uri);
+            paragraph.Inlines.Add(activeLink);
+        }
+
+        void NewParagraph(double leftIndent = 0)
         {
             if (paragraph.Inlines.Count == 0) return;
-            paragraph = new Paragraph { Margin = new Thickness(0, 2, 0, 2) };
+            paragraph = new Paragraph
+            {
+                Margin = new Thickness(leftIndent, 2, 0, 2)
+            };
             block.Blocks.Add(paragraph);
             activeLink = null;
         }
@@ -46,34 +76,203 @@ internal static class SchoologyRichContent
         void AddRun(string value)
         {
             if (value.Length == 0) return;
-            Inline inline = new Run
+            var run = new Run
             {
-                Text = WebUtility.HtmlDecode(value),
-                FontSize = fontSize,
-                FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal
+                Text = markupWasEncoded ? value : WebUtility.HtmlDecode(value),
+                FontSize = style.FontSize,
+                FontWeight = style.FontWeight,
+                FontStyle = style.FontStyle
             };
-            if (italic)
+            if (!string.IsNullOrWhiteSpace(style.FontFamily))
+                run.FontFamily = new FontFamily(style.FontFamily);
+
+            Inline inline = run;
+            if (style.Underline)
             {
-                var italicSpan = new Italic();
-                italicSpan.Inlines.Add(inline);
-                inline = italicSpan;
+                var underline = new Underline();
+                underline.Inlines.Add(inline);
+                inline = underline;
             }
-            if (underline)
+
+            if (activeUri is not null)
             {
-                var underlineSpan = new Underline();
-                underlineSpan.Inlines.Add(inline);
-                inline = underlineSpan;
+                EnsureLink();
+                activeLink!.Inlines.Add(inline);
             }
-            if (activeLink is not null) activeLink.Inlines.Add(inline);
             else paragraph.Inlines.Add(inline);
+        }
+
+        static bool IsVoidTag(string name) =>
+            name is "br" or "img" or "hr" or "meta" or "link" or "input" or "source" or "wbr";
+
+        string? AttributeValue(string attributes, string name)
+        {
+            foreach (Match match in Attribute.Matches(attributes))
+            {
+                if (!match.Groups["name"].Value.Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
+                var value = match.Groups["double"].Success ? match.Groups["double"].Value :
+                    match.Groups["single"].Success ? match.Groups["single"].Value :
+                    match.Groups["bare"].Value;
+                return markupWasEncoded ? value : WebUtility.HtmlDecode(value);
+            }
+            return null;
+        }
+
+        static string? NormalizeFontFamily(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var family = value.Split(',')[0].Trim().Trim('"', '\'');
+            if (family.Length == 0 || family.Length > 80 ||
+                family.Any(character => char.IsControl(character) || character is '<' or '>' or ';' or '{' or '}'))
+                return null;
+            return family.ToLowerInvariant() switch
+            {
+                "sans-serif" or "system-ui" => "Segoe UI",
+                "serif" => "Georgia",
+                "monospace" => "Consolas",
+                _ => family
+            };
+        }
+
+        static double ParseFontSize(string? value, double current)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return current;
+            var text = value.Trim().ToLowerInvariant();
+            if (double.TryParse(text.TrimEnd('p', 'x', 't', 'e', 'm', '%'),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var number))
+            {
+                if (text.EndsWith("pt", StringComparison.Ordinal)) number *= 96d / 72d;
+                else if (text.EndsWith("em", StringComparison.Ordinal)) number *= current;
+                else if (text.EndsWith('%')) number = current * number / 100d;
+                else if (text.EndsWith("px", StringComparison.Ordinal)) number *= 0.75d;
+                return Math.Clamp(number, 8d, 48d);
+            }
+            return current;
+        }
+
+        static InlineStyle ApplyCss(InlineStyle current, string? css)
+        {
+            if (string.IsNullOrWhiteSpace(css)) return current;
+            foreach (var declaration in css.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var separator = declaration.IndexOf(':');
+                if (separator <= 0) continue;
+                var property = declaration[..separator].Trim().ToLowerInvariant();
+                var value = declaration[(separator + 1)..].Trim();
+                current = property switch
+                {
+                    "font-family" => current with { FontFamily = NormalizeFontFamily(value) ?? current.FontFamily },
+                    "font-size" => current with { FontSize = ParseFontSize(value, current.FontSize) },
+                    "font-weight" => current with
+                    {
+                        FontWeight = value.Equals("bold", StringComparison.OrdinalIgnoreCase) ||
+                            value.Equals("bolder", StringComparison.OrdinalIgnoreCase) ||
+                            (int.TryParse(value, out var weight) && weight >= 600)
+                                ? FontWeights.Bold : FontWeights.Normal
+                    },
+                    "font-style" => current with
+                    {
+                        FontStyle = value.Equals("italic", StringComparison.OrdinalIgnoreCase) ||
+                            value.Equals("oblique", StringComparison.OrdinalIgnoreCase)
+                                ? FontStyle.Italic : FontStyle.Normal
+                    },
+                    "text-decoration" or "text-decoration-line" => current with
+                    {
+                        Underline = value.Contains("underline", StringComparison.OrdinalIgnoreCase)
+                    },
+                    _ => current
+                };
+            }
+            return current;
+        }
+
+        InlineStyle ApplyTag(string name, string attributes, InlineStyle current)
+        {
+            switch (name)
+            {
+                case "b":
+                case "strong":
+                    return current with { FontWeight = FontWeights.Bold };
+                case "i":
+                case "em":
+                case "cite":
+                    return current with { FontStyle = FontStyle.Italic };
+                case "u":
+                    return current with { Underline = true };
+                case "small":
+                    return current with { FontSize = Math.Clamp(current.FontSize * 0.85d, 8d, 48d) };
+                case "big":
+                    return current with { FontSize = Math.Clamp(current.FontSize * 1.15d, 8d, 48d) };
+                case "code":
+                case "pre":
+                case "tt":
+                    return current with { FontFamily = "Consolas" };
+                case "h1":
+                    return current with { FontWeight = FontWeights.Bold, FontSize = Math.Clamp(current.FontSize * 1.6d, 8d, 48d) };
+                case "h2":
+                    return current with { FontWeight = FontWeights.Bold, FontSize = Math.Clamp(current.FontSize * 1.4d, 8d, 48d) };
+                case "h3":
+                    return current with { FontWeight = FontWeights.Bold, FontSize = Math.Clamp(current.FontSize * 1.25d, 8d, 48d) };
+                case "h4":
+                case "h5":
+                case "h6":
+                    return current with { FontWeight = FontWeights.SemiBold };
+                case "font":
+                    var face = NormalizeFontFamily(AttributeValue(attributes, "face"));
+                    var size = AttributeValue(attributes, "size");
+                    if (int.TryParse(size, out var htmlSize))
+                    {
+                        var scale = htmlSize switch
+                        {
+                            <= 1 => 0.75d, 2 => 0.875d, 3 => 1d, 4 => 1.125d,
+                            5 => 1.25d, 6 => 1.5d, _ => 1.75d
+                        };
+                        return current with
+                        {
+                            FontFamily = face ?? current.FontFamily,
+                            FontSize = Math.Clamp(current.FontSize * scale, 8d, 48d)
+                        };
+                    }
+                    return current with { FontFamily = face ?? current.FontFamily };
+                case "span":
+                    return ApplyCss(current, AttributeValue(attributes, "style"));
+                default:
+                    return current;
+            }
+        }
+
+        static bool IsBlockTag(string name) =>
+            name is "p" or "div" or "section" or "article" or "blockquote" or "ul" or "ol" or
+                "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "pre";
+
+        static bool IsFormattingTag(string name) =>
+            name is "b" or "strong" or "i" or "em" or "cite" or "u" or "small" or "big" or
+                "code" or "pre" or "tt" or "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or
+                "font" or "span";
+
+        void RestoreTag(string name)
+        {
+            if (!frames.Any(frame => frame.Tag == name)) return;
+            while (frames.Count > 0)
+            {
+                var frame = frames.Pop();
+                style = frame.PreviousStyle;
+                activeUri = frame.PreviousLink;
+                if (frame.Tag == name) break;
+            }
+            activeLink = null;
+            if (activeUri is not null) EnsureLink();
         }
 
         foreach (Match match in Tokens.Matches(markup))
         {
             var token = match.Value;
+            if (token.StartsWith("<!--", StringComparison.Ordinal) || token.StartsWith("<!", StringComparison.Ordinal))
+                continue;
             if (!token.StartsWith('<'))
             {
-                if (!skipping) AddRun(token);
+                if (skippedDepth == 0) AddRun(token);
                 continue;
             }
 
@@ -82,17 +281,40 @@ internal static class SchoologyRichContent
             var closing = parsed.Groups[1].Value == "/";
             var name = parsed.Groups[2].Value.ToLowerInvariant();
             var attributes = parsed.Groups[3].Value;
+            var selfClosing = attributes.TrimEnd().EndsWith("/", StringComparison.Ordinal) || IsVoidTag(name);
 
-            if (name is "script" or "style" or "iframe" or "object" or "svg")
+            if (skippedDepth > 0)
             {
-                skipping = !closing;
+                if (name == skippedTag && !selfClosing)
+                {
+                    skippedDepth += closing ? -1 : 1;
+                    if (skippedDepth == 0) skippedTag = null;
+                }
                 continue;
             }
-            if (skipping) continue;
-            if (name is "p" or "div" or "blockquote" or "ul" or "ol")
+            if (name is "script" or "style" or "iframe" or "object" or "svg" or "video" or "audio")
             {
-                if (closing) NewParagraph();
-                else if (paragraph.Inlines.Count > 0) NewParagraph();
+                if (!closing && !selfClosing) { skippedTag = name; skippedDepth = 1; }
+                continue;
+            }
+
+            if (closing)
+            {
+                if (IsFormattingTag(name) || name == "a" || IsBlockTag(name)) RestoreTag(name);
+                if (name is "p" or "div" or "section" or "article" or "blockquote" or
+                    "ul" or "ol" or "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "pre")
+                    NewParagraph(name == "blockquote" ? 12 : 0);
+                else if (name == "li") NewParagraph();
+                continue;
+            }
+
+            if (IsBlockTag(name))
+            {
+                NewParagraph(name == "blockquote" ? 12 : 0);
+                frames.Push(new StyleFrame(name, style, activeUri));
+                style = IsFormattingTag(name)
+                    ? ApplyTag(name, attributes, style)
+                    : ApplyCss(style, AttributeValue(attributes, "style"));
                 continue;
             }
             if (name == "br")
@@ -102,30 +324,37 @@ internal static class SchoologyRichContent
             }
             if (name == "li")
             {
-                if (closing) NewParagraph();
-                else
+                NewParagraph();
+                AddRun("• ");
+                continue;
+            }
+            if (name == "a")
+            {
+                var href = AttributeValue(attributes, "href");
+                if (string.IsNullOrWhiteSpace(href)) continue;
+                if (Uri.TryCreate(href, UriKind.Absolute, out var absolute))
                 {
-                    if (paragraph.Inlines.Count > 0) NewParagraph();
-                    AddRun("• ");
+                    if (absolute.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(absolute.UserInfo))
+                        continue;
+                    frames.Push(new StyleFrame(name, style, activeUri));
+                    activeUri = absolute;
+                    activeLink = null;
+                    EnsureLink();
+                }
+                else if (Uri.TryCreate(SchoologyBaseUri, href, out var relative) &&
+                    (relative.Scheme is "http" or "https") && string.IsNullOrEmpty(relative.UserInfo))
+                {
+                    frames.Push(new StyleFrame(name, style, activeUri));
+                    activeUri = relative;
+                    activeLink = null;
+                    EnsureLink();
                 }
                 continue;
             }
-            if (name is "strong" or "b") { bold = !closing; continue; }
-            if (name is "em" or "i") { italic = !closing; continue; }
-            if (name == "u") { underline = !closing; continue; }
-            if (name == "a")
+            if (IsFormattingTag(name))
             {
-                if (closing) { activeLink = null; continue; }
-                var hrefMatch = Href.Match(attributes);
-                if (!hrefMatch.Success) continue;
-                var href = WebUtility.HtmlDecode(hrefMatch.Groups[2].Value);
-                if (!Uri.TryCreate(href, UriKind.Absolute, out var uri) &&
-                    !Uri.TryCreate(new Uri("https://app.schoology.com/"), href, out uri)) continue;
-                if (uri is null || uri.Scheme is not ("http" or "https")) continue;
-                activeLink = new Hyperlink();
-                if (openLink is not null)
-                    activeLink.Click += async (_, _) => await openLink(uri);
-                paragraph.Inlines.Add(activeLink);
+                frames.Push(new StyleFrame(name, style, activeUri));
+                style = ApplyTag(name, attributes, style);
             }
         }
 

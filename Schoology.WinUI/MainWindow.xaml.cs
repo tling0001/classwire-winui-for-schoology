@@ -5204,7 +5204,7 @@ try {{
                 assignment = nested;
 
             var title = ProfileValue(assignment, "title", "assignment_title") ?? record.Title;
-            var description = ProfileValue(assignment, "description", "body", "description_richtext", "descriptionRichtext");
+            var description = ProfileValue(assignment, "description_richtext", "descriptionRichtext", "description", "body");
             var due = ProfileValue(assignment, "due", "due_date", "dueDate");
             var points = ProfileValue(assignment, "max_points", "maxPoints", "points");
             var gradeItem = assignment;
@@ -6889,7 +6889,7 @@ try {{
         header.Children.Add(authorText);
         content.Children.Add(header);
 
-        var body = ProfileValue(data, "comment", "body", "text", "message") ?? comment.Subtitle;
+        var body = ProfileValue(data, "comment_richtext", "commentRichtext", "richtext_comment", "richtextComment", "comment", "body", "text", "message") ?? comment.Subtitle;
         if (!string.IsNullOrWhiteSpace(body))
             content.Children.Add(CreateRichContent(body, 12));
 
@@ -7468,8 +7468,8 @@ try {{
         card.Children.Add(heading);
         var title = ProfileValue(update.Data, "title", "subject");
         if (!string.IsNullOrWhiteSpace(title)) card.Children.Add(Text(title, 16, true));
-        var postBody = ProfileValue(update.Data, "body", "message", "description", "update_body", "updateBody",
-            "richtext_body", "richtextBody", "text") ?? update.Subtitle;
+        var postBody = ProfileValue(update.Data, "richtext_body", "richtextBody", "body_richtext", "bodyRichtext",
+            "body", "message", "description", "update_body", "updateBody", "text") ?? update.Subtitle;
         if (!string.IsNullOrWhiteSpace(postBody))
         {
             card.Children.Add(CreateRichContent(postBody, 14));
@@ -8543,7 +8543,8 @@ try {{
                         Grid.SetColumn(timeText, 2); messageHeader.Children.Add(timeText);
                     }
                     messageCard.Children.Add(messageHeader);
-                    var messageBodyText = ProfileValue(message, "message", "body", "text", "message_body", "content");
+                    var messageBodyText = ProfileValue(message, "message_richtext", "messageRichtext", "richtext_message", "richtextMessage",
+                        "message", "body", "text", "message_body", "content");
                     if (!string.IsNullOrWhiteSpace(messageBodyText))
                         messageCard.Children.Add(CreateRichContent(messageBodyText, 14));
                     else messageCard.Children.Add(Text("No message text was returned.", 12));
