@@ -10271,23 +10271,39 @@ try {{
 
     private Grid BuildGradesPage(long? onlyCourseId = null)
     {
-        var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.Children.Add(Text("Grades", 24, true));
-        var list = new ListView
+        var root = new Grid
         {
-            SelectionMode = ListViewSelectionMode.None,
-            IsItemClickEnabled = false,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Margin = new Thickness(24),
+            RowSpacing = 10,
+            MinHeight = 0,
             VerticalAlignment = VerticalAlignment.Stretch,
-            Padding = new Thickness(0)
+            HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        ScrollViewer.SetVerticalScrollBarVisibility(list, ScrollBarVisibility.Auto);
-        ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
-        AutomationProperties.SetAutomationId(list, "SchoologyGradesList");
-        Grid.SetRow(list, 1);
-        root.Children.Add(list);
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star), MinHeight = 0 });
+        root.Children.Add(Text("Grades", 24, true));
+
+        // Keep the scroll viewport in a star-sized row so it receives the finite
+        // height offered by the shell Frame. The expanded grade hierarchy is the
+        // ScrollViewer content (not a ListView inside another scrolling surface),
+        // allowing the viewport to grow with the window while scrolling its full
+        // expanded course content when it exceeds the available height.
+        var courseList = new StackPanel { Spacing = 6 };
+        var viewport = new ScrollViewer
+        {
+            Content = courseList,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollMode = ScrollMode.Enabled,
+            ZoomMode = ZoomMode.Disabled,
+            IsTabStop = true,
+            MinHeight = 0,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Background = new SolidColorBrush(Colors.Transparent)
+        };
+        AutomationProperties.SetAutomationId(viewport, "SchoologyGradesList");
+        Grid.SetRow(viewport, 1);
+        root.Children.Add(viewport);
 
         foreach (var course in _courses.Where(course => onlyCourseId is null || course.Id == onlyCourseId.Value))
         {
@@ -10452,13 +10468,9 @@ try {{
                 }
                 finally { loading = false; }
             };
-            list.Items.Add(new ListViewItem
-            {
-                Content = courseWrapper, Padding = new Thickness(0),
-                HorizontalContentAlignment = HorizontalAlignment.Stretch
-            });
+            courseList.Children.Add(courseWrapper);
         }
-        if (_courses.Count == 0) list.Items.Add(new ListViewItem { Content = EmptyState("No grades") });
+        if (_courses.Count == 0) courseList.Children.Add(EmptyState("No grades"));
         return root;
     }
 

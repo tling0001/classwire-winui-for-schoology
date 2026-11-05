@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.93] - 2026-11-05
+
+- Give the standalone Grades page a height-constrained, auto-resizing scroll viewport. Expanded course, grading-period, category, and assignment rows now scroll together within the available shell space instead of allowing the content stack to grow beyond the window.
+
 ## [2026.10.0-port.92] - 2026-11-05
 
 - Fix the Windows x64 and ARM64 GitHub Actions publish failure by initializing course/group/school profile tab caches before registering event handlers that capture them. This resolves CS0165 definite-assignment errors without changing the navigation-cache behavior.
