@@ -7986,8 +7986,10 @@ try {{
                 Padding = new Thickness(8, 6, 8, 6)
             };
             var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            content.Children.Add(new SymbolIcon(Symbol.OpenInNewWindow)
+            content.Children.Add(new FontIcon
             {
+                Glyph = "\uE8A7",
+                FontSize = 16,
                 Foreground = ThemeBrush("SchoologyBlueBrush")
             });
             content.Children.Add(Text($"Open embedded content · {uri.Host}", 13, true));
@@ -9823,7 +9825,16 @@ try {{
         destination.Children.Add(wrapper);
     }
 
-    private Grid BuildGradesPage()
+    private UIElement BuildGradeDetails(JsonElement sectionData, bool expandPeriods)
+    {
+        _ = expandPeriods;
+        var sectionId = JsonLong(sectionData, "section_id", "sectionId", "id");
+        if (sectionId <= 0 || !_courses.Any(course => course.Id == sectionId))
+            return EmptyState("No grades are available for this course.");
+        return BuildGradesPage(sectionId);
+    }
+
+    private Grid BuildGradesPage(long? onlyCourseId = null)
     {
         var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -9843,7 +9854,7 @@ try {{
         Grid.SetRow(list, 1);
         root.Children.Add(list);
 
-        foreach (var course in _courses)
+        foreach (var course in _courses.Where(course => onlyCourseId is null || course.Id == onlyCourseId.Value))
         {
             var courseWrapper = new StackPanel { Spacing = 0 };
             var header = new Grid { ColumnSpacing = 12, Padding = new Thickness(12), MinHeight = 56 };

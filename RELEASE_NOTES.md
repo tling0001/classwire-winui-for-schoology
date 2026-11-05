@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.88] - 2026-11-04
+
+- Fix the missing course Grades renderer by reusing the account Grades hierarchy and API-loading implementation, filtered to the course whose Grades tab is open.
+- Replace the unsupported WinUI `Symbol.OpenInNewWindow` enum member with its native Fluent glyph for embedded-content actions.
+- Synchronize Version, AssemblyVersion, FileVersion, and InformationalVersion at port.88.
+
 ## [2026.10.0-port.87] - 2026-11-04
 
 - Fix the x64 and ARM64 publish failure by removing the obsolete duplicate assignment-resource picker; retain the multi-select picker used by staged submissions.
