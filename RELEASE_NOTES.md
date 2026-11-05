@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.81] - 2026-11-04
+
+- Keep Schoology Page HTML out of course-material row subtitles so page entries display only their names.
+- Render page bodies in an authenticated WebView2 using the original HTML, JavaScript, iframe/embed support, and the persistent Schoology browser profile, matching the Android page viewer instead of flattening content into native text.
+
 ## [2026.10.0-port.80] - 2026-11-04
 
 - Open course-material Schoology Pages in a native WinUI detail view, loading page content from the section pages endpoint and rendering rich HTML and attachments.

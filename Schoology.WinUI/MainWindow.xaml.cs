@@ -5627,32 +5627,122 @@ try {{
             Grid.SetColumn(heading, 1);
             header.Children.Add(heading);
 
-            var content = new StackPanel { Spacing = 12, Margin = new Thickness(12, 4, 12, 20) };
-            if (string.IsNullOrWhiteSpace(markup))
-                content.Children.Add(EmptyState("This page has no content."));
-            else
-                content.Children.Add(CreateRichContent(markup, 14));
-            var pageAttachments = BuildAttachmentControls(pageData,
-                () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
-            if (pageAttachments.Children.Count > 0)
+            // Android's InfoFragment renders the page body in SchoologyWebView rather
+            // than flattening it into native text. Keep the source HTML intact so
+            // iframes, embeds, scripts, styles, and media can render in WebView2 too.
+            var webView = new WebView2
             {
-                content.Children.Add(Text("Attachments", 14, true));
-                content.Children.Add(pageAttachments);
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                MinWidth = 320,
+                MinHeight = 360
+            };
+
+            await _sharedWebViewGate.WaitAsync();
+            try
+            {
+                var dataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Schoology", "WebView2");
+                Directory.CreateDirectory(dataFolder);
+                _sharedWebViewEnvironment ??= await CoreWebView2Environment.CreateWithOptionsAsync(
+                    null, dataFolder, new CoreWebView2EnvironmentOptions());
+                await webView.EnsureCoreWebView2Async(_sharedWebViewEnvironment);
+                var core = webView.CoreWebView2 ?? throw new InvalidOperationException(
+                    "The Microsoft Edge WebView2 runtime did not initialize. Repair or install the WebView2 Runtime and retry.");
+
+                core.Settings.AreDevToolsEnabled = false;
+                core.Settings.IsWebMessageEnabled = false;
+                core.Settings.IsStatusBarEnabled = false;
+                core.Settings.IsScriptEnabled = true;
+                core.Settings.AreDefaultScriptDialogsEnabled = true;
+                core.Settings.IsZoomControlEnabled = true;
+                // Android explicitly accepts third-party cookies for page WebViews;
+                // disable tracking prevention here so embedded course content can sign in.
+                core.Settings.IsTrackingPreventionEnabled = false;
+
+                if (!_sharedWebViewInitialized || _sharedWebViewSessionUserId != session.UserId)
+                {
+                    core.CookieManager.DeleteAllCookies();
+                    _sharedWebViewInitialized = false;
+                    _sharedWebViewSessionUserId = session.UserId;
+                }
+
+                // Match the authenticated browser profile used by the shared Schoology
+                // WebView so embedded Schoology resources can use the signed-in session.
+                var cookies = await _auth.GetWebSessionCookiesAsync(session);
+                foreach (var item in cookies)
+                {
+                    var cookie = core.CookieManager.CreateCookie(item.Name, item.Value, item.Domain, item.Path);
+                    cookie.IsHttpOnly = item.HttpOnly;
+                    cookie.IsSecure = item.Secure;
+                    core.CookieManager.AddOrUpdateCookie(cookie);
+                }
+                var installedCookies = await core.CookieManager.GetCookiesAsync(_auth.WebSessionUrl);
+                if (!installedCookies.Any(cookie => cookie.Name.StartsWith("SESS", StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(cookie.Value)))
+                    throw new InvalidOperationException("The page viewer did not receive a usable Schoology SESS cookie. Sign in again and retry.");
+                _sharedWebViewInitialized = true;
+                _sharedWebViewSessionUserId = session.UserId;
+                _sharedWebView = webView;
+                UpdateSharedWebViewTheme();
+
+                core.NavigationStarting += (_, args) =>
+                {
+                    if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out var destination))
+                    {
+                        args.Cancel = true;
+                        return;
+                    }
+                    // NavigateToString uses about:blank as its top-level document URL.
+                    if (destination.AbsoluteUri.Equals("about:blank", StringComparison.OrdinalIgnoreCase))
+                        return;
+                    if (destination.Scheme is not ("https" or "http"))
+                        args.Cancel = true;
+                };
+                core.NewWindowRequested += (_, args) =>
+                {
+                    args.Handled = true;
+                    if (Uri.TryCreate(args.Uri, UriKind.Absolute, out var popup) &&
+                        popup.Scheme is "https" or "http" && string.IsNullOrEmpty(popup.UserInfo))
+                        core.Navigate(popup.AbsoluteUri);
+                };
+
+                var pageMarkup = string.IsNullOrWhiteSpace(markup)
+                    ? "<p>This page has no content.</p>"
+                    : markup;
+                var html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
+                    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+                    "<base href=\"https://app.schoology.com/\"></head>" +
+                    "<body width=\"100%\">" + pageMarkup + "</body></html>";
+                core.NavigateToString(html);
+            }
+            finally
+            {
+                _sharedWebViewGate.Release();
             }
 
             var page = new Grid { RowSpacing = 8, Margin = new Thickness(12) };
             page.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             page.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             page.Children.Add(header);
-            var scroll = new ScrollViewer
+
+            var content = new Grid { RowSpacing = 12 };
+            content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            var pageAttachments = BuildAttachmentControls(pageData,
+                () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
+            if (pageAttachments.Children.Count > 0)
             {
-                Content = content,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Background = new SolidColorBrush(Colors.Transparent)
-            };
-            Grid.SetRow(scroll, 1);
-            page.Children.Add(scroll);
+                var attachmentsSection = new StackPanel { Spacing = 8 };
+                attachmentsSection.Children.Add(Text("Attachments", 14, true));
+                attachmentsSection.Children.Add(pageAttachments);
+                content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                Grid.SetRow(attachmentsSection, 1);
+                content.Children.Add(attachmentsSection);
+            }
+            content.Children.Insert(0, webView);
+            Grid.SetRow(webView, 0);
+            Grid.SetRow(content, 1);
+            page.Children.Add(content);
 
             if (_sectionFrame is not null) NavigateMainSection(page, title);
             else Reset(BuildApplicationShell(title, page));
@@ -6560,9 +6650,15 @@ try {{
 
                 var labels = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
                 labels.Children.Add(Text(title, 14, true));
-                var materialType = (ProfileValue(record.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
+                var materialType = (ProfileValue(record.Data, "type", "resource_type") ?? "").ToLowerInvariant();
+                var templateType = (ProfileValue(record.Data, "template_type", "templateType") ?? "").ToLowerInvariant();
+                var documentType = (ProfileValue(record.Data, "document_type", "documentType") ?? "").ToLowerInvariant();
+                var isPage = materialType == "page" || templateType == "page" || documentType == "page";
                 var isAssignment = materialType is "assignment" or "assignment_v2";
-                var subtitle = isAssignment ? null : ProfileValue(record.Data, "description", "body", "due", "due_date");
+                // Schoology's native Materials rows show a page title only; its HTML body
+                // belongs in the page viewer, not flattened into a subtitle preview.
+                var subtitle = isPage || isAssignment ? null :
+                    ProfileValue(record.Data, "description", "body", "due", "due_date");
                 if (!string.IsNullOrWhiteSpace(subtitle)) labels.Children.Add(Text(subtitle, 12));
                 Grid.SetColumn(labels, 1);
                 row.Children.Add(labels);
