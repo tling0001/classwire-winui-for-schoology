@@ -45,6 +45,26 @@ internal sealed class SchoologyApiClient
         _auth.GetApiJsonAsync(session, $"sections/{sectionId}/grade_items",
             new Dictionary<string, string> { ["limit"] = "2000" }, cancellationToken);
 
+    internal Task<JsonDocument> GetSectionGradesAsync(
+        SchoologyAuthService.Session session, long sectionId, CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/grades", null, cancellationToken);
+
+    internal Task<JsonDocument> GetGradingScalesAsync(
+        SchoologyAuthService.Session session, long sectionId, CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/grading_scales", null, cancellationToken);
+
+    internal Task<JsonDocument> GetSectionEnrollmentsAsync(
+        SchoologyAuthService.Session session, long sectionId, CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/enrollments",
+            new Dictionary<string, string>
+            {
+                ["start"] = "0", ["limit"] = "200", ["enrollment_status"] = "1"
+            }, cancellationToken);
+
+    internal Task<JsonDocument> GetSectionDetailsAsync(
+        SchoologyAuthService.Session session, long sectionId, CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}", null, cancellationToken);
+
     internal Task<JsonDocument> GetUserAsync(
         SchoologyAuthService.Session session, long userId, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, $"users/{userId}", null, cancellationToken);

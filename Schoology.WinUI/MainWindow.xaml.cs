@@ -1819,7 +1819,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             labels.Children.Add(progress);
             var remove = new Button
             {
-                Content = new FontIcon { Glyph = "\\uE711", FontSize = 12 },
+                Content = new FontIcon { Glyph = "\uE711", FontSize = 12 },
                 Style = (Style)Application.Current.Resources["DefaultButtonStyle"],
                 Padding = new Thickness(8),
                 MinWidth = 34,
@@ -1856,7 +1856,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Content = new StackPanel
             {
                 Orientation = Orientation.Horizontal, Spacing = 8,
-                Children = { new FontIcon { Glyph = "\\uE8A5" }, Text("File", 13, true) }
+                Children = { new FontIcon { Glyph = "\uE8A5" }, Text("File", 13, true) }
             },
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Center,
@@ -1867,7 +1867,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Content = new StackPanel
             {
                 Orientation = Orientation.Horizontal, Spacing = 8,
-                Children = { new FontIcon { Glyph = "\\uE8B7" }, Text("Resources", 13, true) }
+                Children = { new FontIcon { Glyph = "\uE8B7" }, Text("Resources", 13, true) }
             },
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Center,
@@ -9728,7 +9728,7 @@ try {{
     }
 
     private void AddGradeHierarchyRow(StackPanel destination, string title, int depth,
-        Action<StackPanel> populateChildren)
+        Action<StackPanel> populateChildren, bool initiallyExpanded = false)
     {
         var wrapper = new StackPanel { Spacing = 0 };
         var row = new Grid
@@ -9739,13 +9739,17 @@ try {{
         };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var arrowTransform = new RotateTransform { Angle = initiallyExpanded ? 180 : 0 };
         var arrow = new FontIcon
         {
-            Glyph = "\uE70D", FontSize = 13,
+            Glyph = initiallyExpanded ? "\uE70E" : "\uE70D",
+            FontSize = 13,
             Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
             VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center
+            HorizontalAlignment = HorizontalAlignment.Center,
+            RenderTransform = arrowTransform
         };
+        arrow.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
         row.Children.Add(arrow);
         var label = Text(title, 14, true);
         label.VerticalAlignment = VerticalAlignment.Center;
@@ -9758,20 +9762,78 @@ try {{
         };
         AutomationProperties.SetName(item, title);
         wrapper.Children.Add(item);
+
+        var childOffset = new TranslateTransform();
         var children = new StackPanel
         {
-            Spacing = 1, Visibility = Visibility.Collapsed,
+            Spacing = 1,
+            Visibility = initiallyExpanded ? Visibility.Visible : Visibility.Collapsed,
+            Opacity = 1,
+            RenderTransform = childOffset,
             Margin = new Thickness(0, 0, 0, 4)
         };
         wrapper.Children.Add(children);
-        var expanded = false;
+        var expanded = initiallyExpanded;
+        if (expanded) populateChildren(children);
+
+        void AnimateArrow(bool open)
+        {
+            var target = open ? 180d : 0d;
+            if (!AnimationsEnabled) { arrowTransform.Angle = target; return; }
+            var animation = new DoubleAnimation
+            {
+                To = target, Duration = TimeSpan.FromMilliseconds(180),
+                EnableDependentAnimation = true
+            };
+            var storyboard = new Storyboard();
+            Storyboard.SetTarget(animation, arrowTransform);
+            Storyboard.SetTargetProperty(animation, "Angle");
+            storyboard.Children.Add(animation);
+            storyboard.Begin();
+        }
+
+        void AnimateChildren(bool open)
+        {
+            if (!AnimationsEnabled)
+            {
+                children.Opacity = 1;
+                childOffset.Y = 0;
+                children.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+                return;
+            }
+            if (open) children.Visibility = Visibility.Visible;
+            var opacity = new DoubleAnimation
+            {
+                From = open ? 0 : 1, To = open ? 1 : 0,
+                Duration = TimeSpan.FromMilliseconds(160), EnableDependentAnimation = true
+            };
+            var slide = new DoubleAnimation
+            {
+                From = open ? -6 : 0, To = open ? 0 : -6,
+                Duration = TimeSpan.FromMilliseconds(180), EnableDependentAnimation = true
+            };
+            var storyboard = new Storyboard();
+            Storyboard.SetTarget(opacity, children);
+            Storyboard.SetTargetProperty(opacity, "Opacity");
+            Storyboard.SetTarget(slide, childOffset);
+            Storyboard.SetTargetProperty(slide, "Y");
+            storyboard.Children.Add(opacity);
+            storyboard.Children.Add(slide);
+            storyboard.Completed += (_, _) =>
+            {
+                if (!open && !expanded) children.Visibility = Visibility.Collapsed;
+                if (open) { children.Opacity = 1; childOffset.Y = 0; }
+            };
+            storyboard.Begin();
+        }
+
         item.Tapped += (_, args) =>
         {
             args.Handled = true;
             expanded = !expanded;
-            children.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
-            arrow.Glyph = expanded ? "\uE70E" : "\uE70D";
             if (expanded && children.Children.Count == 0) populateChildren(children);
+            AnimateArrow(expanded);
+            AnimateChildren(expanded);
         };
         destination.Children.Add(wrapper);
     }
@@ -9827,11 +9889,229 @@ try {{
 
     private UIElement BuildGradeDetails(JsonElement sectionData, bool expandPeriods)
     {
-        _ = expandPeriods;
         var sectionId = JsonLong(sectionData, "section_id", "sectionId", "id");
         if (sectionId <= 0 || !_courses.Any(course => course.Id == sectionId))
             return EmptyState("No grades are available for this course.");
-        return BuildGradesPage(sectionId);
+        var content = new StackPanel { Spacing = 2 };
+        _ = LoadCourseGradeDetailsAsync(content, sectionId, sectionData.Clone(), expandPeriods);
+        return content;
+    }
+
+    private async Task LoadCourseGradeDetailsAsync(StackPanel rows, long sectionId,
+        JsonElement sectionData, bool expandPeriods)
+    {
+        rows.Children.Clear();
+        rows.Children.Add(LoadingStatus("Loading grades…"));
+        async Task<JsonDocument?> TryLoadAsync(Func<Task<JsonDocument>> request)
+        {
+            try { return await request(); }
+            catch { return null; }
+        }
+
+        try
+        {
+            var session = _session ?? throw new InvalidOperationException("Sign in to view grades.");
+            var responses = await Task.WhenAll(
+                TryLoadAsync(() => _api.GetGradingPeriodsAsync(session, sectionId)),
+                TryLoadAsync(() => _api.GetGradingCategoriesAsync(session, sectionId)),
+                TryLoadAsync(() => _api.GetGradeItemsAsync(session, sectionId)),
+                TryLoadAsync(() => _api.GetSectionGradesAsync(session, sectionId)),
+                TryLoadAsync(() => _api.GetGradingScalesAsync(session, sectionId)),
+                TryLoadAsync(() => _api.GetSectionEnrollmentsAsync(session, sectionId)),
+                TryLoadAsync(() => _api.GetSectionDetailsAsync(session, sectionId)));
+
+            using var periodDocument = responses[0];
+            using var categoryDocument = responses[1];
+            using var itemDocument = responses[2];
+            using var finalGradesDocument = responses[3];
+            using var scalesDocument = responses[4];
+            using var enrollmentsDocument = responses[5];
+            using var sectionDocument = responses[6];
+            if (itemDocument is null)
+                throw new InvalidOperationException("Schoology did not return this course's grade items.");
+
+            rows.Children.Clear();
+            var finalGradeRecords = SchoologyApiClient.ReadRecords(
+                finalGradesDocument?.RootElement ?? default,
+                "final_grade", "finalGrade", "final_grades", "finalGrades");
+            var enrollmentRecords = SchoologyApiClient.ReadRecords(
+                enrollmentsDocument?.RootElement ?? default, "enrollment", "enrollments");
+            var ownEnrollment = enrollmentRecords.FirstOrDefault(record =>
+                string.Equals(ProfileValue(record.Data, "uid", "user_id", "userId"),
+                    session.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal));
+            var enrollmentData = ownEnrollment is null ? default : ownEnrollment.Data;
+            var enrollmentId = JsonLong(enrollmentData, "id", "enrollment_id", "enrollmentId");
+            var finalRecord = finalGradeRecords.FirstOrDefault(record =>
+                enrollmentId > 0 &&
+                JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
+            if (finalRecord is null && finalGradeRecords.Count == 1)
+                finalRecord = finalGradeRecords[0];
+            var finalData = finalRecord is null ? default : finalRecord.Data;
+            var finalPeriods = SchoologyApiClient.ReadRecords(
+                finalData, "period", "periods", "final_period", "finalPeriod");
+            var finalPeriodRecord = finalPeriods.FirstOrDefault(record =>
+                string.Equals(ProfileValue(record.Data, "period_id", "periodId"), "final",
+                    StringComparison.OrdinalIgnoreCase));
+            var finalPeriodData = finalPeriodRecord is null ? default : finalPeriodRecord.Data;
+
+            var scaleRecords = SchoologyApiClient.ReadRecords(
+                scalesDocument?.RootElement ?? default,
+                "grading_scale", "gradingScale", "scales", "scale");
+            var scaleId = JsonLong(finalData, "scale_id", "scaleId");
+            if (scaleId <= 0) scaleId = JsonLong(finalPeriodData, "scale_id", "scaleId");
+            var sectionDetails = sectionDocument?.RootElement ?? default;
+            if (sectionDetails.ValueKind == JsonValueKind.Object &&
+                sectionDetails.TryGetProperty("section", out var nestedSection))
+                sectionDetails = nestedSection;
+            if (scaleId <= 0 && sectionDetails.ValueKind == JsonValueKind.Object &&
+                sectionDetails.TryGetProperty("options", out var options))
+                scaleId = JsonLong(options, "default_grading_scale_id", "defaultGradingScaleId");
+            var scaleRecord = scaleRecords.FirstOrDefault(record =>
+                scaleId > 0 && JsonLong(record.Data, "id", "scale_id", "scaleId") == scaleId);
+            if (scaleRecord is null && scaleRecords.Count == 1) scaleRecord = scaleRecords[0];
+            var scaleData = scaleRecord is null ? default : scaleRecord.Data;
+
+            var summary = new Grid { Padding = new Thickness(14, 10, 14, 10), ColumnSpacing = 10 };
+            summary.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            summary.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            summary.Children.Add(Text("Overall Grade", 14, true));
+            var overall = Text(FormatCourseOverallGrade(sectionData, finalData, finalPeriodData, scaleData), 14, true);
+            overall.HorizontalAlignment = HorizontalAlignment.Right;
+            Grid.SetColumn(overall, 1);
+            summary.Children.Add(overall);
+            rows.Children.Add(summary);
+
+            var teacherComment = ProfileValue(finalPeriodData, "comment") ?? ProfileValue(finalData, "comment");
+            if (!string.IsNullOrWhiteSpace(teacherComment))
+            {
+                var comment = new StackPanel { Spacing = 3, Margin = new Thickness(14, 0, 14, 10) };
+                comment.Children.Add(Text("Teacher Comment", 12, true));
+                comment.Children.Add(CreateRichContent(teacherComment, 13));
+                rows.Children.Add(comment);
+            }
+
+            var gradesByAssignment = new Dictionary<long, JsonElement>();
+            foreach (var period in SchoologyApiClient.ReadRecords(sectionData, "period", "periods"))
+            foreach (var assignmentGrade in SchoologyApiClient.ReadRecords(period.Data, "assignment", "assignments"))
+            {
+                var assignmentId = JsonLong(assignmentGrade.Data, "assignment_id", "assignmentId", "id");
+                if (assignmentId > 0) gradesByAssignment[assignmentId] = assignmentGrade.Data.Clone();
+            }
+
+            var periodRecords = SchoologyApiClient.ReadRecords(
+                periodDocument?.RootElement ?? default, "grading_period", "gradePeriod", "period", "periods");
+            var categoryRecords = SchoologyApiClient.ReadRecords(
+                categoryDocument?.RootElement ?? default, "grading_category", "category", "categories");
+            var periodNames = periodRecords
+                .GroupBy(record => JsonLong(record.Data, "id", "grading_period_id", "period_id").ToString(
+                    System.Globalization.CultureInfo.InvariantCulture))
+                .ToDictionary(group => group.Key,
+                    group => ProfileValue(group.First().Data, "title", "name") ?? "Grading Period");
+            var categoryNames = categoryRecords
+                .GroupBy(record => JsonLong(record.Data, "id", "grading_category_id", "category_id").ToString(
+                    System.Globalization.CultureInfo.InvariantCulture))
+                .ToDictionary(group => group.Key,
+                    group => ProfileValue(group.First().Data, "title", "name") ?? "Category");
+            IReadOnlyList<SchoologyApiRecord> assignments =
+                SchoologyApiClient.ReadRecords(itemDocument.RootElement,
+                    "assignment", "assignments", "grade_item", "grade_items")
+                .Select(record => new SchoologyApiRecord(record.Title, record.Subtitle, record.Data.Clone()))
+                .ToArray();
+
+            foreach (var periodGroup in assignments.GroupBy(record =>
+                JsonLong(record.Data, "grading_period_id", "grading_period", "period_id").ToString(
+                    System.Globalization.CultureInfo.InvariantCulture))
+                .OrderBy(group => periodNames.GetValueOrDefault(group.Key, group.Key)))
+            {
+                var periodName = periodNames.GetValueOrDefault(periodGroup.Key,
+                    periodGroup.Key == "0" ? "Ungraded" : "Grading Period");
+                var periodAssignments = periodGroup.ToArray();
+                AddGradeHierarchyRow(rows, periodName, 0, periodChildren =>
+                {
+                    foreach (var categoryGroup in periodAssignments.GroupBy(record =>
+                        JsonLong(record.Data, "grading_category_id", "grading_category", "category_id").ToString(
+                            System.Globalization.CultureInfo.InvariantCulture))
+                        .OrderBy(group => categoryNames.GetValueOrDefault(group.Key, group.Key)))
+                    {
+                        var categoryName = categoryNames.GetValueOrDefault(categoryGroup.Key,
+                            categoryGroup.Key == "0" ? "Ungraded" : "Category");
+                        var categoryAssignments = categoryGroup.ToArray();
+                        AddGradeHierarchyRow(periodChildren, categoryName, 1, categoryChildren =>
+                        {
+                            foreach (var assignment in categoryAssignments.OrderBy(record => record.Title,
+                                StringComparer.CurrentCultureIgnoreCase))
+                            {
+                                var id = JsonLong(assignment.Data, "id", "assignment_id", "assignmentId");
+                                var grade = id > 0 && gradesByAssignment.TryGetValue(id, out var found)
+                                    ? found : default;
+                                AddGradeAssignmentRow(categoryChildren, sectionId, assignment.Data, grade, 2);
+                            }
+                        });
+                    }
+                }, initiallyExpanded: expandPeriods);
+            }
+            if (assignments.Count == 0)
+                rows.Children.Add(EmptyState("No graded items are available for this course."));
+        }
+        catch (Exception ex)
+        {
+            rows.Children.Clear();
+            rows.Children.Add(EmptyState("Unable to load grades.", ex.Message));
+        }
+    }
+
+    private static string FormatCourseOverallGrade(
+        JsonElement sectionData, JsonElement finalGrade, JsonElement finalPeriod, JsonElement gradingScale)
+    {
+        var overrideString = ProfileValue(finalPeriod,
+            "override_str", "overrideStr", "override_string", "overrideString", "grade_override", "gradeOverride") ??
+            ProfileValue(finalGrade,
+            "override_str", "overrideStr", "override_string", "overrideString", "grade_override", "gradeOverride");
+        if (!string.IsNullOrWhiteSpace(overrideString)) return overrideString.Trim();
+
+        var numericOverride = ProfileValue(finalPeriod, "override_numeric", "overrideNumeric") ??
+            ProfileValue(finalGrade, "override_numeric", "overrideNumeric");
+        var rawGrade = numericOverride ?? ProfileValue(finalPeriod, "grade") ??
+            ProfileValue(finalGrade, "grade", "calculated_grade", "calculatedGrade") ??
+            ProfileValue(sectionData, "grade", "calculated_grade", "calculatedGrade");
+        if (string.IsNullOrWhiteSpace(rawGrade)) return "—";
+        if (!decimal.TryParse(rawGrade.Trim().TrimEnd('%').Trim(),
+            System.Globalization.NumberStyles.Number,
+            System.Globalization.CultureInfo.InvariantCulture, out var numeric))
+            return rawGrade.Trim();
+
+        var percentage = decimal.Round(numeric, 2, MidpointRounding.AwayFromZero)
+            .ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+        var scaleType = JsonLong(gradingScale, "type", "scale_type", "scaleType");
+        if (gradingScale.ValueKind != JsonValueKind.Object || (scaleType != 0 && scaleType != 1))
+            return percentage;
+        var definition = gradingScale;
+        if (gradingScale.TryGetProperty("scale", out var nestedScale)) definition = nestedScale;
+        JsonElement levels = default;
+        if (definition.ValueKind == JsonValueKind.Object &&
+            !definition.TryGetProperty("level", out levels) &&
+            !definition.TryGetProperty("levels", out levels)) levels = default;
+        if (levels.ValueKind == JsonValueKind.Object &&
+            levels.TryGetProperty("level", out var nestedLevels)) levels = nestedLevels;
+        var levelItems = new List<JsonElement>();
+        if (levels.ValueKind == JsonValueKind.Array) levelItems.AddRange(levels.EnumerateArray());
+        else if (levels.ValueKind == JsonValueKind.Object) levelItems.Add(levels);
+        var parsed = new List<(string Grade, decimal Cutoff)>();
+        foreach (var level in levelItems)
+        {
+            var grade = ProfileValue(level, "grade", "title", "name");
+            var cutoff = ProfileValue(level, "cutoff", "average", "percent", "percentage");
+            if (!string.IsNullOrWhiteSpace(grade) &&
+                decimal.TryParse(cutoff, System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out var threshold))
+                parsed.Add((grade, threshold));
+        }
+        var letter = parsed.OrderByDescending(level => level.Cutoff)
+            .FirstOrDefault(level => numeric >= level.Cutoff).Grade;
+        if (string.IsNullOrWhiteSpace(letter)) return percentage;
+        return JsonBoolean(gradingScale, "hide_numeric", "hideNumeric")
+            ? letter : $"{letter} ({percentage})";
     }
 
     private Grid BuildGradesPage(long? onlyCourseId = null)

@@ -1,5 +1,13 @@
 # Release notes
 
+## [2026.10.0-port.89] - 2026-11-04
+
+- Restore animated expand/collapse behavior in course Grades, matching the Materials folder chevron rotation and nested-row fade/slide transitions while honoring reduced-motion settings.
+- Remove the redundant course-name expander from course Grades. Show Overall Grade and grading periods directly in the tab content, with grading periods expanded by default.
+- Fix the File, Resources, and remove icons in the assignment submission dialog by using actual Fluent glyph characters instead of literal backslash-u text.
+- Add section grade, active enrollment, grading-scale, and section-detail requests. Match final-grade data to the signed-in user's active enrollment and display teacher string overrides or numeric overrides with the configured letter scale and hide-numeric behavior, following the supplied Tauri and Android implementations.
+- Keep the account-wide Grades page layout unchanged.
+
 ## [2026.10.0-port.88] - 2026-11-04
 
 - Fix the missing course Grades renderer by reusing the account Grades hierarchy and API-loading implementation, filtered to the course whose Grades tab is open.
