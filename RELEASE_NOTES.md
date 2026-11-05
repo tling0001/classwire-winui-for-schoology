@@ -1,6 +1,13 @@
 # Release notes
 
-## [2026.10.0-port.85] - 2026-11-04
+## [2026.10.0-port.86] - 2026-11-04
+
+- Fix the malformed assignment-submission refresh JSON expression that caused the x64 and ARM64 GitHub Actions publishes to fail at compile time.
+- Replace the Grades TreeView with a virtualized ListView and inline expandable grading-period/category rows, following the course Materials hierarchy pattern.
+- Load official course grade items, grading periods, categories, and user grades; right-align assignment scores and round numeric grade values to at most two decimal places.
+- Start the Schoology Pages WebView2 HTML navigation only after the control has entered the active visual tree to address the blank viewer.
+
+
 
 - Replace immediate single-file assignment uploads with a staged multi-attachment submission dialog. Select multiple local files and multiple Schoology resources, review/remove staged items, see per-item upload progress, and submit all attachments together in one revision using Android's mixed attachment payload model.
 - Add an optional assignment comment to the submission dialog and post it through Schoology's separate assignment-comments endpoint; clearly distinguish it from revision attachments because Android's revision model has no comment field.

@@ -2014,7 +2014,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     }
                 }
                 await ShowAssignmentDetailsAsync(sectionId, new SchoologyApiRecord("Assignment", "",
-                    JsonDocument.Parse("{\\"id\\":" + assignmentId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}").RootElement.Clone()));
+                    JsonDocument.Parse(JsonSerializer.Serialize(new { id = assignmentId })).RootElement.Clone()));
                 return;
             }
             catch (Exception ex)
@@ -6099,7 +6099,7 @@ try {{
                     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
                     "<base href=\"https://app.schoology.com/\"></head>" +
                     "<body width=\"100%\">" + pageMarkup + "</body></html>";
-                core.NavigateToString(html);
+                webView.Loaded += (_, _) => core.NavigateToString(html);
             }
             finally
             {
@@ -9717,77 +9717,124 @@ try {{
         return System.Text.RegularExpressions.Regex.Replace(text, "\\s+", " ").Trim();
     }
 
-    private static TreeView BuildGradeDetails(JsonElement section, bool expandPeriods)
+    private static string FormatGradeDisplayValue(string? value)
     {
-        var tree = new TreeView { HorizontalAlignment = HorizontalAlignment.Stretch };
-        AutomationProperties.SetAutomationId(tree, "SchoologyCourseGradesTree");
-        PopulateGradeTreeNodes(tree.RootNodes, section, expandPeriods);
-        if (tree.RootNodes.Count == 0) tree.RootNodes.Add(new TreeViewNode { Content = "No grades" });
-        return tree;
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        var trimmed = value.Trim();
+        var suffix = trimmed.EndsWith("%", StringComparison.Ordinal) ? "%" : "";
+        var numericText = suffix.Length > 0 ? trimmed[..^1].Trim() : trimmed;
+        if (decimal.TryParse(numericText, System.Globalization.NumberStyles.Number,
+            System.Globalization.CultureInfo.InvariantCulture, out var number))
+        {
+            var rounded = decimal.Round(number, 2, MidpointRounding.AwayFromZero);
+            return rounded.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + suffix;
+        }
+        return trimmed;
     }
 
-    private static void PopulateGradeTreeNodes(IList<TreeViewNode> nodes, JsonElement section, bool expandPeriods)
+    private static string FormatGradeScore(string? score, string? maximum)
     {
-        if (section.ValueKind != JsonValueKind.Object) return;
-        if (section.TryGetProperty("final_grade", out var finalGrades) && finalGrades.ValueKind == JsonValueKind.Array)
+        var formatted = FormatGradeDisplayValue(score);
+        return string.IsNullOrWhiteSpace(maximum) ? formatted :
+            formatted + " / " + FormatGradeDisplayValue(maximum);
+    }
+
+    private void AddGradeHierarchyRow(StackPanel destination, string title, int depth,
+        Action<StackPanel> populateChildren)
+    {
+        var wrapper = new StackPanel { Spacing = 0 };
+        var row = new Grid
         {
-            foreach (var final in finalGrades.EnumerateArray())
-            {
-                var grade = ProfileValue(final, "override_str", "override_numeric", "grade") ?? "Not posted";
-                var finalNode = new TreeViewNode { Content = "Final grade: " + grade };
-                var comment = ProfileValue(final, "comment");
-                if (!string.IsNullOrWhiteSpace(comment))
-                    finalNode.Children.Add(new TreeViewNode { Content = StripMarkup(comment) });
-                nodes.Add(finalNode);
-            }
-        }
-        if (section.TryGetProperty("period", out var periods) && periods.ValueKind == JsonValueKind.Array)
+            ColumnSpacing = 10,
+            Padding = new Thickness(10 + depth * 22, 9, 12, 9),
+            MinHeight = 46
+        };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var arrow = new FontIcon
         {
-            foreach (var period in periods.EnumerateArray())
-            {
-                var name = ProfileValue(period, "period_title", "title", "name") ?? "Grading period";
-                var grade = ProfileValue(period, "override_str", "override_numeric", "grade");
-                var periodNode = new TreeViewNode
-                {
-                    Content = string.IsNullOrWhiteSpace(grade) ? name : $"{name} · {grade}",
-                    IsExpanded = expandPeriods
-                };
-                if (period.TryGetProperty("assignment", out var assignments) && assignments.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var assignment in assignments.EnumerateArray())
-                    {
-                        var title = ProfileValue(assignment, "title", "assignment_title", "name") ??
-                            ("Assignment " + (ProfileValue(assignment, "assignment_id", "id") ?? ""));
-                        var assignmentGrade = ProfileValue(assignment, "grade", "calculated_grade");
-                        var max = ProfileValue(assignment, "max_points");
-                        var label = string.IsNullOrWhiteSpace(assignmentGrade) ? title :
-                            $"{title} · {(string.IsNullOrWhiteSpace(max) ? assignmentGrade : assignmentGrade + " / " + max)}";
-                        var assignmentNode = new TreeViewNode { Content = label };
-                        var comment = ProfileValue(assignment, "comment");
-                        if (!string.IsNullOrWhiteSpace(comment))
-                            assignmentNode.Children.Add(new TreeViewNode { Content = StripMarkup(comment) });
-                        periodNode.Children.Add(assignmentNode);
-                    }
-                }
-                if (periodNode.Children.Count == 0)
-                    periodNode.Children.Add(new TreeViewNode { Content = "No assignments" });
-                nodes.Add(periodNode);
-            }
-        }
-        if (section.TryGetProperty("grading_category", out var categories) && categories.ValueKind == JsonValueKind.Array)
+            Glyph = "\uE70D", FontSize = 13,
+            Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        row.Children.Add(arrow);
+        var label = Text(title, 14, true);
+        label.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
+        var item = new ListViewItem
         {
-            var categoryNode = new TreeViewNode { Content = "Grading categories" };
-            foreach (var category in categories.EnumerateArray())
-            {
-                var name = ProfileValue(category, "title", "name") ?? "Category";
-                var grade = ProfileValue(category, "grade");
-                categoryNode.Children.Add(new TreeViewNode
-                {
-                    Content = string.IsNullOrWhiteSpace(grade) ? name : $"{name}: {grade}"
-                });
-            }
-            nodes.Add(categoryNode);
-        }
+            Content = row, Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetName(item, title);
+        wrapper.Children.Add(item);
+        var children = new StackPanel
+        {
+            Spacing = 1, Visibility = Visibility.Collapsed,
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+        wrapper.Children.Add(children);
+        var expanded = false;
+        item.Tapped += (_, args) =>
+        {
+            args.Handled = true;
+            expanded = !expanded;
+            children.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+            arrow.Glyph = expanded ? "\uE70E" : "\uE70D";
+            if (expanded && children.Children.Count == 0) populateChildren(children);
+        };
+        destination.Children.Add(wrapper);
+    }
+
+    private void AddGradeAssignmentRow(StackPanel destination, long sectionId,
+        JsonElement assignment, JsonElement gradeData, int depth)
+    {
+        var title = ProfileValue(assignment, "title", "assignment_title", "name") ?? "Assignment";
+        var rawScore = ProfileValue(gradeData, "grade", "calculated_grade", "score", "grade_value");
+        var maximum = ProfileValue(assignment, "max_points", "maxPoints") ??
+            ProfileValue(gradeData, "max_points", "maxPoints");
+        var score = string.IsNullOrWhiteSpace(rawScore) ? "—" : FormatGradeScore(rawScore, maximum);
+        var row = new Grid
+        {
+            ColumnSpacing = 12,
+            Padding = new Thickness(10 + depth * 22, 9, 14, 9),
+            MinHeight = 48
+        };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var name = Text(title, 14);
+        name.VerticalAlignment = VerticalAlignment.Center;
+        row.Children.Add(name);
+        var scoreText = Text(score, 13, true);
+        scoreText.VerticalAlignment = VerticalAlignment.Center;
+        scoreText.HorizontalAlignment = HorizontalAlignment.Right;
+        Grid.SetColumn(scoreText, 1);
+        row.Children.Add(scoreText);
+        var button = new Button
+        {
+            Content = row, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(0),
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0)
+        };
+        AutomationProperties.SetName(button, $"{title}, score {score}");
+        button.Click += async (_, _) =>
+        {
+            var id = JsonLong(assignment, "id", "assignment_id", "assignmentId");
+            if (id <= 0) return;
+            var type = (ProfileValue(assignment, "type", "template_type", "type_name") ?? "assignment").ToLowerInvariant();
+            var record = new SchoologyApiRecord(title, "", assignment.Clone());
+            if (type is "assessment" or "assessment_v2" or "managed_assessment" or "quiz" or "test")
+                await OpenSharedWebViewAsync($"https://app.schoology.com/assignment/{id}", title,
+                    allowLtiExternal: true, onBack: () => ShowHome("Grades"));
+            else
+                await ShowAssignmentDetailsAsync(sectionId, record);
+        };
+        var wrapper = new StackPanel { Spacing = 0 };
+        wrapper.Children.Add(button);
+        destination.Children.Add(wrapper);
     }
 
     private Grid BuildGradesPage()
@@ -9796,51 +9843,169 @@ try {{
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.Children.Add(Text("Grades", 24, true));
-        var tree = new TreeView
+        var list = new ListView
         {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
+            SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = false,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
-            MinHeight = 0
+            Padding = new Thickness(0)
         };
-        ScrollViewer.SetVerticalScrollBarVisibility(tree, ScrollBarVisibility.Auto);
-        ScrollViewer.SetHorizontalScrollBarVisibility(tree, ScrollBarVisibility.Disabled);
-        AutomationProperties.SetAutomationId(tree, "SchoologyGradesTree");
-        Grid.SetRow(tree, 1); root.Children.Add(tree);
-        var courses = new Dictionary<TreeViewNode, SchoologyEntity>();
+        ScrollViewer.SetVerticalScrollBarVisibility(list, ScrollBarVisibility.Auto);
+        ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
+        AutomationProperties.SetAutomationId(list, "SchoologyGradesList");
+        Grid.SetRow(list, 1);
+        root.Children.Add(list);
+
         foreach (var course in _courses)
         {
-            var node = new TreeViewNode { Content = course.Name, HasUnrealizedChildren = true };
-            node.Children.Add(new TreeViewNode { Content = "Expand to load grades" });
-            courses[node] = course;
-            tree.RootNodes.Add(node);
+            var courseWrapper = new StackPanel { Spacing = 0 };
+            var header = new Grid { ColumnSpacing = 12, Padding = new Thickness(12), MinHeight = 56 };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var name = Text(course.Name, 15, true);
+            name.VerticalAlignment = VerticalAlignment.Center;
+            header.Children.Add(name);
+            var arrow = new FontIcon { Glyph = "\uE70D", FontSize = 14,
+                Foreground = ThemeBrush("TextFillColorSecondaryBrush"), VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(arrow, 1);
+            header.Children.Add(arrow);
+            var toggle = new Button
+            {
+                Content = header, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(0),
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                BorderThickness = new Thickness(0)
+            };
+            AutomationProperties.SetName(toggle, $"Grades for {course.Name}");
+            courseWrapper.Children.Add(toggle);
+            var gradeRows = new StackPanel { Spacing = 2, Visibility = Visibility.Collapsed };
+            courseWrapper.Children.Add(gradeRows);
+            var loaded = false;
+            var loading = false;
+            var expanded = false;
+            toggle.Click += async (_, _) =>
+            {
+                expanded = !expanded;
+                gradeRows.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+                arrow.Glyph = expanded ? "\uE70E" : "\uE70D";
+                if (!expanded || loaded || loading) return;
+                loading = true;
+                gradeRows.Children.Clear();
+                gradeRows.Children.Add(LoadingStatus("Loading grades…"));
+                try
+                {
+                    var session = _session ?? throw new InvalidOperationException("Sign in to view grades.");
+                    var responses = await Task.WhenAll(
+                        _api.GetUserGradesAsync(session),
+                        _api.GetGradingPeriodsAsync(session, course.Id),
+                        _api.GetGradingCategoriesAsync(session, course.Id),
+                        _api.GetGradeItemsAsync(session, course.Id));
+                    using var userGrades = responses[0];
+                    using var periodDocument = responses[1];
+                    using var categoryDocument = responses[2];
+                    using var itemDocument = responses[3];
+                    var sections = SchoologyApiClient.ReadRecords(userGrades.RootElement, "section", "sections");
+                    var section = sections.FirstOrDefault(record =>
+                        JsonLong(record.Data, "section_id", "sectionId", "id") == course.Id);
+                    if (section is null)
+                    {
+                        gradeRows.Children.Clear();
+                        gradeRows.Children.Add(EmptyState("No grades are available for this course."));
+                        loaded = true;
+                        return;
+                    }
+
+                    gradeRows.Children.Clear();
+                    var overall = ProfileValue(section.Data, "override_str", "override_numeric", "grade", "calculated_grade");
+                    if (string.IsNullOrWhiteSpace(overall) &&
+                        section.Data.TryGetProperty("final_grade", out var finals) &&
+                        finals.ValueKind == JsonValueKind.Array && finals.GetArrayLength() > 0)
+                        overall = ProfileValue(finals[0], "override_str", "override_numeric", "grade", "calculated_grade");
+                    if (!string.IsNullOrWhiteSpace(overall))
+                    {
+                        var summary = new Grid { Padding = new Thickness(14, 10, 14, 10), ColumnSpacing = 10 };
+                        summary.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                        summary.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                        summary.Children.Add(Text("Overall Grade", 14, true));
+                        var value = Text(FormatGradeDisplayValue(overall), 14, true);
+                        Grid.SetColumn(value, 1);
+                        summary.Children.Add(value);
+                        gradeRows.Children.Add(summary);
+                    }
+
+                    var gradesByAssignment = new Dictionary<long, JsonElement>();
+                    foreach (var period in SchoologyApiClient.ReadRecords(section.Data, "period", "periods"))
+                    foreach (var assignmentGrade in SchoologyApiClient.ReadRecords(period.Data, "assignment", "assignments"))
+                    {
+                        var assignmentId = JsonLong(assignmentGrade.Data, "assignment_id", "assignmentId", "id");
+                        if (assignmentId > 0) gradesByAssignment[assignmentId] = assignmentGrade.Data;
+                    }
+
+                    var periodNames = SchoologyApiClient.ReadRecords(periodDocument.RootElement,
+                        "grading_period", "gradePeriod", "period", "periods")
+                        .GroupBy(record => JsonLong(record.Data, "id", "grading_period_id", "period_id").ToString(
+                            System.Globalization.CultureInfo.InvariantCulture))
+                        .ToDictionary(group => group.Key, group => ProfileValue(group.First().Data, "title", "name") ?? "Grading Period");
+                    var categoryNames = SchoologyApiClient.ReadRecords(categoryDocument.RootElement,
+                        "grading_category", "category", "categories")
+                        .GroupBy(record => JsonLong(record.Data, "id", "grading_category_id", "category_id").ToString(
+                            System.Globalization.CultureInfo.InvariantCulture))
+                        .ToDictionary(group => group.Key, group => ProfileValue(group.First().Data, "title", "name") ?? "Category");
+                    var assignments = SchoologyApiClient.ReadRecords(itemDocument.RootElement,
+                        "assignment", "assignments", "grade_item", "grade_items");
+                    var periodGroups = assignments.GroupBy(record =>
+                        JsonLong(record.Data, "grading_period_id", "grading_period", "period_id").ToString(
+                            System.Globalization.CultureInfo.InvariantCulture))
+                        .OrderBy(group => periodNames.GetValueOrDefault(group.Key, group.Key));
+                    foreach (var periodGroup in periodGroups)
+                    {
+                        var periodName = periodNames.GetValueOrDefault(periodGroup.Key,
+                            periodGroup.Key == "0" ? "Ungraded" : "Grading Period");
+                        var periodAssignments = periodGroup.ToArray();
+                        AddGradeHierarchyRow(gradeRows, periodName, 0, periodChildren =>
+                        {
+                            var categoryGroups = periodAssignments.GroupBy(record =>
+                                JsonLong(record.Data, "grading_category_id", "grading_category", "category_id").ToString(
+                                    System.Globalization.CultureInfo.InvariantCulture))
+                                .OrderBy(group => categoryNames.GetValueOrDefault(group.Key, group.Key));
+                            foreach (var categoryGroup in categoryGroups)
+                            {
+                                var categoryName = categoryNames.GetValueOrDefault(categoryGroup.Key,
+                                    categoryGroup.Key == "0" ? "Ungraded" : "Category");
+                                var categoryAssignments = categoryGroup.ToArray();
+                                AddGradeHierarchyRow(periodChildren, categoryName, 1, categoryChildren =>
+                                {
+                                    foreach (var assignment in categoryAssignments.OrderBy(record => record.Title,
+                                        StringComparer.CurrentCultureIgnoreCase))
+                                    {
+                                        var id = JsonLong(assignment.Data, "id", "assignment_id", "assignmentId");
+                                        var grade = id > 0 && gradesByAssignment.TryGetValue(id, out var found)
+                                            ? found : default;
+                                        AddGradeAssignmentRow(categoryChildren, course.Id, assignment.Data, grade, 2);
+                                    }
+                                });
+                            }
+                        });
+                    }
+                    if (gradeRows.Children.Count == 0)
+                        gradeRows.Children.Add(EmptyState("No graded items are available for this course."));
+                    loaded = true;
+                }
+                catch (Exception ex)
+                {
+                    gradeRows.Children.Clear();
+                    gradeRows.Children.Add(EmptyState("Unable to load grades.", ex.Message));
+                }
+                finally { loading = false; }
+            };
+            list.Items.Add(new ListViewItem
+            {
+                Content = courseWrapper, Padding = new Thickness(0),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch
+            });
         }
-        if (_courses.Count == 0) tree.RootNodes.Add(new TreeViewNode { Content = "No grades" });
-        tree.Expanding += async (_, args) =>
-        {
-            if (!courses.TryGetValue(args.Node, out var course) || !args.Node.HasUnrealizedChildren) return;
-            args.Node.HasUnrealizedChildren = false;
-            args.Node.Children.Clear();
-            args.Node.Children.Add(new TreeViewNode { Content = LoadingStatus("Loading grades…") });
-            try
-            {
-                if (_session is null) throw new InvalidOperationException("Sign in to view grades.");
-                using var document = await _api.GetUserGradesAsync(_session);
-                var sections = SchoologyApiClient.ReadRecords(document.RootElement, "section", "sections");
-                var section = sections.FirstOrDefault(record =>
-                    JsonLong(record.Data, "section_id", "sectionId", "id") == course.Id);
-                args.Node.Children.Clear();
-                if (section is null) args.Node.Children.Add(new TreeViewNode { Content = "No grades" });
-                else PopulateGradeTreeNodes(args.Node.Children, section.Data, false);
-                if (args.Node.Children.Count == 0) args.Node.Children.Add(new TreeViewNode { Content = "No grades" });
-            }
-            catch (Exception ex)
-            {
-                args.Node.Children.Clear();
-                args.Node.Children.Add(new TreeViewNode { Content = $"Unable to load grades: {ex.Message}" });
-                args.Node.IsExpanded = false;
-                args.Node.HasUnrealizedChildren = true;
-            }
-        };
+        if (_courses.Count == 0) list.Items.Add(new ListViewItem { Content = EmptyState("No grades") });
         return root;
     }
 
