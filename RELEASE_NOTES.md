@@ -1,6 +1,13 @@
 # Release notes
 
-## [2026.10.0-port.90] - 2026-11-05
+## [2026.10.0-port.91] - 2026-11-05
+
+- Show each course's overall grade alongside its course name on the standalone Grades page, resolving the signed-in user's final-period grade and preserving teacher letter/percentage overrides and grading-scale formatting.
+- Keep standalone course grade expansion usable when Schoology denies one of the grade endpoints; load available assignment data and explain when the grade-item list itself returns HTTP 403 instead of failing the whole course.
+- Restore Upcoming row activation with direct, accessible ListViewItem tap handlers, including course/group Upcoming context.
+- Label one- and two-comment post actions as Comments (1) and Comments (2).
+- Retain loaded Home selector views and course/group/school profile tabs while switching between them; keep independent wide and compact tab views and their loaded state.
+- Temporarily cache message detail data and rendered message threads across mailbox switching, and invalidate Sent message detail cache after sending a new message.
 
 - Route Upcoming and Calendar event clicks using the event ID and owning realm (course, group, school, or user), and open native event details with Info and Comments tabs.
 - Render event rich text and attachments in Info, preserve the originating Calendar/Upcoming route when navigating back, and hide comments when the event disables them.

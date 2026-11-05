@@ -2728,15 +2728,16 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         Grid.SetRow(wideSelector, 1); wideLeft.Children.Add(wideSelector);
         var wideFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
         Grid.SetRow(wideFrame, 2); wideLeft.Children.Add(wideFrame);
+        var wideTabCache = new Dictionary<string, UIElement>(StringComparer.Ordinal);
+        UIElement GetWideTab(string tab) => GetOrCreateTemporaryView(wideTabCache, tab,
+            () => tab == "Course Dashboard" ? BuildCourseDashboardContent() : BuildRecentActivityContent());
         wideSelector.SelectionChanged += (_, _) =>
         {
             if (wideSelector.SelectedItem is not SelectorBarItem item) return;
-            NavigateShellFrame(wideFrame,
-                item == wideDashboard ? BuildCourseDashboardContent() : BuildRecentActivityContent(),
-                SlideNavigationTransitionEffect.FromRight);
+            NavigateShellFrame(wideFrame, GetWideTab(item.Text), SlideNavigationTransitionEffect.FromRight);
         };
         wideSelector.SelectedItem = upcomingFirst ? wideDashboard : wideRecent;
-        NavigateShellFrame(wideFrame, upcomingFirst ? BuildCourseDashboardContent() : BuildRecentActivityContent(),
+        NavigateShellFrame(wideFrame, GetWideTab(upcomingFirst ? "Course Dashboard" : "Recent Activity"),
             SlideNavigationTransitionEffect.FromRight);
         Grid.SetColumn(wideLeft, 0); wide.Children.Add(wideLeft);
 
@@ -2764,12 +2765,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         Grid.SetRow(narrowSelector, 1); narrow.Children.Add(narrowSelector);
         var narrowFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
         Grid.SetRow(narrowFrame, 2); narrow.Children.Add(narrowFrame);
-        void ShowNarrowTab(SelectorBarItem item)
+        var narrowTabCache = new Dictionary<string, UIElement>(StringComparer.Ordinal);
+        UIElement GetNarrowTab(string tab) => GetOrCreateTemporaryView(narrowTabCache, tab, () => tab switch
         {
-            UIElement content = item == narrowDashboard ? BuildCourseDashboardContent() :
-                item == narrowUpcoming ? BuildUpcomingContent() : BuildRecentActivityContent();
-            NavigateShellFrame(narrowFrame, content, SlideNavigationTransitionEffect.FromRight);
-        }
+            "Course Dashboard" => BuildCourseDashboardContent(),
+            "Upcoming" => BuildUpcomingContent(),
+            _ => BuildRecentActivityContent()
+        });
+        void ShowNarrowTab(SelectorBarItem item) =>
+            NavigateShellFrame(narrowFrame, GetNarrowTab(item.Text), SlideNavigationTransitionEffect.FromRight);
         narrowSelector.SelectionChanged += (_, _) =>
         {
             if (narrowSelector.SelectedItem is SelectorBarItem item) ShowNarrowTab(item);
@@ -3087,14 +3091,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         root.Children.Add(statusHost);
         var list = new ListView { SelectionMode = ListViewSelectionMode.None,
-            IsItemClickEnabled = true, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Background = new SolidColorBrush(Colors.Transparent) };
         AutomationProperties.SetAutomationId(list, "UpcomingEventsList");
-        list.ItemClick += async (_, args) =>
-        {
-            if (args.ClickedItem is ListViewItem { Tag: SchoologyApiRecord record })
-                await ShowUpcomingItemAsync(record);
-        };
         Grid.SetRow(list, 1); root.Children.Add(list);
         _ = LoadUpcomingAsync(list, status);
         return root;
@@ -3162,6 +3161,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 Grid.SetColumn(details, 1); row.Children.Add(details);
                 var item = new ListViewItem { Content = row, Tag = entry.Record,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                AutomationProperties.SetName(item, entry.Record.Title);
+                item.Tapped += async (_, _) => await ShowUpcomingItemAsync(entry.Record, entityKind, entityId);
                 list.Items.Add(item);
             }
         }
@@ -3299,15 +3300,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var list = new ListView
         {
             SelectionMode = ListViewSelectionMode.None,
-            IsItemClickEnabled = true,
+            IsItemClickEnabled = false,
             HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
         AutomationProperties.SetAutomationId(list, "CalendarEventsList");
-        list.ItemClick += async (_, args) =>
-        {
-            if (args.ClickedItem is ListViewItem { Tag: SchoologyApiRecord record })
-                await ShowUpcomingItemAsync(record);
-        };
         Grid.SetRow(list, 1);
         right.Children.Add(list);
         Grid.SetColumn(right, 1);
@@ -5262,19 +5258,23 @@ try {{
         Grid.SetRow(compactIdentity, 1); narrow.Children.Add(compactIdentity);
         Grid.SetRow(compactFrame, 2); narrow.Children.Add(compactFrame);
 
+        var wideTabCache = new Dictionary<string, UIElement>(StringComparer.Ordinal);
+        var compactTabCache = new Dictionary<string, UIElement>(StringComparer.Ordinal);
+        UIElement BuildSelectedTabContent(string tab) => tab switch
+        {
+            "Upcoming" => BuildEntityUpcomingContent(kind, entityId),
+            "Course Apps" when kind == "Courses" => BuildCourseAppsContent(entityId, selected!),
+            _ => BuildEntityTabContent(kind, entityId, entityName, tab, selected, showInfobox: false)
+        };
         void ShowTab(string tab)
         {
             if (entityId <= 0) return;
             _selectedEntityTab = tab;
             UpdateTitleBarCreateButton(kind, tab);
-            UIElement BuildSelectedTabContent() => tab switch
-            {
-                "Upcoming" => BuildEntityUpcomingContent(kind, entityId),
-                "Course Apps" when kind == "Courses" => BuildCourseAppsContent(entityId, selected!),
-                _ => BuildEntityTabContent(kind, entityId, entityName, tab, selected, showInfobox: false)
-            };
-            NavigateShellFrame(detail, BuildSelectedTabContent(), SlideNavigationTransitionEffect.FromRight);
-            NavigateShellFrame(compactFrame, BuildSelectedTabContent(), SlideNavigationTransitionEffect.FromRight);
+            NavigateShellFrame(detail, GetOrCreateTemporaryView(wideTabCache, tab, () => BuildSelectedTabContent(tab)),
+                SlideNavigationTransitionEffect.FromRight);
+            NavigateShellFrame(compactFrame, GetOrCreateTemporaryView(compactTabCache, tab, () => BuildSelectedTabContent(tab)),
+                SlideNavigationTransitionEffect.FromRight);
         }
 
         compactSelector.SelectionChanged += (_, _) =>
@@ -5566,6 +5566,14 @@ try {{
             File.WriteAllText(AppSettingsPath, JsonSerializer.Serialize(values));
         }
         catch (Exception ex) { App.WriteStartupLog($"Could not save setting '{key}'.", ex); }
+    }
+
+    private static UIElement GetOrCreateTemporaryView(IDictionary<string, UIElement> cache, string key, Func<UIElement> factory)
+    {
+        if (cache.TryGetValue(key, out var cached)) return cached;
+        var content = factory();
+        cache[key] = content;
+        return content;
     }
 
     private static void NavigateShellFrame(Frame frame, UIElement content, SlideNavigationTransitionEffect effect)
@@ -8343,8 +8351,8 @@ try {{
             commentActionButton.Content = commentCount switch
             {
                 <= 0 => "Comment",
-                1 => "(1)",
-                2 => "(2)",
+                1 => "Comments (1)",
+                2 => "Comments (2)",
                 _ => $"More Comments ({commentCount})"
             };
             AutomationProperties.SetName(commentActionButton, commentCount switch
@@ -8912,6 +8920,8 @@ try {{
         bool sentLoaded = false;
         int mailboxLoadGeneration = 0;
         int messageViewGeneration = 0;
+        var messageDetailViews = new Dictionary<string, UIElement>(StringComparer.Ordinal);
+        var messageDetailData = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         CancellationTokenSource? mailboxLoadCancellation = null;
         CancellationTokenSource? messageLoadCancellation = null;
 
@@ -9159,6 +9169,10 @@ try {{
             ShowDetailPlaceholder("Message sent", "Your message appears in Sent.");
             sentLoaded = false;
             sentRecords = [];
+            foreach (var key in messageDetailViews.Keys.Where(key => key.StartsWith("Sent:", StringComparison.Ordinal)).ToArray())
+                messageDetailViews.Remove(key);
+            foreach (var key in messageDetailData.Keys.Where(key => key.StartsWith("Sent:", StringComparison.Ordinal)).ToArray())
+                messageDetailData.Remove(key);
             var sentMode = modes.Items.OfType<SelectorBarItem>()
                 .FirstOrDefault(item => string.Equals(item.Tag as string, "Sent", StringComparison.Ordinal));
             if (sentMode is not null && !ReferenceEquals(modes.SelectedItem, sentMode))
@@ -9194,7 +9208,14 @@ try {{
             }
             var viewGeneration = ++messageViewGeneration;
             var activeMode = currentMode;
+            var cacheKey = $"{activeMode}:{id}";
             messageLoadCancellation?.Cancel();
+            if (messageDetailViews.TryGetValue(cacheKey, out var cachedDetail))
+            {
+                messageSelected = true;
+                NavigateShellFrame(detailFrame, cachedDetail, SlideNavigationTransitionEffect.FromRight);
+                return;
+            }
             var messageCancellation = new CancellationTokenSource();
             messageCancellation.CancelAfter(TimeSpan.FromSeconds(35));
             messageLoadCancellation = messageCancellation;
@@ -9205,9 +9226,14 @@ try {{
             NavigateShellFrame(detailFrame, loadingPanel, SlideNavigationTransitionEffect.FromRight);
             try
             {
-                using var document = await _api.GetMessageAsync(_session, id, activeMode == "Sent", messageCancellation.Token);
+                JsonElement rootMessage;
+                if (!messageDetailData.TryGetValue(cacheKey, out rootMessage))
+                {
+                    using var document = await _api.GetMessageAsync(_session, id, activeMode == "Sent", messageCancellation.Token);
+                    rootMessage = document.RootElement.Clone();
+                    messageDetailData[cacheKey] = rootMessage;
+                }
                 if (viewGeneration != messageViewGeneration || activeMode != currentMode) return;
-                var rootMessage = document.RootElement;
                 var threadRecords = SchoologyApiClient.ReadRecords(rootMessage, "message", "messages");
                 var threadMessages = threadRecords.Select(item => item.Data).ToList();
                 if (threadMessages.Count == 0 && rootMessage.ValueKind == System.Text.Json.JsonValueKind.Object &&
@@ -9303,6 +9329,7 @@ try {{
                 var scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
                 Grid.SetRow(scroll, 1); detailContent.Children.Add(scroll);
+                messageDetailViews[cacheKey] = detailContent;
                 NavigateShellFrame(detailFrame, detailContent, SlideNavigationTransitionEffect.FromRight);
             }
             catch (OperationCanceledException) when (viewGeneration != messageViewGeneration)
@@ -10023,7 +10050,7 @@ try {{
             }
             var finalData = finalRecord is null ? default : finalRecord.Data;
             var finalPeriods = SchoologyApiClient.ReadRecords(
-                finalData, "period", "periods", "final_period", "finalPeriod");
+                finalData, "period", "periods", "final_period", "finalPeriod", "final_grade_period", "finalGradePeriod");
             var finalPeriodRecord = finalPeriods.FirstOrDefault(record =>
                 string.Equals(ProfileValue(record.Data, "period_id", "periodId"), "final",
                     StringComparison.OrdinalIgnoreCase));
@@ -10176,6 +10203,71 @@ try {{
         return JsonBoolean(gradingScale, "hide_numeric", "hideNumeric") ? letter : $"{letter} ({percentage})";
     }
 
+    private async Task LoadStandaloneOverallGradeAsync(long sectionId, JsonElement sectionFallback, TextBlock target)
+    {
+        try
+        {
+            var session = _session;
+            if (session is null || sectionId <= 0) return;
+            async Task<JsonDocument?> TryLoadAsync(Func<Task<JsonDocument>> request)
+            {
+                try { return await request(); }
+                catch (Exception ex) { App.WriteStartupLog($"Could not load overall-grade metadata for section {sectionId}.", ex); return null; }
+            }
+            var responses = await Task.WhenAll(
+                TryLoadAsync(() => _api.GetSectionGradesAsync(session, sectionId)),
+                TryLoadAsync(() => _api.GetGradingScalesAsync(session, sectionId)),
+                TryLoadAsync(() => _api.GetSectionEnrollmentsAsync(session, sectionId)),
+                TryLoadAsync(() => _api.GetSectionDetailsAsync(session, sectionId)));
+            using var gradesDocument = responses[0];
+            using var scalesDocument = responses[1];
+            using var enrollmentsDocument = responses[2];
+            using var sectionDocument = responses[3];
+            var finalRecords = SchoologyApiClient.ReadRecords(gradesDocument?.RootElement ?? default,
+                "final_grade", "finalGrade", "final_grades", "finalGrades");
+            var enrollmentRecords = SchoologyApiClient.ReadRecords(enrollmentsDocument?.RootElement ?? default, "enrollment", "enrollments");
+            var ownEnrollment = enrollmentRecords.FirstOrDefault(record =>
+                string.Equals(ProfileValue(record.Data, "uid", "user_id", "userId"),
+                    session.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal));
+            var enrollmentId = JsonLong(ownEnrollment?.Data ?? default, "id", "enrollment_id", "enrollmentId");
+            if (enrollmentId <= 0) enrollmentId = JsonLong(sectionFallback, "enrollment_id", "enrollmentId");
+            var finalRecord = finalRecords.FirstOrDefault(record =>
+                enrollmentId > 0 && JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
+            if (finalRecord is null && finalRecords.Count == 1) finalRecord = finalRecords[0];
+            if (finalRecord is null)
+            {
+                var embedded = SchoologyApiClient.ReadRecords(sectionFallback, "final_grade", "finalGrade", "final_grades", "finalGrades");
+                finalRecord = embedded.FirstOrDefault(record =>
+                    enrollmentId > 0 && JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
+                if (finalRecord is null && embedded.Count == 1) finalRecord = embedded[0];
+            }
+            var finalData = finalRecord?.Data ?? default;
+            var periods = SchoologyApiClient.ReadRecords(finalData,
+                "period", "periods", "final_period", "finalPeriod", "final_grade_period", "finalGradePeriod");
+            var finalPeriod = periods.FirstOrDefault(record =>
+                string.Equals(ProfileValue(record.Data, "period_id", "periodId"), "final", StringComparison.OrdinalIgnoreCase));
+            var finalPeriodData = finalPeriod?.Data ?? default;
+            var sectionDetails = sectionDocument?.RootElement ?? sectionFallback;
+            if (sectionDetails.ValueKind == JsonValueKind.Object &&
+                sectionDetails.TryGetProperty("section", out var nestedSection)) sectionDetails = nestedSection;
+            if (sectionDetails.ValueKind == JsonValueKind.Object &&
+                sectionDetails.TryGetProperty("data", out var nestedData) && nestedData.ValueKind == JsonValueKind.Object)
+                sectionDetails = nestedData;
+            var scales = SchoologyApiClient.ReadRecords(scalesDocument?.RootElement ?? default,
+                "grading_scale", "gradingScale", "scales", "scale");
+            var scaleId = JsonLong(finalData, "scale_id", "scaleId");
+            if (scaleId <= 0) scaleId = JsonLong(finalPeriodData, "scale_id", "scaleId");
+            if (scaleId <= 0 && sectionDetails.ValueKind == JsonValueKind.Object &&
+                sectionDetails.TryGetProperty("options", out var options))
+                scaleId = JsonLong(options, "default_grading_scale_id", "defaultGradingScaleId");
+            var scale = scales.FirstOrDefault(record =>
+                scaleId > 0 && JsonLong(record.Data, "id", "scale_id", "scaleId") == scaleId);
+            if (scale is null && scales.Count == 1) scale = scales[0];
+            target.Text = FormatCourseOverallGrade(sectionFallback, finalData, finalPeriodData, scale?.Data ?? default);
+        }
+        catch (Exception ex) { App.WriteStartupLog($"Could not resolve standalone overall grade for section {sectionId}.", ex); }
+    }
+
     private Grid BuildGradesPage(long? onlyCourseId = null)
     {
         var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
@@ -10202,12 +10294,21 @@ try {{
             var header = new Grid { ColumnSpacing = 12, Padding = new Thickness(12), MinHeight = 56 };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var name = Text(course.Name, 15, true);
             name.VerticalAlignment = VerticalAlignment.Center;
             header.Children.Add(name);
+            var overallText = Text("—", 13, true);
+            overallText.VerticalAlignment = VerticalAlignment.Center;
+            overallText.HorizontalAlignment = HorizontalAlignment.Right;
+            overallText.MinWidth = 76;
+            AutomationProperties.SetName(overallText, $"Overall grade for {course.Name}");
+            Grid.SetColumn(overallText, 1);
+            header.Children.Add(overallText);
+            _ = LoadStandaloneOverallGradeAsync(course.Id, course.Data, overallText);
             var arrow = new FontIcon { Glyph = "\uE70D", FontSize = 14,
                 Foreground = ThemeBrush("TextFillColorSecondaryBrush"), VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(arrow, 1);
+            Grid.SetColumn(arrow, 2);
             header.Children.Add(arrow);
             var toggle = new Button
             {
@@ -10235,19 +10336,25 @@ try {{
                 try
                 {
                     var session = _session ?? throw new InvalidOperationException("Sign in to view grades.");
+                    async Task<JsonDocument?> TryLoadAsync(Func<Task<JsonDocument>> request)
+                    {
+                        try { return await request(); }
+                        catch (Exception ex) { App.WriteStartupLog($"A grade endpoint was unavailable for section {course.Id}.", ex); return null; }
+                    }
                     var responses = await Task.WhenAll(
-                        _api.GetUserGradesAsync(session),
-                        _api.GetGradingPeriodsAsync(session, course.Id),
-                        _api.GetGradingCategoriesAsync(session, course.Id),
-                        _api.GetGradeItemsAsync(session, course.Id));
+                        TryLoadAsync(() => _api.GetUserGradesForSectionAsync(session, course.Id)),
+                        TryLoadAsync(() => _api.GetGradingPeriodsAsync(session, course.Id)),
+                        TryLoadAsync(() => _api.GetGradingCategoriesAsync(session, course.Id)),
+                        TryLoadAsync(() => _api.GetGradeItemsAsync(session, course.Id)));
                     using var userGrades = responses[0];
                     using var periodDocument = responses[1];
                     using var categoryDocument = responses[2];
                     using var itemDocument = responses[3];
-                    var sections = SchoologyApiClient.ReadRecords(userGrades.RootElement, "section", "sections");
+                    var sections = SchoologyApiClient.ReadRecords(userGrades?.RootElement ?? default, "section", "sections");
                     var section = sections.FirstOrDefault(record =>
                         JsonLong(record.Data, "section_id", "sectionId", "id") == course.Id);
-                    if (section is null)
+                    var sectionData = section?.Data ?? course.Data;
+                    if (sectionData.ValueKind != JsonValueKind.Object)
                     {
                         gradeRows.Children.Clear();
                         gradeRows.Children.Add(EmptyState("No grades are available for this course."));
@@ -10256,43 +10363,46 @@ try {{
                     }
 
                     gradeRows.Children.Clear();
-                    var overall = ProfileValue(section.Data, "override_str", "override_numeric", "grade", "calculated_grade");
-                    if (string.IsNullOrWhiteSpace(overall) &&
-                        section.Data.TryGetProperty("final_grade", out var finals) &&
-                        finals.ValueKind == JsonValueKind.Array && finals.GetArrayLength() > 0)
-                        overall = ProfileValue(finals[0], "override_str", "override_numeric", "grade", "calculated_grade");
-                    if (!string.IsNullOrWhiteSpace(overall))
-                    {
-                        var summary = new Grid { Padding = new Thickness(14, 10, 14, 10), ColumnSpacing = 10 };
-                        summary.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                        summary.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                        summary.Children.Add(Text("Overall Grade", 14, true));
-                        var value = Text(FormatGradeDisplayValue(overall), 14, true);
-                        Grid.SetColumn(value, 1);
-                        summary.Children.Add(value);
-                        gradeRows.Children.Add(summary);
-                    }
+                    var embeddedFinalGrades = SchoologyApiClient.ReadRecords(sectionData,
+                        "final_grade", "finalGrade", "final_grades", "finalGrades");
+                    var embeddedFinal = embeddedFinalGrades.Count == 1 ? embeddedFinalGrades[0].Data : default;
+                    var embeddedPeriods = SchoologyApiClient.ReadRecords(embeddedFinal,
+                        "period", "periods", "final_period", "finalPeriod", "final_grade_period", "finalGradePeriod");
+                    var embeddedFinalPeriod = embeddedPeriods.FirstOrDefault(record =>
+                        string.Equals(ProfileValue(record.Data, "period_id", "periodId"), "final", StringComparison.OrdinalIgnoreCase));
+                    var summary = new Grid { Padding = new Thickness(14, 10, 14, 10), ColumnSpacing = 10 };
+                    summary.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    summary.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    summary.Children.Add(Text("Overall Grade", 14, true));
+                    var value = Text(FormatCourseOverallGrade(sectionData, embeddedFinal,
+                        embeddedFinalPeriod?.Data ?? default, default), 14, true);
+                    Grid.SetColumn(value, 1);
+                    summary.Children.Add(value);
+                    gradeRows.Children.Add(summary);
 
                     var gradesByAssignment = new Dictionary<long, JsonElement>();
-                    foreach (var period in SchoologyApiClient.ReadRecords(section.Data, "period", "periods"))
+                    foreach (var period in SchoologyApiClient.ReadRecords(sectionData, "period", "periods"))
                     foreach (var assignmentGrade in SchoologyApiClient.ReadRecords(period.Data, "assignment", "assignments"))
                     {
                         var assignmentId = JsonLong(assignmentGrade.Data, "assignment_id", "assignmentId", "id");
                         if (assignmentId > 0) gradesByAssignment[assignmentId] = assignmentGrade.Data;
                     }
 
-                    var periodNames = SchoologyApiClient.ReadRecords(periodDocument.RootElement,
+                    var periodNames = SchoologyApiClient.ReadRecords(periodDocument?.RootElement ?? default,
                         "grading_period", "gradePeriod", "period", "periods")
                         .GroupBy(record => JsonLong(record.Data, "id", "grading_period_id", "period_id").ToString(
                             System.Globalization.CultureInfo.InvariantCulture))
                         .ToDictionary(group => group.Key, group => ProfileValue(group.First().Data, "title", "name") ?? "Grading Period");
-                    var categoryNames = SchoologyApiClient.ReadRecords(categoryDocument.RootElement,
+                    var categoryNames = SchoologyApiClient.ReadRecords(categoryDocument?.RootElement ?? default,
                         "grading_category", "category", "categories")
                         .GroupBy(record => JsonLong(record.Data, "id", "grading_category_id", "category_id").ToString(
                             System.Globalization.CultureInfo.InvariantCulture))
                         .ToDictionary(group => group.Key, group => ProfileValue(group.First().Data, "title", "name") ?? "Category");
-                    var assignments = SchoologyApiClient.ReadRecords(itemDocument.RootElement,
+                    var assignments = SchoologyApiClient.ReadRecords(itemDocument?.RootElement ?? default,
                         "assignment", "assignments", "grade_item", "grade_items");
+                    if (assignments.Count == 0)
+                        assignments = SchoologyApiClient.ReadRecords(sectionData,
+                            "assignment", "assignments", "grade_item", "grade_items");
                     var periodGroups = assignments.GroupBy(record =>
                         JsonLong(record.Data, "grading_period_id", "grading_period", "period_id").ToString(
                             System.Globalization.CultureInfo.InvariantCulture))
@@ -10327,8 +10437,11 @@ try {{
                             }
                         });
                     }
-                    if (gradeRows.Children.Count == 0)
-                        gradeRows.Children.Add(EmptyState("No graded items are available for this course."));
+                    if (assignments.Count == 0)
+                        gradeRows.Children.Add(EmptyState("Assignment grade details are unavailable.",
+                            itemDocument is null
+                                ? "Schoology denied access to this course's grade-item list (HTTP 403). The overall grade above is still shown."
+                                : "Schoology did not return any graded items for this course."));
                     loaded = true;
                 }
                 catch (Exception ex)
