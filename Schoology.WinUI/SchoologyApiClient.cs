@@ -111,6 +111,28 @@ internal sealed class SchoologyApiClient
         CancellationToken cancellationToken = default) =>
         _auth.UploadSchoologyFileAsync(session, filename, mime, bytes, cancellationToken);
 
+    internal Task<string> UploadAssignmentAttachmentAsync(
+        SchoologyAuthService.Session session, string filename, string mime, byte[] bytes,
+        CancellationToken cancellationToken = default) =>
+        _auth.UploadSchoologyFileAsync(session, filename, mime, bytes, cancellationToken);
+
+    // Android CreateAssignmentSubmissionBody accepts a mixed list of File,
+    // SchoologyResource, and ImportedResource attachment IDs in one revision.
+    internal Task<JsonDocument> SubmitAssignmentAttachmentsAsync(
+        SchoologyAuthService.Session session, long sectionId, long assignmentId,
+        IReadOnlyList<Dictionary<string, string>> files, CancellationToken cancellationToken = default)
+    {
+        if (sectionId <= 0 || assignmentId <= 0 || files.Count == 0)
+            throw new InvalidOperationException("Assignment submission information is incomplete.");
+        if (files.Any(file => file.Count != 1 ||
+            !(file.ContainsKey("id") || file.ContainsKey("schoology_resource_id") ||
+              file.ContainsKey("imported_resource_id"))))
+            throw new InvalidOperationException("One or more assignment attachments have an unsupported type.");
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post,
+            $"section/{sectionId}/assignment/{assignmentId}/submission",
+            new { files }, cancellationToken);
+    }
+
     internal Task<JsonDocument> CreateMessageAsync(
         SchoologyAuthService.Session session, IReadOnlyList<long> recipientIds, string subject,
         string message, IReadOnlyList<string> fileIds, IReadOnlyList<long> resourceIds,

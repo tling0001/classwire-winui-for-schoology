@@ -116,6 +116,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private sealed record UpdateReleaseInfo(string Tag, string Version, string AssetName, Uri DownloadUri, long Size, string? Digest);
     private sealed record UpdateCheckState(long LastSuccessfulCheckUnixMilliseconds, string LastRemoteTag);
+    private sealed class PendingAssignmentSubmissionItem
+    {
+        internal required string Name { get; init; }
+        internal required string Kind { get; init; }
+        internal IStorageFile? File { get; init; }
+        internal long ResourceId { get; init; }
+        internal string? UploadedFileId { get; set; }
+        internal required ProgressBar Progress { get; init; }
+        internal required TextBlock Status { get; init; }
+        internal required ListViewItem Row { get; init; }
+    }
 
     public MainWindow()
     {
@@ -1768,37 +1779,329 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private async Task ShowAssignmentUploadOptionsDialogAsync()
     {
-        if (_session is null || !_activeAssignmentAllowsSubmission) return;
-        var content = new Grid { MinWidth = 360, ColumnSpacing = 10 };
-        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var file = new Button { Content = "File", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Center, Padding = new Thickness(14, 12, 14, 12) };
-        var resource = new Button { Content = "Resource", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Center, Padding = new Thickness(14, 12, 14, 12) };
-        var dialog = new ContentDialog
+        var session = _session;
+        var sectionId = _activeAssignmentSectionId;
+        var assignmentId = _activeAssignmentId;
+        if (session is null || !_activeAssignmentAllowsSubmission || sectionId <= 0 || assignmentId <= 0) return;
+
+        var pending = new List<PendingAssignmentSubmissionItem>();
+        var list = new ListView
         {
-            Title = "Upload Submission",
-            Content = content,
-            CloseButtonText = "Cancel",
-            XamlRoot = _root.XamlRoot,
-            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+            SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = false,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            MaxHeight = 300,
+            Background = new SolidColorBrush(Colors.Transparent)
         };
-        file.Click += async (_, _) =>
+        AutomationProperties.SetAutomationId(list, "AssignmentSubmissionPendingFilesList");
+
+        void AddPendingItem(string name, string kind, IStorageFile? file, long resourceId)
         {
-            dialog.Hide();
-            await PickAndSubmitAssignmentFileAsync();
-        };
-        resource.Click += async (_, _) =>
+            if (kind == "File" && file is not null &&
+                pending.Any(item => item.Kind == "File" &&
+                    string.Equals(item.File?.Path, file.Path, StringComparison.OrdinalIgnoreCase)))
+                return;
+            if (kind == "Resource" && pending.Any(item => item.Kind == "Resource" && item.ResourceId == resourceId))
+                return;
+
+            var status = Text(kind == "File" ? "Ready to upload" : "Ready to submit", 11);
+            status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+            var progress = new ProgressBar
+            {
+                Minimum = 0, Maximum = 100, Value = 0,
+                IsIndeterminate = false,
+                Visibility = Visibility.Collapsed,
+                Height = 4
+            };
+            var labels = new StackPanel { Spacing = 4 };
+            labels.Children.Add(Text(name, 13, true));
+            labels.Children.Add(status);
+            labels.Children.Add(progress);
+            var remove = new Button
+            {
+                Content = new FontIcon { Glyph = "\\uE711", FontSize = 12 },
+                Style = (Style)Application.Current.Resources["DefaultButtonStyle"],
+                Padding = new Thickness(8),
+                MinWidth = 34,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            AutomationProperties.SetName(remove, $"Remove {name}");
+            var rowGrid = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 6, 8, 6) };
+            rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            rowGrid.Children.Add(labels);
+            Grid.SetColumn(remove, 1);
+            rowGrid.Children.Add(remove);
+            var row = new ListViewItem
+            {
+                Content = rowGrid,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch
+            };
+            var item = new PendingAssignmentSubmissionItem
+            {
+                Name = name, Kind = kind, File = file, ResourceId = resourceId,
+                Progress = progress, Status = status, Row = row
+            };
+            remove.Click += (_, _) =>
+            {
+                pending.Remove(item);
+                list.Items.Remove(row);
+            };
+            pending.Add(item);
+            list.Items.Add(row);
+        }
+
+        var fileButton = new Button
         {
-            dialog.Hide();
-            await ShowAssignmentResourcePickerAsync();
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 8,
+                Children = { new FontIcon { Glyph = "\\uE8A5" }, Text("File", 13, true) }
+            },
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(12, 10, 12, 10)
         };
-        Grid.SetColumn(file, 0);
-        Grid.SetColumn(resource, 1);
-        content.Children.Add(file);
-        content.Children.Add(resource);
-        await dialog.ShowAsync();
+        var resourceButton = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, Spacing = 8,
+                Children = { new FontIcon { Glyph = "\\uE8B7" }, Text("Resources", 13, true) }
+            },
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(12, 10, 12, 10)
+        };
+        AutomationProperties.SetAutomationId(fileButton, "AssignmentSubmissionAddFiles");
+        AutomationProperties.SetAutomationId(resourceButton, "AssignmentSubmissionAddResources");
+        var buttons = new Grid { ColumnSpacing = 10 };
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        buttons.Children.Add(fileButton);
+        Grid.SetColumn(resourceButton, 1);
+        buttons.Children.Add(resourceButton);
+
+        var comment = new TextBox
+        {
+            Header = "Assignment comment (optional)",
+            PlaceholderText = "Add a comment about this submission…",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 76,
+            MaxHeight = 140
+        };
+        AutomationProperties.SetAutomationId(comment, "AssignmentSubmissionComment");
+        var content = new StackPanel { Spacing = 12, MinWidth = 380 };
+        content.Children.Add(buttons);
+        content.Children.Add(Text("Selected files and resources", 12, true));
+        content.Children.Add(list);
+        content.Children.Add(EmptyState("Add one or more files or Schoology resources. They will be submitted together as one revision."));
+        content.Children.Add(comment);
+        content.Children.Add(Text("The optional comment is posted to the assignment's comments, separately from the file revision.", 11));
+
+        string? requestedAction = null;
+        ContentDialog? activeDialog = null;
+        fileButton.Click += async (_, _) =>
+        {
+            var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
+            picker.FileTypeFilter.Add("*");
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, Win32Interop.GetWindowFromWindowId(AppWindow.Id));
+            var files = await picker.PickMultipleFilesAsync();
+            foreach (var file in files)
+            {
+                try
+                {
+                    var info = new FileInfo(file.Path);
+                    if (!info.Exists || info.Length <= 0)
+                    {
+                        await ShowApiErrorAsync("Unable to add file", $"{file.Name} is empty or no longer available.");
+                        continue;
+                    }
+                    if (info.Length > 60L * 1024 * 1024)
+                    {
+                        await ShowApiErrorAsync("Unable to add file", $"{file.Name} exceeds the 60 MB file limit.");
+                        continue;
+                    }
+                    AddPendingItem(file.Name, "File", file, 0);
+                }
+                catch (Exception ex) { await ShowApiErrorAsync("Unable to add file", ex.Message); }
+            }
+        };
+        resourceButton.Click += (_, _) =>
+        {
+            requestedAction = "resource";
+            // Close this dialog before opening the resource picker; WinUI permits
+            // only one ContentDialog at a time.
+            activeDialog?.Hide();
+        };
+
+        while (true)
+        {
+            activeDialog = new ContentDialog
+            {
+                Title = "Upload Submission",
+                Content = content,
+                PrimaryButtonText = "Submit",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+            };
+            var result = await activeDialog.ShowAsync();
+            if (requestedAction == "resource")
+            {
+                requestedAction = null;
+                var resources = await ShowAssignmentResourcePickerAsync();
+                foreach (var resource in resources)
+                    AddPendingItem(resource.Title, "Resource", null, resource.Id);
+                continue;
+            }
+            if (result != ContentDialogResult.Primary) return;
+            if (pending.Count == 0)
+            {
+                await ShowApiErrorAsync("No submission attachments", "Add at least one file or Schoology resource before submitting.");
+                continue;
+            }
+
+            try
+            {
+                var files = new List<Dictionary<string, string>>();
+                foreach (var item in pending)
+                {
+                    if (item.Kind == "File")
+                    {
+                        if (item.File is null) throw new InvalidOperationException($"The file {item.Name} is no longer available.");
+                        if (string.IsNullOrWhiteSpace(item.UploadedFileId))
+                        {
+                            item.Progress.Visibility = Visibility.Visible;
+                            item.Progress.IsIndeterminate = true;
+                            item.Status.Text = "Uploading…";
+                            var bytes = await File.ReadAllBytesAsync(item.File.Path);
+                            item.UploadedFileId = await _api.UploadAssignmentAttachmentAsync(
+                                session, item.Name, GetSubmissionMimeType(item.Name), bytes);
+                        }
+                        item.Progress.IsIndeterminate = false;
+                        item.Progress.Value = 100;
+                        item.Status.Text = "Uploaded";
+                        files.Add(new Dictionary<string, string> { ["id"] = item.UploadedFileId! });
+                    }
+                    else
+                    {
+                        files.Add(new Dictionary<string, string>
+                        {
+                            ["schoology_resource_id"] = item.ResourceId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        });
+                        item.Progress.Visibility = Visibility.Visible;
+                        item.Progress.Value = 100;
+                        item.Status.Text = "Ready";
+                    }
+                }
+
+                using var response = await _api.SubmitAssignmentAttachmentsAsync(
+                    session, sectionId, assignmentId, files);
+                if (!string.IsNullOrWhiteSpace(comment.Text))
+                {
+                    try
+                    {
+                        using var commentResult = await _api.AddAssignmentCommentAsync(
+                            session, sectionId, assignmentId, comment.Text.Trim());
+                    }
+                    catch (Exception commentException)
+                    {
+                        await ShowApiErrorAsync("Submission uploaded, but comment failed",
+                            $"Your files were submitted successfully. The separate assignment comment could not be posted: {commentException.Message}");
+                    }
+                }
+                await ShowAssignmentDetailsAsync(sectionId, new SchoologyApiRecord("Assignment", "",
+                    JsonDocument.Parse("{\\"id\\":" + assignmentId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}").RootElement.Clone()));
+                return;
+            }
+            catch (Exception ex)
+            {
+                App.WriteStartupLog("Assignment attachment submission failed.", ex);
+                await ShowApiErrorAsync("Unable to submit assignment", ex.Message);
+                // Keep already-uploaded file IDs in the staged list so retrying
+                // submits the same files rather than uploading duplicates.
+            }
+        }
+    }
+
+    private async Task<IReadOnlyList<(long Id, string Title)>> ShowAssignmentResourcePickerAsync()
+    {
+        var session = _session;
+        if (session is null || !_activeAssignmentAllowsSubmission) return [];
+        try
+        {
+            var choices = new List<(long Id, string Title)>();
+            var seenResources = new HashSet<long>();
+            var visitedFolders = new HashSet<(long CollectionId, long FolderId)>();
+            using var collections = await _api.GetResourceCollectionsAsync(session);
+            var collectionRecords = SchoologyApiClient.ReadRecords(collections.RootElement, "collection", "collections", "items");
+            async Task LoadCollectionFolderAsync(long collectionId, long folderId, int depth)
+            {
+                if (depth > 4 || !visitedFolders.Add((collectionId, folderId))) return;
+                using var resources = await _api.GetCollectionResourcesAsync(session, collectionId, folderId);
+                foreach (var resource in SchoologyApiClient.ReadRecords(resources.RootElement, "resource", "resources", "items"))
+                {
+                    if (IsFolderRecord(resource.Data))
+                    {
+                        var nestedFolderId = JsonLong(resource.Data, "id", "folder_id", "folderId");
+                        if (nestedFolderId > 0) await LoadCollectionFolderAsync(collectionId, nestedFolderId, depth + 1);
+                        continue;
+                    }
+                    var id = JsonLong(resource.Data, "template_id", "templateID", "resource_id", "resourceId", "id");
+                    if (id <= 0 || !seenResources.Add(id)) continue;
+                    var title = ProfileValue(resource.Data, "title", "name") ?? resource.Title;
+                    choices.Add((id, title));
+                }
+            }
+            foreach (var collection in collectionRecords)
+            {
+                var collectionId = JsonLong(collection.Data, "id", "collection_id", "collectionId");
+                if (collectionId > 0) await LoadCollectionFolderAsync(collectionId, 0, 0);
+            }
+            if (choices.Count == 0)
+            {
+                await ShowApiErrorAsync("No Schoology resources", "No attachable resources were found in your resource collections.");
+                return [];
+            }
+            var list = new ListView
+            {
+                SelectionMode = ListViewSelectionMode.Multiple,
+                MaxHeight = 460,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch
+            };
+            AutomationProperties.SetAutomationId(list, "AssignmentResourcePickerList");
+            foreach (var choice in choices)
+                list.Items.Add(new ListViewItem
+                {
+                    Content = Text(choice.Title, 13),
+                    Tag = choice.Id,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch
+                });
+            var dialog = new ContentDialog
+            {
+                Title = "Choose Schoology resources",
+                Content = list,
+                PrimaryButtonText = "Add selected",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return [];
+            return list.SelectedItems.OfType<ListViewItem>()
+                .Where(item => item.Tag is long id && id > 0)
+                .Select(item => ((long)item.Tag!, ((TextBlock)item.Content).Text))
+                .ToArray();
+        }
+        catch (Exception ex)
+        {
+            App.WriteStartupLog("Assignment resource selection failed.", ex);
+            await ShowApiErrorAsync("Unable to load resources", ex.Message);
+            return [];
+        }
     }
 
     private async Task ShowAssignmentAttachmentsDialogAsync(
@@ -7716,7 +8019,7 @@ try {{
         var content = SchoologyRichContent.Create(markup, fontSize, async uri =>
         {
             await OpenExternalLinkAsync(uri.AbsoluteUri);
-        });
+        }, darkTheme: _root.ActualTheme == ElementTheme.Dark && !_highContrastEnabled);
         content.Foreground = ThemeBrush("SchoologyTextBrush");
         return content;
     }
@@ -7991,9 +8294,25 @@ try {{
         var liked = JsonBoolean(update.Data, "user_like_action", "user_liked", "userLiked", "liked", "is_liked");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         StackPanel previewPanel = new() { Spacing = 6, Visibility = Visibility.Collapsed };
-        Button viewMoreButton = null!;
-        Button viewCommentsButton = null!;
+        Button commentActionButton = null!;
         Button viewLikesButton = null!;
+        void UpdateCommentActionLabel()
+        {
+            commentActionButton.Content = commentCount switch
+            {
+                <= 0 => "Comment",
+                1 => "(1)",
+                2 => "(2)",
+                _ => $"More Comments ({commentCount})"
+            };
+            AutomationProperties.SetName(commentActionButton, commentCount switch
+            {
+                <= 0 => "Add a comment",
+                1 => "View 1 comment",
+                2 => "View 2 comments",
+                _ => $"View more comments, {commentCount} total"
+            });
+        }
         var inlineComposer = new StackPanel
         {
             Spacing = 8,
@@ -8033,11 +8352,11 @@ try {{
                 var refreshedComments = SchoologyApiClient.ReadRecords(refreshed.RootElement, "comment", "comments");
                 await ResolveCommentAuthorsAsync(refreshedComments, _session);
                 commentCount = refreshedComments.Count;
-                viewCommentsButton.Content = commentCount > 0 ? $"View {commentCount} comments" : "No comments";
-                viewCommentsButton.IsEnabled = commentCount > 0;
+                UpdateCommentActionLabel();
                 inlineCommentInput.Text = string.Empty;
                 inlineComposer.Visibility = Visibility.Collapsed;
-                _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
+                _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel,
+                    count => { commentCount = count; UpdateCommentActionLabel(); });
             }
             catch (Exception ex) { await ShowApiErrorAsync("Unable to post comment", ex.Message); }
             finally { inlinePostButton.IsEnabled = true; }
@@ -8045,30 +8364,28 @@ try {{
         inlineCommentActions.Children.Add(inlinePostButton);
         inlineComposer.Children.Add(inlineCommentInput);
         inlineComposer.Children.Add(inlineCommentActions);
-        var commentButton = new Button { Content = "Comment" };
-        AutomationProperties.SetAutomationId(commentButton, $"UpdateComment_{updateId}");
-        commentButton.Click += (_, _) =>
+        commentActionButton = new Button();
+        AutomationProperties.SetAutomationId(commentActionButton, $"UpdateComments_{updateId}");
+        UpdateCommentActionLabel();
+        commentActionButton.Click += async (_, _) =>
         {
             if (updateId <= 0 || commentRealmId <= 0 || _session is null) return;
-            inlineComposer.Visibility = inlineComposer.Visibility == Visibility.Visible
-                ? Visibility.Collapsed : Visibility.Visible;
-            if (inlineComposer.Visibility == Visibility.Visible)
-                inlineCommentInput.Focus(FocusState.Programmatic);
-        };
-        viewCommentsButton = new Button
-        {
-            Content = commentCount > 0 ? $"View {commentCount} comments" : "No comments",
-            IsEnabled = commentCount > 0
-        };
-        AutomationProperties.SetAutomationId(viewCommentsButton, $"UpdateViewComments_{updateId}");
-        viewCommentsButton.Click += async (_, _) =>
+            if (commentCount <= 0)
+            {
+                inlineComposer.Visibility = inlineComposer.Visibility == Visibility.Visible
+                    ? Visibility.Collapsed : Visibility.Visible;
+                if (inlineComposer.Visibility == Visibility.Visible)
+                    inlineCommentInput.Focus(FocusState.Programmatic);
+                return;
+            }
             await ShowUpdateCommentsDialogAsync(commentRealm, commentRealmId, updateId, () =>
             {
                 commentCount++;
-                viewCommentsButton.Content = $"View {commentCount} comments";
-                viewCommentsButton.IsEnabled = true;
-                _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
+                UpdateCommentActionLabel();
+                _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel,
+                    count => { commentCount = count; UpdateCommentActionLabel(); });
             });
+        };
         var likeButton = new Button { Content = liked ? "Unlike" : "Like" };
         AutomationProperties.SetAutomationId(likeButton, $"UpdateLike_{updateId}");
         likeButton.Click += async (_, _) =>
@@ -8094,26 +8411,16 @@ try {{
         };
         AutomationProperties.SetAutomationId(viewLikesButton, $"UpdateViewLikes_{updateId}");
         viewLikesButton.Click += async (_, _) => await ShowUpdateLikesDialogAsync(updateId);
-        actions.Children.Add(commentButton);
-        actions.Children.Add(viewCommentsButton);
+        actions.Children.Add(commentActionButton);
         actions.Children.Add(likeButton);
         actions.Children.Add(viewLikesButton);
         card.Children.Add(actions);
         card.Children.Add(inlineComposer);
 
-        viewMoreButton = new Button { Content = "View more comments", HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetAutomationId(viewMoreButton, $"UpdateViewMoreComments_{updateId}");
-        viewMoreButton.Click += async (_, _) =>
-            await ShowUpdateCommentsDialogAsync(commentRealm, commentRealmId, updateId, () =>
-            {
-                commentCount++;
-                viewCommentsButton.Content = $"View {commentCount} comments";
-                viewCommentsButton.IsEnabled = true;
-                _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
-            });
         card.Children.Add(previewPanel);
         if (commentCount > 0 && commentRealmId > 0 && updateId > 0)
-            _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel, viewMoreButton);
+            _ = LoadRecentPostCommentsAsync(commentRealm, commentRealmId, updateId, previewPanel,
+                count => { commentCount = count; UpdateCommentActionLabel(); });
 
         return Surface(card);
     }
@@ -8176,7 +8483,7 @@ try {{
     }
 
     private async Task LoadRecentPostCommentsAsync(
-        string kind, long entityId, long updateId, StackPanel preview, Button viewMore)
+        string kind, long entityId, long updateId, StackPanel preview, Action<int>? onCountChanged = null)
     {
         try
         {
@@ -8189,6 +8496,7 @@ try {{
             using var document = await _api.GetUpdateCommentsAsync(_session, kind, entityId, updateId);
             var comments = SchoologyApiClient.ReadRecords(document.RootElement, "comment", "comments");
             await ResolveCommentAuthorsAsync(comments, _session);
+            onCountChanged?.Invoke(comments.Count);
             preview.Children.Clear();
             if (comments.Count == 0)
             {
@@ -8196,17 +8504,11 @@ try {{
                 return;
             }
 
-            if (comments.Count > 2)
-            {
-                viewMore.Content = $"View more comments ({comments.Count})";
-                preview.Children.Add(viewMore);
-            }
-
             foreach (var comment in comments.TakeLast(2))
             {
                 preview.Children.Add(BuildCommentRow(comment, updateId, (parentId, author) =>
                     _ = ShowUpdateCommentComposerAsync(kind, entityId, updateId,
-                        () => _ = LoadRecentPostCommentsAsync(kind, entityId, updateId, preview, viewMore),
+                        () => _ = LoadRecentPostCommentsAsync(kind, entityId, updateId, preview, onCountChanged),
                         parentId)));
             }
             preview.Visibility = Visibility.Visible;
@@ -8214,7 +8516,7 @@ try {{
         catch
         {
             // Keep the post usable if preview loading fails; the full comments
-            // dialog still provides a retryable, explicit interaction.
+            // dialog remains available through the action button.
             preview.Visibility = Visibility.Collapsed;
         }
     }

@@ -1,5 +1,12 @@
 # Release notes
 
+## [2026.10.0-port.85] - 2026-11-04
+
+- Replace immediate single-file assignment uploads with a staged multi-attachment submission dialog. Select multiple local files and multiple Schoology resources, review/remove staged items, see per-item upload progress, and submit all attachments together in one revision using Android's mixed attachment payload model.
+- Add an optional assignment comment to the submission dialog and post it through Schoology's separate assignment-comments endpoint; clearly distinguish it from revision attachments because Android's revision model has no comment field.
+- Consolidate post comment actions: show Comment, (1), (2), or More Comments (N), open the comments view when comments exist, and remove the separate View more comments control.
+- Improve dark-mode rich text contrast by lightening authored foreground colors that would otherwise be unreadable on dark post surfaces, while leaving Light theme and High Contrast colors alone.
+
 ## [2026.10.0-port.84] - 2026-11-04
 
 - Fix the WinUI 3 calendar build by using CalendarViewDayItem.SetDensityColors without the unsupported Density property and avoiding a sender/discard variable collision in the asynchronous month loader.

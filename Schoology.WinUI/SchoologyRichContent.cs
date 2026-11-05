@@ -24,13 +24,43 @@ internal static class SchoologyRichContent
         RegexOptions.Compiled | RegexOptions.Singleline);
     private static readonly Uri SchoologyBaseUri = new("https://app.schoology.com/");
 
+    private static Windows.UI.Color EnsureDarkThemeContrast(Windows.UI.Color color)
+    {
+        static double Linear(byte channel)
+        {
+            var value = channel / 255d;
+            return value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+        }
+        static double Luminance(Windows.UI.Color value) =>
+            0.2126 * Linear(value.R) + 0.7152 * Linear(value.G) + 0.0722 * Linear(value.B);
+        static double Contrast(double first, double second) =>
+            (Math.Max(first, second) + 0.05) / (Math.Min(first, second) + 0.05);
+
+        // Schoology post cards use a dark neutral surface in Dark theme.
+        const double backgroundLuminance = 0.014;
+        if (Contrast(Luminance(color), backgroundLuminance) >= 4.5) return color;
+
+        for (var step = 1; step <= 20; step++)
+        {
+            var amount = step / 20d;
+            var adjusted = Windows.UI.Color.FromArgb(color.A,
+                (byte)Math.Round(color.R + (255 - color.R) * amount),
+                (byte)Math.Round(color.G + (255 - color.G) * amount),
+                (byte)Math.Round(color.B + (255 - color.B) * amount));
+            if (Contrast(Luminance(adjusted), backgroundLuminance) >= 4.5)
+                return adjusted;
+        }
+        return Windows.UI.Color.FromArgb(color.A, 255, 255, 255);
+    }
+
     private readonly record struct InlineStyle(
         string? FontFamily, double FontSize, FontWeight FontWeight, FontStyle FontStyle,
         bool Underline, Windows.UI.Color? ForegroundColor);
 
     private readonly record struct StyleFrame(string Tag, InlineStyle PreviousStyle, Uri? PreviousLink);
 
-    internal static RichTextBlock Create(string? markup, double fontSize, Func<Uri, Task>? openLink = null)
+    internal static RichTextBlock Create(string? markup, double fontSize,
+        Func<Uri, Task>? openLink = null, bool darkTheme = false)
     {
         var block = new RichTextBlock
         {
@@ -87,7 +117,8 @@ internal static class SchoologyRichContent
             if (!string.IsNullOrWhiteSpace(style.FontFamily))
                 run.FontFamily = new FontFamily(style.FontFamily);
             if (style.ForegroundColor is { } foregroundColor)
-                run.Foreground = new SolidColorBrush(foregroundColor);
+                run.Foreground = new SolidColorBrush(darkTheme
+                    ? EnsureDarkThemeContrast(foregroundColor) : foregroundColor);
 
             Inline inline = run;
             if (style.Underline)
