@@ -40,6 +40,10 @@ internal sealed class SchoologyApiClient
         SchoologyAuthService.Session session, long sectionId, long folderId, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, $"courses/{sectionId}/folder/{folderId}", null, cancellationToken);
 
+    internal Task<JsonDocument> GetCoursePageAsync(
+        SchoologyAuthService.Session session, long sectionId, long pageId, CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/pages/{pageId}", null, cancellationToken);
+
     internal Task<JsonDocument> GetAssignmentsAsync(
         SchoologyAuthService.Session session, long sectionId, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, $"sections/{sectionId}/assignments",

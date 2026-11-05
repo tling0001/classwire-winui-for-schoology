@@ -5228,11 +5228,19 @@ try {{
         heading.Children.Add(Text(tab, 17, true));
         Grid.SetRow(heading, 0); layout.Children.Add(heading);
         var body = new StackPanel { Spacing = 14 };
-        FrameworkElement bodyContent = tab is "Materials" or "Assignments" or "Members" or "Discussions" or "Grades"
+        FrameworkElement bodyContent = tab is "Assignments" or "Members" or "Discussions" or "Grades"
             ? body
-            : new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            : new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Content = body, Background = new SolidColorBrush(Colors.Transparent) };
+                VerticalAlignment = VerticalAlignment.Stretch,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Content = body,
+                Background = new SolidColorBrush(Colors.Transparent)
+            };
+        if (tab == "Materials" && bodyContent is ScrollViewer materialsViewport)
+            AutomationProperties.SetAutomationId(materialsViewport, "CourseMaterialsViewport");
         Grid.SetRow(bodyContent, 1); layout.Children.Add(bodyContent);
         var statusHost = LoadingStatus("Loading from Schoology…", out var status);
         status.Foreground = ThemeBrush("SchoologyMutedTextBrush"); body.Children.Add(statusHost);
@@ -5594,6 +5602,64 @@ try {{
         catch (Exception ex) { await ShowApiErrorAsync("Unable to load assignment", ex.Message); }
     }
 
+    private async Task ShowCoursePageAsync(long sectionId, SchoologyApiRecord record)
+    {
+        try
+        {
+            var session = _session ?? throw new InvalidOperationException("Sign in to view this page.");
+            var pageId = JsonLong(record.Data, "page_id", "pageId", "id", "template_id", "templateID");
+            if (pageId <= 0) throw new InvalidOperationException("Schoology did not return a valid page ID.");
+            using var document = await _api.GetCoursePageAsync(session, sectionId, pageId);
+            var pageData = document.RootElement;
+            if (pageData.ValueKind == JsonValueKind.Object && pageData.TryGetProperty("page", out var nestedPage))
+                pageData = nestedPage;
+            var title = ProfileValue(pageData, "title", "name", "page_title") ?? record.Title;
+            var markup = ProfileValue(pageData, "body", "body_richtext", "bodyRichtext",
+                "description_richtext", "descriptionRichtext", "description", "content", "text");
+
+            var header = new Grid { ColumnSpacing = 12, Margin = new Thickness(8, 4, 8, 8) };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.Children.Add(Action("‹ Back", (_, _) =>
+                ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId))));
+            var heading = Text(title, 21, true);
+            heading.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(heading, 1);
+            header.Children.Add(heading);
+
+            var content = new StackPanel { Spacing = 12, Margin = new Thickness(12, 4, 12, 20) };
+            if (string.IsNullOrWhiteSpace(markup))
+                content.Children.Add(EmptyState("This page has no content."));
+            else
+                content.Children.Add(CreateRichContent(markup, 14));
+            var pageAttachments = BuildAttachmentControls(pageData,
+                () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
+            if (pageAttachments.Children.Count > 0)
+            {
+                content.Children.Add(Text("Attachments", 14, true));
+                content.Children.Add(pageAttachments);
+            }
+
+            var page = new Grid { RowSpacing = 8, Margin = new Thickness(12) };
+            page.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            page.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            page.Children.Add(header);
+            var scroll = new ScrollViewer
+            {
+                Content = content,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Background = new SolidColorBrush(Colors.Transparent)
+            };
+            Grid.SetRow(scroll, 1);
+            page.Children.Add(scroll);
+
+            if (_sectionFrame is not null) NavigateMainSection(page, title);
+            else Reset(BuildApplicationShell(title, page));
+        }
+        catch (Exception ex) { await ShowApiErrorAsync("Unable to load Schoology page", ex.Message); }
+    }
+
     private async Task ShowDiscussionDetailsAsync(string kind, long entityId, SchoologyApiRecord record) =>
         await ShowContentDetailsAsync(kind, entityId, record, false);
     private async Task ShowEventDetailsAsync(string kind, long entityId, SchoologyApiRecord record) =>
@@ -5920,6 +5986,30 @@ try {{
             return files;
         }
         return default;
+    }
+
+    private static JsonElement FirstLinkAttachment(JsonElement data)
+    {
+        if (data.ValueKind != JsonValueKind.Object) return default;
+        JsonElement attachments = default;
+        if (!data.TryGetProperty("attachments", out attachments) &&
+            !data.TryGetProperty("attachment", out attachments)) return default;
+        if (attachments.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in attachments.EnumerateArray())
+            {
+                var found = FirstLinkAttachment(item);
+                if (found.ValueKind == JsonValueKind.Object) return found;
+            }
+            return default;
+        }
+        if (attachments.ValueKind != JsonValueKind.Object || !attachments.TryGetProperty("links", out var links))
+            return default;
+        if (links.ValueKind == JsonValueKind.Object && links.TryGetProperty("link", out var nested))
+            links = nested;
+        if (links.ValueKind == JsonValueKind.Array)
+            return links.GetArrayLength() > 0 ? links[0] : default;
+        return links.ValueKind == JsonValueKind.Object ? links : default;
     }
 
     private static string SafeMaterialFileName(string? value, string fallback = "Schoology file")
@@ -6372,14 +6462,7 @@ try {{
     {
         var panel = new StackPanel { Spacing = 8 };
         var materialRows = new StackPanel { Spacing = 2 };
-        var scrollViewer = new ScrollViewer
-        {
-            Content = materialRows,
-            MaxHeight = 680,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
-        };
-        AutomationProperties.SetAutomationId(scrollViewer, "CourseMaterialsList");
+        AutomationProperties.SetAutomationId(materialRows, "CourseMaterialsList");
 
         void AnimateFolderArrow(FontIcon arrow, bool expanded)
         {
@@ -6648,8 +6731,15 @@ try {{
         async Task OpenMaterialAsync(SchoologyApiRecord record)
         {
             var title = ProfileValue(record.Data, "title", "name", "filename", "file_name") ?? record.Title;
-            var materialType = (ProfileValue(record.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
-            var materialId = JsonLong(record.Data, "assignment_id", "assignmentId", "id", "document_id", "documentId");
+            var materialType = (ProfileValue(record.Data, "type", "resource_type", "template_type", "templateType",
+                "document_type", "documentType") ?? "").ToLowerInvariant();
+            var materialId = JsonLong(record.Data, "assignment_id", "assignmentId", "page_id", "pageId",
+                "id", "document_id", "documentId", "template_id", "templateID");
+            if (materialType == "page" && materialId > 0)
+            {
+                await ShowCoursePageAsync(sectionId, record);
+                return;
+            }
             if (materialType == "discussion")
             {
                 var discussionId = JsonLong(record.Data, "discussion_id", "discussionId", "id");
@@ -6708,15 +6798,26 @@ try {{
             }
 
             var rawUrl = ProfileValue(record.Data, "web_url", "webUrl", "launch_url", "launchUrl",
-                "external_url", "externalUrl", "url", "href", "link", "location", "download_url", "downloadUrl",
-                "file_download_url", "fileDownloadURL", "download_path", "downloadPath", "file_url", "fileUrl");
-            if ((materialType is "link" or "video") && materialId > 0 && _session is not null)
+                "external_url", "externalUrl", "url", "href", "link", "link_url", "linkURL",
+                "location", "download_url", "downloadUrl", "file_download_url", "fileDownloadURL",
+                "download_path", "downloadPath", "file_url", "fileUrl");
+            var linkAttachment = FirstLinkAttachment(record.Data);
+            if (string.IsNullOrWhiteSpace(rawUrl))
+                rawUrl = ProfileValue(linkAttachment, "link_url", "linkURL", "linkUrl", "url", "href");
+            if (((materialType is "link" or "video") || (documentType is "link" or "external_tool")) &&
+                materialId > 0 && _session is not null)
             {
                 using var documentDetails = await _api.GetDocumentAsync(_session, sectionId, materialId);
                 var documentData = documentDetails.RootElement.TryGetProperty("document", out var nestedDocument)
                     ? nestedDocument : documentDetails.RootElement;
                 if (string.IsNullOrWhiteSpace(rawUrl))
-                    rawUrl = ProfileValue(documentData, "web_url", "webUrl", "url", "href", "launch_url", "launchUrl", "location");
+                    rawUrl = ProfileValue(documentData, "web_url", "webUrl", "url", "href",
+                        "link_url", "linkURL", "linkUrl", "launch_url", "launchUrl", "location");
+                if (string.IsNullOrWhiteSpace(rawUrl))
+                {
+                    linkAttachment = FirstLinkAttachment(documentData);
+                    rawUrl = ProfileValue(linkAttachment, "link_url", "linkURL", "linkUrl", "url", "href");
+                }
             }
             if (!string.IsNullOrWhiteSpace(rawUrl))
             {
@@ -6726,10 +6827,11 @@ try {{
                 if (!rawUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
                     !rawUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
                     rawUrl = "https://app.schoology.com/" + rawUrl.TrimStart('/');
-                if (Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
+                if (Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp))
                 {
                     var type = (ProfileValue(record.Data, "type", "resource_type", "document_type", "documentType") ?? "").ToLowerInvariant();
                     var isLtiOrAssessment = type.Contains("lti") || type.Contains("external_tool") ||
+                        documentType.Contains("external_tool", StringComparison.Ordinal) ||
                         type.Contains("assessment") || type.Contains("quiz") || type.Contains("test") ||
                 type.Contains("embed") || type.Contains("scorm");
                     if (isLtiOrAssessment)
@@ -6752,7 +6854,7 @@ try {{
         AddMaterialRows(materialRows, initialRecords, 0);
         if (initialRecords.Count == 0)
             materialRows.Children.Add(EmptyState("This folder is empty"));
-        panel.Children.Add(scrollViewer);
+        panel.Children.Add(materialRows);
         return panel;
     }
 
@@ -7403,13 +7505,15 @@ try {{
     {
         if (IsFolderRecord(data)) return "\uE8B7";
         var attachment = FirstFileAttachment(data);
-        var type = ProfileValue(data, "type", "template_type", "resource_type", "document_type",
-            "documentType", "mime_type", "mimeType", "filemime", "fileMIME", "extension",
-            "file_extension", "fileExtension")?.ToLowerInvariant() ?? "";
+        var type = ProfileValue(data, "type", "template_type", "resource_type")?.ToLowerInvariant() ?? "";
+        var documentType = ProfileValue(data, "document_type", "documentType",
+            "template_document_type", "templateDocumentType")?.ToLowerInvariant() ?? "";
         var name = ProfileValue(data, "filename", "file_name", "fileName", "title", "name")?.ToLowerInvariant() ??
             ProfileValue(attachment, "filename", "fileName", "filemime", "fileMIME")?.ToLowerInvariant() ?? "";
         var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime_type")?.ToLowerInvariant() ?? "";
-        var kind = type + " " + name + " " + mime;
+        var kind = type + " " + documentType + " " + name + " " + mime;
+        if (type == "page") return "\uE7C3";
+        if (type == "link" || documentType == "link" || kind.Contains("url")) return "\uE71B";
         if (kind.Contains("assignment")) return "\uE70F";
         if (kind.Contains("discussion")) return "\uE8BD";
         if (kind.Contains("assessment") || kind.Contains("quiz") || kind.Contains("test")) return "\uE9D5";
@@ -7419,7 +7523,7 @@ try {{
         if (kind.Contains("image") || Regex.IsMatch(name, @"\.(png|jpe?g|gif|bmp|webp|svg)$")) return "\uEB9F";
         if (kind.Contains("video") || Regex.IsMatch(name, @"\.(mp4|mov|avi|webm|mkv)$")) return "\uE714";
         if (kind.Contains("audio") || Regex.IsMatch(name, @"\.(mp3|wav|m4a|aac|ogg|flac)$")) return "\uE8D6";
-        if (kind.Contains("link") || kind.Contains("url") || kind.Contains("web_content")) return "\uE71B";
+        if (kind.Contains("link") || kind.Contains("web_content") || documentType == "embed") return "\uE71B";
         if (kind.Contains("presentation") || kind.Contains("powerpoint") ||
             Regex.IsMatch(name, @"\.(ppt|pptx|pptm|pps|ppsx)$")) return "\uE8A5";
         if (kind.Contains("spreadsheet") || kind.Contains("excel") ||

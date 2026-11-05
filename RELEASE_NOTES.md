@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.80] - 2026-11-04
+
+- Open course-material Schoology Pages in a native WinUI detail view, loading page content from the section pages endpoint and rendering rich HTML and attachments.
+- Resolve course-material links from document metadata and nested link attachments, allow HTTP and HTTPS destinations, and show the native WinUI link glyph in both Course Materials and Resources.
+- Fix Course Materials scrolling by using a single viewport-sized scroll container instead of a nested fixed-height list.
+
 ## [2026.10.0-port.79] - 2026-11-04
 
 - Share one native Resources browser between standalone Resources and group Resources, retaining the standalone page's categorized collections and resource-app entry points.
