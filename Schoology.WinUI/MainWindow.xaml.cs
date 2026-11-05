@@ -10240,13 +10240,22 @@ try {{
                 TryLoadAsync(() => _api.GetSectionGradesAsync(session, sectionId)),
                 TryLoadAsync(() => _api.GetGradingScalesAsync(session, sectionId)),
                 TryLoadAsync(() => _api.GetSectionEnrollmentsAsync(session, sectionId)),
-                TryLoadAsync(() => _api.GetSectionDetailsAsync(session, sectionId)));
+                TryLoadAsync(() => _api.GetSectionDetailsAsync(session, sectionId)),
+                // Match Tauri's user-scoped grade hydration as a fallback: some
+                // student accounts receive their final-grade record through
+                // users/{uid}/grades?section_id=... rather than the section feed.
+                TryLoadAsync(() => _api.GetUserGradesForSectionAsync(session, sectionId)));
             using var gradesDocument = responses[0];
             using var scalesDocument = responses[1];
             using var enrollmentsDocument = responses[2];
             using var sectionDocument = responses[3];
+            using var userGradesDocument = responses[4];
             var finalRecords = SchoologyApiClient.ReadRecords(gradesDocument?.RootElement ?? default,
                 "final_grade", "finalGrade", "final_grades", "finalGrades");
+            var userSections = SchoologyApiClient.ReadRecords(userGradesDocument?.RootElement ?? default, "section", "sections");
+            var userSection = userSections.FirstOrDefault(record =>
+                JsonLong(record.Data, "section_id", "sectionId", "id") == sectionId);
+            var userSectionData = userSection?.Data ?? default;
             var enrollmentRecords = SchoologyApiClient.ReadRecords(enrollmentsDocument?.RootElement ?? default, "enrollment", "enrollments");
             var ownEnrollment = enrollmentRecords.FirstOrDefault(record =>
                 string.Equals(ProfileValue(record.Data, "uid", "user_id", "userId"),
@@ -10258,7 +10267,16 @@ try {{
             if (finalRecord is null && finalRecords.Count == 1) finalRecord = finalRecords[0];
             if (finalRecord is null)
             {
-                var embedded = SchoologyApiClient.ReadRecords(sectionFallback, "final_grade", "finalGrade", "final_grades", "finalGrades");
+                var embedded = SchoologyApiClient.ReadRecords(userSectionData,
+                    "final_grade", "finalGrade", "final_grades", "finalGrades");
+                finalRecord = embedded.FirstOrDefault(record =>
+                    enrollmentId > 0 && JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
+                if (finalRecord is null && embedded.Count == 1) finalRecord = embedded[0];
+            }
+            if (finalRecord is null)
+            {
+                var embedded = SchoologyApiClient.ReadRecords(sectionFallback,
+                    "final_grade", "finalGrade", "final_grades", "finalGrades");
                 finalRecord = embedded.FirstOrDefault(record =>
                     enrollmentId > 0 && JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
                 if (finalRecord is null && embedded.Count == 1) finalRecord = embedded[0];
@@ -10268,6 +10286,20 @@ try {{
                 "period", "periods", "final_period", "finalPeriod", "final_grade_period", "finalGradePeriod");
             var finalPeriod = periods.FirstOrDefault(record =>
                 string.Equals(ProfileValue(record.Data, "period_id", "periodId"), "final", StringComparison.OrdinalIgnoreCase));
+            if (finalPeriod is null && userSectionData.ValueKind == JsonValueKind.Object)
+            {
+                var userFinal = SchoologyApiClient.ReadRecords(userSectionData,
+                    "final_grade", "finalGrade", "final_grades", "finalGrades")
+                    .FirstOrDefault(record => enrollmentId <= 0 ||
+                        JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
+                if (userFinal is not null)
+                {
+                    var userPeriods = SchoologyApiClient.ReadRecords(userFinal.Data,
+                        "period", "periods", "final_period", "finalPeriod", "final_grade_period", "finalGradePeriod");
+                    finalPeriod = userPeriods.FirstOrDefault(record =>
+                        string.Equals(ProfileValue(record.Data, "period_id", "periodId"), "final", StringComparison.OrdinalIgnoreCase));
+                }
+            }
             var finalPeriodData = finalPeriod?.Data ?? default;
             var sectionDetails = sectionDocument?.RootElement ?? sectionFallback;
             if (sectionDetails.ValueKind == JsonValueKind.Object &&
@@ -10309,7 +10341,7 @@ try {{
         // ScrollViewer content (not a ListView inside another scrolling surface),
         // allowing the viewport to grow with the window while scrolling its full
         // expanded course content when it exceeds the available height.
-        var courseList = new StackPanel { Spacing = 6 };
+        var courseList = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Stretch };
         var viewport = new ScrollViewer
         {
             Content = courseList,
@@ -10328,8 +10360,8 @@ try {{
 
         foreach (var course in _courses.Where(course => onlyCourseId is null || course.Id == onlyCourseId.Value))
         {
-            var courseWrapper = new StackPanel { Spacing = 0 };
-            var header = new Grid { ColumnSpacing = 12, Padding = new Thickness(12), MinHeight = 56 };
+            var courseWrapper = new StackPanel { Spacing = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
+            var header = new Grid { ColumnSpacing = 12, Padding = new Thickness(12), MinHeight = 56, HorizontalAlignment = HorizontalAlignment.Stretch };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -10350,7 +10382,7 @@ try {{
             header.Children.Add(arrow);
             var toggle = new Button
             {
-                Content = header, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Content = header, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
                 Padding = new Thickness(0),
                 Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
                 BorderThickness = new Thickness(0)

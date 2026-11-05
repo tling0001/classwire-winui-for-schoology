@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.95] - 2026-11-05
+
+- Restore standalone course overall grades by falling back to the signed-in user's section-scoped grade response when the section-wide final-grade feed omits the student's record. Preserve enrollment matching, final-period selection, teacher overrides, and grading-scale formatting.
+- Make standalone Grades course headers and their clickable rows stretch across the available viewport so the course name, overall grade, and expand arrow align in separate columns.
+
 ## [2026.10.0-port.94] - 2026-11-05
 
 - Add a shared dialog viewport that sizes itself to the available window height and scrolls overflowing content. Apply it to event/discussion, update, message, assignment-submission, comment, release-note, and detail dialogs; keep native ListView scrolling for collection dialogs.
