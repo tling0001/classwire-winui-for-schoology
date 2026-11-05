@@ -10231,95 +10231,100 @@ try {{
         {
             var session = _session;
             if (session is null || sectionId <= 0) return;
-            async Task<JsonDocument?> TryLoadAsync(Func<Task<JsonDocument>> request)
+
+            // Match the Android FinalGradesApiHelper and the Tauri hydrateUserCourseGrades
+            // flow: grades + active enrollments identify this student's final-grade record;
+            // grading scales and section options format it. Do not substitute a separate
+            // users/{uid}/grades?section_id response, which is not part of either flow.
+            async Task<JsonDocument?> TryLoadAsync(string endpoint, Func<Task<JsonDocument>> request)
             {
                 try { return await request(); }
-                catch (Exception ex) { App.WriteStartupLog($"Could not load overall-grade metadata for section {sectionId}.", ex); return null; }
+                catch (Exception ex)
+                {
+                    App.WriteStartupLog($"Could not load {endpoint} for overall grade in section {sectionId}.", ex);
+                    return null;
+                }
             }
+
             var responses = await Task.WhenAll(
-                TryLoadAsync(() => _api.GetSectionGradesAsync(session, sectionId)),
-                TryLoadAsync(() => _api.GetGradingScalesAsync(session, sectionId)),
-                TryLoadAsync(() => _api.GetSectionEnrollmentsAsync(session, sectionId)),
-                TryLoadAsync(() => _api.GetSectionDetailsAsync(session, sectionId)),
-                // Match Tauri's user-scoped grade hydration as a fallback: some
-                // student accounts receive their final-grade record through
-                // users/{uid}/grades?section_id=... rather than the section feed.
-                TryLoadAsync(() => _api.GetUserGradesForSectionAsync(session, sectionId)));
+                TryLoadAsync("section grades", () => _api.GetSectionGradesAsync(session, sectionId)),
+                TryLoadAsync("grading scales", () => _api.GetGradingScalesAsync(session, sectionId)),
+                TryLoadAsync("section enrollments", () => _api.GetSectionEnrollmentsAsync(session, sectionId)),
+                TryLoadAsync("section details", () => _api.GetSectionDetailsAsync(session, sectionId)));
             using var gradesDocument = responses[0];
             using var scalesDocument = responses[1];
             using var enrollmentsDocument = responses[2];
             using var sectionDocument = responses[3];
-            using var userGradesDocument = responses[4];
+
             var finalRecords = SchoologyApiClient.ReadRecords(gradesDocument?.RootElement ?? default,
                 "final_grade", "finalGrade", "final_grades", "finalGrades");
-            var userSections = SchoologyApiClient.ReadRecords(userGradesDocument?.RootElement ?? default, "section", "sections");
-            var userSection = userSections.FirstOrDefault(record =>
-                JsonLong(record.Data, "section_id", "sectionId", "id") == sectionId);
-            var userSectionData = userSection?.Data ?? default;
-            var enrollmentRecords = SchoologyApiClient.ReadRecords(enrollmentsDocument?.RootElement ?? default, "enrollment", "enrollments");
+            var enrollmentRecords = SchoologyApiClient.ReadRecords(enrollmentsDocument?.RootElement ?? default,
+                "enrollment", "enrollments");
             var ownEnrollment = enrollmentRecords.FirstOrDefault(record =>
                 string.Equals(ProfileValue(record.Data, "uid", "user_id", "userId"),
                     session.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal));
             var enrollmentId = JsonLong(ownEnrollment?.Data ?? default, "id", "enrollment_id", "enrollmentId");
-            if (enrollmentId <= 0) enrollmentId = JsonLong(sectionFallback, "enrollment_id", "enrollmentId");
+            if (enrollmentId <= 0)
+                enrollmentId = JsonLong(sectionFallback, "enrollment_id", "enrollmentId");
+            if (enrollmentId <= 0 && sectionFallback.ValueKind == JsonValueKind.Object &&
+                sectionFallback.TryGetProperty("enrollment", out var embeddedEnrollment))
+                enrollmentId = JsonLong(embeddedEnrollment, "id", "enrollment_id", "enrollmentId");
+
+            // Android joins final_grade.enrollment_id to an enrollment; Tauri performs the
+            // same match and only accepts a sole grade record when no matching ID exists.
             var finalRecord = finalRecords.FirstOrDefault(record =>
                 enrollmentId > 0 && JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
             if (finalRecord is null && finalRecords.Count == 1) finalRecord = finalRecords[0];
+
+            // Some /users/{uid}/grades section records already include final_grade. Keep
+            // that embedded representation as a fallback, but never choose an arbitrary
+            // student's entry from a multi-record collection.
             if (finalRecord is null)
             {
-                var embedded = SchoologyApiClient.ReadRecords(userSectionData,
+                var embeddedFinals = SchoologyApiClient.ReadRecords(sectionFallback,
                     "final_grade", "finalGrade", "final_grades", "finalGrades");
-                finalRecord = embedded.FirstOrDefault(record =>
+                finalRecord = embeddedFinals.FirstOrDefault(record =>
                     enrollmentId > 0 && JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
-                if (finalRecord is null && embedded.Count == 1) finalRecord = embedded[0];
+                if (finalRecord is null && embeddedFinals.Count == 1) finalRecord = embeddedFinals[0];
             }
-            if (finalRecord is null)
-            {
-                var embedded = SchoologyApiClient.ReadRecords(sectionFallback,
-                    "final_grade", "finalGrade", "final_grades", "finalGrades");
-                finalRecord = embedded.FirstOrDefault(record =>
-                    enrollmentId > 0 && JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
-                if (finalRecord is null && embedded.Count == 1) finalRecord = embedded[0];
-            }
+
             var finalData = finalRecord?.Data ?? default;
             var periods = SchoologyApiClient.ReadRecords(finalData,
                 "period", "periods", "final_period", "finalPeriod", "final_grade_period", "finalGradePeriod");
             var finalPeriod = periods.FirstOrDefault(record =>
-                string.Equals(ProfileValue(record.Data, "period_id", "periodId"), "final", StringComparison.OrdinalIgnoreCase));
-            if (finalPeriod is null && userSectionData.ValueKind == JsonValueKind.Object)
-            {
-                var userFinal = SchoologyApiClient.ReadRecords(userSectionData,
-                    "final_grade", "finalGrade", "final_grades", "finalGrades")
-                    .FirstOrDefault(record => enrollmentId <= 0 ||
-                        JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
-                if (userFinal is not null)
-                {
-                    var userPeriods = SchoologyApiClient.ReadRecords(userFinal.Data,
-                        "period", "periods", "final_period", "finalPeriod", "final_grade_period", "finalGradePeriod");
-                    finalPeriod = userPeriods.FirstOrDefault(record =>
-                        string.Equals(ProfileValue(record.Data, "period_id", "periodId"), "final", StringComparison.OrdinalIgnoreCase));
-                }
-            }
+                string.Equals(ProfileValue(record.Data, "period_id", "periodId"), "final",
+                    StringComparison.OrdinalIgnoreCase));
             var finalPeriodData = finalPeriod?.Data ?? default;
+
             var sectionDetails = sectionDocument?.RootElement ?? sectionFallback;
             if (sectionDetails.ValueKind == JsonValueKind.Object &&
                 sectionDetails.TryGetProperty("section", out var nestedSection)) sectionDetails = nestedSection;
             if (sectionDetails.ValueKind == JsonValueKind.Object &&
-                sectionDetails.TryGetProperty("data", out var nestedData) && nestedData.ValueKind == JsonValueKind.Object)
-                sectionDetails = nestedData;
+                sectionDetails.TryGetProperty("data", out var nestedData) &&
+                nestedData.ValueKind == JsonValueKind.Object) sectionDetails = nestedData;
+
             var scales = SchoologyApiClient.ReadRecords(scalesDocument?.RootElement ?? default,
                 "grading_scale", "gradingScale", "scales", "scale");
-            var scaleId = JsonLong(finalData, "scale_id", "scaleId");
-            if (scaleId <= 0) scaleId = JsonLong(finalPeriodData, "scale_id", "scaleId");
+            var scaleId = JsonLong(finalPeriodData, "scale_id", "scaleId");
+            if (scaleId <= 0) scaleId = JsonLong(finalData, "scale_id", "scaleId");
             if (scaleId <= 0 && sectionDetails.ValueKind == JsonValueKind.Object &&
                 sectionDetails.TryGetProperty("options", out var options))
                 scaleId = JsonLong(options, "default_grading_scale_id", "defaultGradingScaleId");
             var scale = scales.FirstOrDefault(record =>
                 scaleId > 0 && JsonLong(record.Data, "id", "scale_id", "scaleId") == scaleId);
             if (scale is null && scales.Count == 1) scale = scales[0];
-            target.Text = FormatCourseOverallGrade(sectionFallback, finalData, finalPeriodData, scale?.Data ?? default);
+
+            var display = FormatCourseOverallGrade(sectionFallback, finalData, finalPeriodData, scale?.Data ?? default);
+            target.Text = display;
+            App.WriteStartupLog(
+                $"Resolved overall grade for section {sectionId}: grade-records={finalRecords.Count}, " +
+                $"enrollments={enrollmentRecords.Count}, matched-enrollment={(enrollmentId > 0)}, " +
+                $"final-period={(finalPeriod is not null)}, has-grade={!string.Equals(display, "—", StringComparison.Ordinal)}.");
         }
-        catch (Exception ex) { App.WriteStartupLog($"Could not resolve standalone overall grade for section {sectionId}.", ex); }
+        catch (Exception ex)
+        {
+            App.WriteStartupLog($"Could not resolve standalone overall grade for section {sectionId}.", ex);
+        }
     }
 
     private Grid BuildGradesPage(long? onlyCourseId = null)

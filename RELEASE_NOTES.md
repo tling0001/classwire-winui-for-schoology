@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.96] - 2026-11-05
+
+- Align standalone overall-grade loading with Android FinalGradesApiHelper and Tauri: use section grades, unfiltered paged enrollment data, grading scales, and section options; match the final-grade record to the signed-in user's enrollment and read only the `final` period.
+- Remove the unsupported extra user-grade lookup from the header hydration path, retain safe embedded final-grade fallback, and log grade-resolution diagnostics without logging grade values or personal data.
+
 ## [2026.10.0-port.95] - 2026-11-05
 
 - Restore standalone course overall grades by falling back to the signed-in user's section-scoped grade response when the section-wide final-grade feed omits the student's record. Preserve enrollment matching, final-period selection, teacher overrides, and grading-scale formatting.

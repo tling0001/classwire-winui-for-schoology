@@ -67,7 +67,7 @@ internal sealed class SchoologyApiClient
         _auth.GetApiJsonAsync(session, $"sections/{sectionId}/enrollments",
             new Dictionary<string, string>
             {
-                ["start"] = "0", ["limit"] = "200", ["enrollment_status"] = "1"
+                ["start"] = "0", ["limit"] = "200"
             }, cancellationToken);
 
     internal Task<JsonDocument> GetSectionDetailsAsync(
