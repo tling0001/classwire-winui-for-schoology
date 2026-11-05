@@ -65,6 +65,12 @@ internal sealed class SchoologyApiClient
         SchoologyAuthService.Session session, long sectionId, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, $"sections/{sectionId}", null, cancellationToken);
 
+    internal Task<JsonDocument> GetPostPermissionsAsync(
+        SchoologyAuthService.Session session, IReadOnlyList<string> requestPaths,
+        CancellationToken cancellationToken = default) =>
+        _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, "multioptions",
+            new Dictionary<string, object> { ["request"] = requestPaths }, cancellationToken);
+
     internal Task<JsonDocument> GetUserAsync(
         SchoologyAuthService.Session session, long userId, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, $"users/{userId}", null, cancellationToken);
@@ -500,8 +506,7 @@ internal sealed class SchoologyApiClient
             .ToArray();
     }
 
-    internal static IReadOnlyList<SchoologyApiRecord> ReadRecords(
-        JsonElement root, params string[] collectionKeys)
+    internal static IReadOnlyList<SchoologyApiRecord> ReadRecords(JsonElement root, params string[] collectionKeys)
     {
         JsonElement collection = root;
         if (root.ValueKind == JsonValueKind.Object)
@@ -515,30 +520,26 @@ internal sealed class SchoologyApiClient
                 : collectionKeys;
             foreach (var key in keys)
             {
-                if (root.TryGetProperty(key, out collection))
+                if (!root.TryGetProperty(key, out var candidate)) continue;
+                if (candidate.ValueKind == JsonValueKind.Array) { collection = candidate; found = true; break; }
+                if (candidate.ValueKind == JsonValueKind.Object)
                 {
-                    if (collection.ValueKind == JsonValueKind.Array) { found = true; break; }
-                    if (collection.ValueKind == JsonValueKind.Object)
-                    {
-                        foreach (var nestedKey in keys)
-                            if (collection.TryGetProperty(nestedKey, out var nested) && nested.ValueKind == JsonValueKind.Array)
-                            { collection = nested; found = true; break; }
-                        if (found) break;
-                    }
+                    var nestedArrayFound = false;
+                    foreach (var nestedKey in keys)
+                        if (candidate.TryGetProperty(nestedKey, out var nested) && nested.ValueKind == JsonValueKind.Array)
+                        { collection = nested; found = true; nestedArrayFound = true; break; }
+                    if (!nestedArrayFound) { collection = candidate; found = true; }
+                    if (found) break;
                 }
             }
             if (!found && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
-            {
                 foreach (var key in keys)
-                    if (data.TryGetProperty(key, out var nested) && nested.ValueKind == JsonValueKind.Array)
+                    if (data.TryGetProperty(key, out var nested) && (nested.ValueKind == JsonValueKind.Array || nested.ValueKind == JsonValueKind.Object))
                     { collection = nested; found = true; break; }
-            }
             if (!found) return [];
         }
-
-        if (collection.ValueKind != JsonValueKind.Array) return [];
         var records = new List<SchoologyApiRecord>();
-        foreach (var element in collection.EnumerateArray())
+        void AddRecord(JsonElement element)
         {
             var personName = string.Join(" ", new[]
             {
@@ -552,6 +553,9 @@ internal sealed class SchoologyApiClient
                 "due", "due_date", "created", "timestamp") ?? string.Empty;
             records.Add(new SchoologyApiRecord(title, subtitle, element.Clone()));
         }
+        if (collection.ValueKind == JsonValueKind.Array)
+            foreach (var element in collection.EnumerateArray()) AddRecord(element);
+        else if (collection.ValueKind == JsonValueKind.Object) AddRecord(collection);
         return records;
     }
 

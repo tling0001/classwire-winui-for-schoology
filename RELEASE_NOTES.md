@@ -1,5 +1,15 @@
 # Release notes
 
+## [2026.10.0-port.90] - 2026-11-05
+
+- Route Upcoming and Calendar event clicks using the event ID and owning realm (course, group, school, or user), and open native event details with Info and Comments tabs.
+- Render event rich text and attachments in Info, preserve the originating Calendar/Upcoming route when navigating back, and hide comments when the event disables them.
+- Make the homepage create menu permission-aware for updates, discussions, and events. Recheck destination POST permissions before each composer opens, including the user's own event destination only when permitted.
+- Bring event composer settings closer to the official Android/Tauri behavior with all-day, optional end date, RSVP, comments, and attachment controls.
+- Accept singleton object and array API collection responses; restore course overall grades when final-grade/period wrappers are objects, preserve teacher string/numeric overrides, and apply letter scales only for letter-grade scale type.
+- Align assignment scores to a dedicated trailing column in account and course Grades views.
+
+
 ## [2026.10.0-port.89] - 2026-11-04
 
 - Restore animated expand/collapse behavior in course Grades, matching the Materials folder chevron rotation and nested-row fade/slide transitions while honoring reduced-motion settings.

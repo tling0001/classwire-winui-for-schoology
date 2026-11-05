@@ -2456,18 +2456,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private Task<JsonDocument> CreateEventWithAttachmentsAsync(
         SchoologyAuthService.Session session, string kind, SchoologyEntity entity,
         string title, string description, string start, bool allDay, bool commentsEnabled,
-        PostAttachmentState attachments)
+        int rsvp, string? end, PostAttachmentState attachments)
     {
-        if (attachments.Files.Count == 0 && attachments.Resources.Count == 0)
-            return _api.CreateEventAsync(session, kind, entity.Id, title, description, start, allDay, commentsEnabled);
         var payload = new Dictionary<string, object>
         {
             ["title"] = title, ["description"] = description, ["start"] = start,
-            ["is_all_day"] = allDay ? 1 : 0, ["rsvp"] = 0,
+            ["is_all_day"] = allDay ? 1 : 0, ["rsvp"] = rsvp,
             ["comments_enabled"] = commentsEnabled ? 1 : 0
         };
+        if (!string.IsNullOrWhiteSpace(end)) { payload["has_end"] = 1; payload["end"] = end; }
         AddPostAttachmentPayload(payload, attachments);
-        var realm = kind == "Groups" ? "groups" : "sections";
+        var realm = kind switch { "Groups" => "groups", "Profile" => "users", _ => "sections" };
         return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, $"{realm}/{entity.Id}/events", payload);
     }
 
@@ -2485,37 +2484,71 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     {
         var session = _session;
         if (session is null) return;
-        var destinations = _courses.Select(course => ("Courses", course)).Concat(_groups.Select(group => ("Groups", group))).ToList();
-        if (destinations.Count == 0) { await ShowApiErrorAsync("Unable to create content", "No course or group destinations are available."); return; }
-        var content = new StackPanel { Spacing = 10, MinWidth = 360 };
-        var destination = new ComboBox { Header = "Post to", HorizontalAlignment = HorizontalAlignment.Stretch,
-            ItemsSource = destinations.Select(item => item.Item2.Name).ToArray(), SelectedIndex = 0 };
-        var title = new TextBox { Header = "Title", PlaceholderText = isEvent ? "Event title" : "Discussion title" };
-        var description = new TextBox { Header = "Description", PlaceholderText = "Add details…", AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap, MinHeight = 100 };
-        content.Children.Add(destination); content.Children.Add(title); content.Children.Add(description);
-        var attachments = AddPostAttachmentControls(content, session, isEvent ? "EventComposer" : "DiscussionComposer");
-        DatePicker? eventDate = null; TimePicker? eventTime = null;
-        if (isEvent)
-        {
-            eventDate = new DatePicker { Header = "Date", Date = DateTimeOffset.Now };
-            eventTime = new TimePicker { Header = "Time", Time = DateTimeOffset.Now.TimeOfDay };
-            content.Children.Add(eventDate); content.Children.Add(eventTime);
-        }
-        var dialog = new ContentDialog { Title = isEvent ? "Create event" : "Create discussion", Content = content,
-            PrimaryButtonText = "Create", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        if (string.IsNullOrWhiteSpace(title.Text)) { await ShowApiErrorAsync("Unable to create content", "Enter a title before creating this item."); return; }
-        var selected = destinations[Math.Clamp(destination.SelectedIndex, 0, destinations.Count - 1)];
         try
         {
-            var start = isEvent ? (eventDate!.Date.DateTime.Date + eventTime!.Time).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) : "";
+            var permissions = await LoadPostPermissionMapAsync(session, includeUserEvents: isEvent);
+            var destinations = GetPostableDestinations(session, permissions, isEvent ? "events" : "discussions", includeUserEvents: isEvent);
+            if (destinations.Count == 0)
+            {
+                await ShowApiErrorAsync(isEvent ? "Unable to create event" : "Unable to create discussion",
+                    isEvent ? "You do not have permission to create events in any available destination." :
+                    "You do not have permission to create discussions in any available course or group.");
+                return;
+            }
+            var content = new StackPanel { Spacing = 10, MinWidth = 360 };
+            var destination = new ComboBox { Header = "Post to", HorizontalAlignment = HorizontalAlignment.Stretch,
+                ItemsSource = destinations.Select(item => item.Entity.Name).ToArray(), SelectedIndex = 0 };
+            var title = new TextBox { Header = "Title", PlaceholderText = isEvent ? "Event title" : "Discussion title" };
+            var description = new TextBox { Header = "Description", PlaceholderText = "Add details…", AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap, MinHeight = 100 };
+            content.Children.Add(destination); content.Children.Add(title); content.Children.Add(description);
+            var attachments = AddPostAttachmentControls(content, session, isEvent ? "EventComposer" : "DiscussionComposer");
+            DatePicker? eventDate = null; TimePicker? eventTime = null;
+            DatePicker? eventEndDate = null; TimePicker? eventEndTime = null;
+            ToggleSwitch? allDay = null; ToggleSwitch? commentsEnabled = null;
+            CheckBox? hasEnd = null; ComboBox? rsvp = null;
+            if (isEvent)
+            {
+                allDay = new ToggleSwitch { Header = "All day", IsOn = true };
+                commentsEnabled = new ToggleSwitch { Header = "Enable comments", IsOn = true };
+                eventDate = new DatePicker { Header = "Start date", Date = DateTimeOffset.Now };
+                eventTime = new TimePicker { Header = "Start time", Time = DateTimeOffset.Now.TimeOfDay, IsEnabled = false };
+                rsvp = new ComboBox { Header = "RSVP", ItemsSource = new[] { "No RSVP", "Yes", "Maybe" }, SelectedIndex = 0 };
+                hasEnd = new CheckBox { Content = "Add end date" };
+                eventEndDate = new DatePicker { Header = "End date", Date = DateTimeOffset.Now };
+                eventEndTime = new TimePicker { Header = "End time", Time = DateTimeOffset.Now.TimeOfDay, IsEnabled = false };
+                var endFields = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+                endFields.Children.Add(eventEndDate); endFields.Children.Add(eventEndTime);
+                allDay.Toggled += (_, _) => { eventTime.IsEnabled = !allDay.IsOn; eventEndTime.IsEnabled = !allDay.IsOn; };
+                hasEnd.Checked += (_, _) => endFields.Visibility = Visibility.Visible;
+                hasEnd.Unchecked += (_, _) => endFields.Visibility = Visibility.Collapsed;
+                content.Children.Add(allDay); content.Children.Add(eventDate); content.Children.Add(eventTime);
+                content.Children.Add(hasEnd); content.Children.Add(endFields); content.Children.Add(rsvp); content.Children.Add(commentsEnabled);
+            }
+            var dialog = new ContentDialog { Title = isEvent ? "Create event" : "Create discussion", Content = content,
+                PrimaryButtonText = "Create", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (string.IsNullOrWhiteSpace(title.Text))
+            { await ShowApiErrorAsync("Unable to create content", "Enter a title before creating this item."); return; }
+            var selected = destinations[Math.Clamp(destination.SelectedIndex, 0, destinations.Count - 1)];
+            string? end = null;
+            if (isEvent && hasEnd!.IsChecked == true)
+            {
+                var startAt = eventDate!.Date.DateTime.Date + (allDay!.IsOn ? TimeSpan.Zero : eventTime!.Time);
+                var endAt = eventEndDate!.Date.DateTime.Date + (allDay.IsOn ? new TimeSpan(23, 59, 0) : eventEndTime!.Time);
+                if (endAt < startAt)
+                { await ShowApiErrorAsync("Unable to create event", "The end date and time cannot be before the start date and time."); return; }
+                end = endAt.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+            }
             using var created = isEvent
-                ? await CreateEventWithAttachmentsAsync(session, selected.Item1, selected.Item2,
-                    title.Text.Trim(), description.Text.Trim(), start, true, true, attachments)
-                : await CreateDiscussionWithAttachmentsAsync(session, selected.Item1, selected.Item2,
-                    title.Text.Trim(), description.Text.Trim(), attachments);
-            ShowThreePane(selected.Item1, selected.Item2);
+                ? await CreateEventWithAttachmentsAsync(session, selected.Kind, selected.Entity, title.Text.Trim(), description.Text.Trim(),
+                    (eventDate!.Date.DateTime.Date + (allDay!.IsOn ? TimeSpan.Zero : eventTime!.Time))
+                        .ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
+                    allDay.IsOn, commentsEnabled!.IsOn, rsvp!.SelectedIndex, end, attachments)
+                : await CreateDiscussionWithAttachmentsAsync(session, selected.Kind, selected.Entity, title.Text.Trim(), description.Text.Trim(), attachments);
+            if (selected.Kind == "Profile") ShowHome("Recent Activity");
+            else ShowThreePane(selected.Kind, selected.Entity);
         }
         catch (Exception ex) { await ShowApiErrorAsync(isEvent ? "Unable to create event" : "Unable to create discussion", ex.Message); }
     }
@@ -2523,26 +2556,30 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private async Task ShowCreateUpdateDialogCoreAsync()
     {
         var session = _session; if (session is null) return;
-        var destinations = _courses.Select(course => ("Courses", course)).Concat(_groups.Select(group => ("Groups", group))).ToList();
-        if (destinations.Count == 0) return;
-        var content = new StackPanel { Spacing = 10, MinWidth = 360 };
-        var picker = new ComboBox { Header = "Post to", ItemsSource = destinations.Select(item => item.Item2.Name).ToArray(),
-            SelectedIndex = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
-        var body = new TextBox { Header = "Write an update", PlaceholderText = "Share an update…", AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
-        content.Children.Add(picker); content.Children.Add(body);
-        var attachments = AddPostAttachmentControls(content, session, "LegacyUpdateComposer");
-        var dialog = new ContentDialog { Title = "Create update", Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(body.Text)) return;
-        var selected = destinations[Math.Clamp(picker.SelectedIndex, 0, destinations.Count - 1)];
         try
         {
-            using var created = await CreateUpdateWithAttachmentsAsync(session, selected.Item1,
-                selected.Item2, body.Text.Trim(), attachments);
-            ShowThreePane(selected.Item1, selected.Item2);
+            var permissions = await LoadPostPermissionMapAsync(session, includeUserEvents: false);
+            var destinations = GetPostableDestinations(session, permissions, "updates");
+            if (destinations.Count == 0)
+            {
+                await ShowApiErrorAsync("Unable to create update", "You do not have permission to post updates in any available course or group.");
+                return;
+            }
+            var content = new StackPanel { Spacing = 10, MinWidth = 360 };
+            var picker = new ComboBox { Header = "Post to", ItemsSource = destinations.Select(item => item.Entity.Name).ToArray(),
+                SelectedIndex = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
+            var body = new TextBox { Header = "Write an update", PlaceholderText = "Share an update…", AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
+            content.Children.Add(picker); content.Children.Add(body);
+            var attachments = AddPostAttachmentControls(content, session, "LegacyUpdateComposer");
+            var dialog = new ContentDialog { Title = "Create update", Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(body.Text)) return;
+            var selected = destinations[Math.Clamp(picker.SelectedIndex, 0, destinations.Count - 1)];
+            using var created = await CreateUpdateWithAttachmentsAsync(session, selected.Kind, selected.Entity, body.Text.Trim(), attachments);
+            ShowThreePane(selected.Kind, selected.Entity);
         }
-        catch (Exception ex) { await ShowApiErrorAsync("Unable to post update", ex.Message); }
+        catch (Exception ex) { await ShowApiErrorAsync("Unable to create update", ex.Message); }
     }
 
     private void UpdateTitleBarCreateButton(string section, string? tab)
@@ -3050,9 +3087,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         root.Children.Add(statusHost);
         var list = new ListView { SelectionMode = ListViewSelectionMode.None,
-            IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            IsItemClickEnabled = true, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Background = new SolidColorBrush(Colors.Transparent) };
         AutomationProperties.SetAutomationId(list, "UpcomingEventsList");
+        list.ItemClick += async (_, args) =>
+        {
+            if (args.ClickedItem is ListViewItem { Tag: SchoologyApiRecord record })
+                await ShowUpcomingItemAsync(record);
+        };
         Grid.SetRow(list, 1); root.Children.Add(list);
         _ = LoadUpcomingAsync(list, status);
         return root;
@@ -3120,7 +3162,6 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 Grid.SetColumn(details, 1); row.Children.Add(details);
                 var item = new ListViewItem { Content = row, Tag = entry.Record,
                     HorizontalContentAlignment = HorizontalAlignment.Stretch };
-                item.Tapped += async (_, _) => await ShowUpcomingItemAsync(entry.Record, entityKind, entityId);
                 list.Items.Add(item);
             }
         }
@@ -3128,45 +3169,52 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             list.Items.Add(new ListViewItem { Content = Surface(Text("Nothing is scheduled for this date.")) });
     }
 
+    private (string Kind, long Id) ResolveContentOwner(JsonElement data, string? fallbackKind = null, long fallbackId = 0)
+    {
+        var realm = (ProfileValue(data, "realm", "realm_type", "realmType") ?? string.Empty).ToLowerInvariant();
+        var realmId = JsonLong(data, "realm_id", "realmId", "owner_id", "ownerId");
+        var sectionId = JsonLong(data, "section_id", "sectionId", "course_id", "courseId");
+        var groupId = JsonLong(data, "group_id", "groupId");
+        var schoolId = JsonLong(data, "school_id", "schoolId");
+        var userId = JsonLong(data, "user_id", "userId", "uid");
+        if (realm is "group" or "groups" || groupId > 0) return ("Groups", groupId > 0 ? groupId : realmId > 0 ? realmId : fallbackId);
+        if (realm is "school" or "schools" || schoolId > 0) return ("School Profile", schoolId > 0 ? schoolId : realmId > 0 ? realmId : fallbackId);
+        if (realm is "user" or "users") return ("Profile", userId > 0 ? userId : realmId > 0 ? realmId : _session?.UserId ?? fallbackId);
+        if (realm is "section" or "sections" or "course" or "courses" || sectionId > 0)
+            return ("Courses", sectionId > 0 ? sectionId : realmId > 0 ? realmId : fallbackId);
+        if (!string.IsNullOrWhiteSpace(fallbackKind) && fallbackId > 0) return (fallbackKind, fallbackId);
+        if (userId > 0) return ("Profile", userId);
+        return ("Profile", _session?.UserId ?? 0);
+    }
+
     private async Task ShowUpcomingItemAsync(SchoologyApiRecord record, string? entityKind = null, long entityId = 0)
     {
         var type = (ProfileValue(record.Data, "type", "event_type", "eventType") ?? "").ToLowerInvariant();
-        var itemId = JsonLong(record.Data, "assignment_id", "assignmentId", "id");
+        var assignmentId = JsonLong(record.Data, "assignment_id", "assignmentId", "id");
+        var discussionId = JsonLong(record.Data, "discussion_id", "discussionId", "id");
+        var eventId = JsonLong(record.Data, "event_id", "eventId", "id");
         var sectionId = JsonLong(record.Data, "section_id", "sectionId");
-        if (type == "assignment" && itemId > 0 && sectionId > 0 && _session is not null)
-        {
-            await ShowAssignmentDetailsAsync(sectionId, record);
-            return;
-        }
+        var returnSection = _section is "Upcoming" or "Calendar" ? _section : "Recent Activity";
+        var owner = ResolveContentOwner(record.Data, entityKind, entityId);
+        if (type == "assignment" && assignmentId > 0 && sectionId > 0 && _session is not null)
+        { await ShowAssignmentDetailsAsync(sectionId, record); return; }
         if (type is "assessment" or "assessment_v2" or "managed_assessment" or "quiz" or "test")
         {
-            if (itemId > 0)
-            {
-                await OpenSharedWebViewAsync($"https://app.schoology.com/assignment/{itemId}", record.Title,
-                    allowLtiExternal: true, onBack: () => ShowHome("Upcoming"));
-                return;
-            }
+            if (assignmentId > 0)
+            { await OpenSharedWebViewAsync($"https://app.schoology.com/assignment/{assignmentId}", record.Title,
+                allowLtiExternal: true, onBack: () => ShowHome(returnSection)); return; }
         }
-        if ((type is "external_tool" or "lti" or "scorm") && sectionId > 0 && itemId > 0)
+        if ((type is "external_tool" or "lti" or "scorm") && sectionId > 0 && assignmentId > 0)
         {
             var route = type == "external_tool" ? "external-tool" : type;
-            await OpenSharedWebViewAsync($"https://app.schoology.com/section/{sectionId}/{route}/{itemId}",
-                record.Title, allowLtiExternal: true, onBack: () => ShowHome("Upcoming"));
+            await OpenSharedWebViewAsync($"https://app.schoology.com/section/{sectionId}/{route}/{assignmentId}",
+                record.Title, allowLtiExternal: true, onBack: () => ShowHome(returnSection));
             return;
         }
-        if (type == "discussion" && itemId > 0)
-        {
-            var targetKind = entityKind ?? "Courses"; var targetId = entityId > 0 ? entityId : sectionId;
-            if (targetId > 0) await ShowDiscussionDetailsAsync(targetKind, targetId, record);
-            return;
-        }
-        if (type == "event" && itemId > 0)
-        {
-            var targetKind = entityKind ?? "Courses"; var targetId = entityId > 0 ? entityId : sectionId;
-            if (targetId > 0) await ShowEventDetailsAsync(targetKind, targetId, record);
-            return;
-        }
-
+        if (type == "discussion" && discussionId > 0 && owner.Id > 0)
+        { await ShowDiscussionDetailsAsync(owner.Kind, owner.Id, record, () => ShowHome(returnSection)); return; }
+        if (type == "event" && eventId > 0 && owner.Id > 0)
+        { await ShowEventDetailsAsync(owner.Kind, owner.Id, record, () => ShowHome(returnSection)); return; }
         var content = new StackPanel { Spacing = 8 };
         content.Children.Add(Text(record.Title, 20, true));
         var course = ProfileValue(record.Data, "section_title", "course_title", "section_name");
@@ -3174,7 +3222,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var date = ProfileValue(record.Data, "start", "start_time", "date", "due", "due_date");
         if (!string.IsNullOrWhiteSpace(date)) content.Children.Add(Text(date, 12));
         var description = ProfileValue(record.Data, "description", "body", "description_richtext");
-        if (!string.IsNullOrWhiteSpace(description)) content.Children.Add(Text(StripMarkup(description), 13));
+        if (!string.IsNullOrWhiteSpace(description)) content.Children.Add(CreateRichContent(description, 13));
         await new ContentDialog { Title = "Upcoming item", Content = content, CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
     }
 
@@ -3251,10 +3299,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var list = new ListView
         {
             SelectionMode = ListViewSelectionMode.None,
-            IsItemClickEnabled = false,
+            IsItemClickEnabled = true,
             HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
         AutomationProperties.SetAutomationId(list, "CalendarEventsList");
+        list.ItemClick += async (_, args) =>
+        {
+            if (args.ClickedItem is ListViewItem { Tag: SchoologyApiRecord record })
+                await ShowUpcomingItemAsync(record);
+        };
         Grid.SetRow(list, 1);
         right.Children.Add(list);
         Grid.SetColumn(right, 1);
@@ -6067,97 +6120,96 @@ try {{
         catch (Exception ex) { await ShowApiErrorAsync("Unable to load Schoology page", ex.Message); }
     }
 
-    private async Task ShowDiscussionDetailsAsync(string kind, long entityId, SchoologyApiRecord record) =>
-        await ShowContentDetailsAsync(kind, entityId, record, false);
-    private async Task ShowEventDetailsAsync(string kind, long entityId, SchoologyApiRecord record) =>
-        await ShowContentDetailsAsync(kind, entityId, record, true);
+    private async Task ShowDiscussionDetailsAsync(string kind, long entityId, SchoologyApiRecord record, Action? onBack = null) =>
+        await ShowContentDetailsAsync(kind, entityId, record, false, onBack: onBack);
+    private async Task ShowEventDetailsAsync(string kind, long entityId, SchoologyApiRecord record, Action? onBack = null) =>
+        await ShowContentDetailsAsync(kind, entityId, record, true, onBack: onBack);
 
     private async Task ShowContentCommentDialogAsync(string kind, long entityId, SchoologyApiRecord record,
-        bool isEvent, long parentCommentId = 0, string? replyAuthor = null)
+        bool isEvent, long parentCommentId = 0, string? replyAuthor = null, Action? onBack = null)
     {
         var session = _session;
         if (session is null) return;
-        var itemId = JsonLong(record.Data, isEvent ? "event_id" : "discussion_id", "id");
+        if (isEvent && JsonBooleanValue(record.Data, "comments_enabled", "commentsEnabled", "allow_comments", "allowComments") == false) return;
+        var itemId = JsonLong(record.Data, isEvent ? "event_id" : "discussion_id", isEvent ? "eventId" : "discussionId", "id");
         if (itemId <= 0) return;
         var input = new TextBox { Header = parentCommentId > 0 ? $"Reply to {replyAuthor ?? "comment"}" : "Comment",
             PlaceholderText = parentCommentId > 0 ? "Write a reply…" : "Write a comment…",
             AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100, MaxHeight = 220 };
-        AutomationProperties.SetAutomationId(input, "DiscussionCommentInput");
+        AutomationProperties.SetAutomationId(input, "ContentCommentInput");
         var dialog = new ContentDialog { Title = parentCommentId > 0 ? "Reply" : "Create comment",
             Content = input, PrimaryButtonText = "Post", CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(input.Text)) return;
         try
         {
-            using var posted = await _api.AddContentCommentAsync(session, kind, entityId, itemId,
-                isEvent, input.Text.Trim(), parentCommentId);
-            await ShowContentDetailsAsync(kind, entityId, record, isEvent, openComments: true);
+            using var posted = await _api.AddContentCommentAsync(session, kind, entityId, itemId, isEvent, input.Text.Trim(), parentCommentId);
+            await ShowContentDetailsAsync(kind, entityId, record, isEvent, openComments: true, onBack: onBack);
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to post comment", ex.Message); }
     }
 
-    private async Task ShowContentDetailsAsync(string kind, long entityId, SchoologyApiRecord record, bool isEvent, bool openComments = false)
+    private async Task ShowContentDetailsAsync(string kind, long entityId, SchoologyApiRecord record,
+        bool isEvent, bool openComments = false, Action? onBack = null)
     {
         try
         {
             var session = _session ?? throw new InvalidOperationException("Sign in to view this item.");
-            var itemId = JsonLong(record.Data, isEvent ? "event_id" : "discussion_id", "id");
+            var itemId = JsonLong(record.Data, isEvent ? "event_id" : "discussion_id", isEvent ? "eventId" : "discussionId", "id");
             if (itemId <= 0) throw new InvalidOperationException("Schoology did not return a valid item ID.");
             using var detailDocument = isEvent ? await _api.GetEventAsync(session, kind, entityId, itemId)
                 : await _api.GetDiscussionAsync(session, kind, entityId, itemId);
-            var data = detailDocument.RootElement;
+            var data = detailDocument.RootElement.Clone();
             var key = isEvent ? "event" : "discussion";
             if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty(key, out var nested)) data = nested;
             var title = ProfileValue(data, "title", "name") ?? record.Title;
-            var description = ProfileValue(data, "description", "body", "message", "description_richtext");
+            var description = ProfileValue(data, "description_richtext", "descriptionRichtext", "description", "body", "message");
             var date = ProfileValue(data, "start", "start_time", "date", "due", "due_date");
+            var commentsEnabled = !isEvent ||
+                (JsonBooleanValue(data, "comments_enabled", "commentsEnabled", "allow_comments", "allowComments") ?? true);
             IReadOnlyList<SchoologyApiRecord> comments = [];
             string? commentsError = null;
-            try
+            if (commentsEnabled)
             {
-                using var commentsDocument = isEvent ? await _api.GetEventCommentsAsync(session, kind, entityId, itemId)
-                    : await _api.GetDiscussionCommentsAsync(session, kind, entityId, itemId);
-                comments = SchoologyApiClient.ReadRecords(commentsDocument.RootElement, "comment", "comments");
-                await ResolveCommentAuthorsAsync(comments, session);
+                try
+                {
+                    using var commentsDocument = isEvent ? await _api.GetEventCommentsAsync(session, kind, entityId, itemId)
+                        : await _api.GetDiscussionCommentsAsync(session, kind, entityId, itemId);
+                    comments = SchoologyApiClient.ReadRecords(commentsDocument.RootElement, "comment", "comments");
+                    await ResolveCommentAuthorsAsync(comments, session);
+                }
+                catch (Exception ex) { commentsError = ex.Message; }
             }
-            catch (Exception ex) { commentsError = ex.Message; }
             UIElement BuildInfo()
             {
                 var info = new StackPanel { Spacing = 10, Margin = new Thickness(12) };
                 info.Children.Add(Text(title, 20, true));
-                if (!string.IsNullOrWhiteSpace(date)) AddProfileField(info, isEvent ? "When" : "Due date", date);
-                if (!string.IsNullOrWhiteSpace(description)) info.Children.Add(Text(StripMarkup(description), 14));
+                if (!string.IsNullOrWhiteSpace(date)) AddProfileField(info, isEvent ? "When" : "Due date", FormatAssignmentDueDate(date));
+                if (!string.IsNullOrWhiteSpace(description)) info.Children.Add(CreateRichContent(description, 14));
+                var attachmentPanel = BuildAttachmentControls(data, () => _ = ShowContentDetailsAsync(kind, entityId, record, isEvent, onBack: onBack));
+                if (attachmentPanel.Children.Count > 0) info.Children.Add(attachmentPanel);
                 if (info.Children.Count == 1) info.Children.Add(EmptyState("No additional information was provided."));
                 return new ScrollViewer { Content = info, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             }
             UIElement BuildComments()
             {
-                var commentList = new ListView
-                {
-                    SelectionMode = ListViewSelectionMode.None,
-                    IsItemClickEnabled = false,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                    Background = new SolidColorBrush(Colors.Transparent)
-                };
+                var commentList = new ListView { SelectionMode = ListViewSelectionMode.None,
+                    IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    Background = new SolidColorBrush(Colors.Transparent) };
                 AutomationProperties.SetAutomationId(commentList, $"ContentCommentsList_{itemId}");
                 if (commentsError is not null)
                     commentList.Items.Add(new ListViewItem { Content = EmptyState("Unable to load comments.", commentsError) });
                 else if (comments.Count == 0)
                     commentList.Items.Add(new ListViewItem { Content = EmptyState("No comments yet.") });
                 else foreach (var comment in comments)
-                {
-                    commentList.Items.Add(new ListViewItem
-                    {
-                        Content = BuildCommentRow(comment, itemId, (parentId, author) =>
-                            _ = ShowContentCommentDialogAsync(kind, entityId, record, isEvent, parentId, author))
-                    });
-                }
+                    commentList.Items.Add(new ListViewItem { Content = BuildCommentRow(comment, itemId,
+                        (parentId, author) => _ = ShowContentCommentDialogAsync(kind, entityId, record, isEvent, parentId, author, onBack)) });
                 return commentList;
             }
             var header = new Grid { ColumnSpacing = 12, Margin = new Thickness(16, 10, 16, 4) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            header.Children.Add(Action("‹ Back", (_, _) => ReturnFromAssignment(entityId)));
+            header.Children.Add(Action("‹ Back", (_, _) => { if (onBack is not null) onBack(); else ReturnFromAssignment(entityId); }));
             var heading = Text(title, 21, true); Grid.SetColumn(heading, 1); header.Children.Add(heading);
             var page = new Grid { RowSpacing = 8, Margin = new Thickness(12) };
             page.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -6167,27 +6219,29 @@ try {{
             var selector = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Stretch };
             var infoItem = new SelectorBarItem { Text = "Info" };
             var commentsItem = new SelectorBarItem { Text = isEvent ? "Comments" : "Discussion" };
-            selector.Items.Add(infoItem); selector.Items.Add(commentsItem);
+            selector.Items.Add(infoItem);
+            if (commentsEnabled) selector.Items.Add(commentsItem);
             Grid.SetRow(selector, 1); page.Children.Add(selector);
             var frame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
             Grid.SetRow(frame, 2); page.Children.Add(frame);
             void Select(SelectorBarItem item)
             {
-                var showingComments = item == commentsItem;
+                var showingComments = commentsEnabled && item == commentsItem;
                 frame.Content = showingComments ? BuildComments() : BuildInfo();
                 SetTitleBarCreateContext(showingComments ? "content-comment" : string.Empty,
-                    showingComments ? () => ShowContentCommentDialogAsync(kind, entityId, record, isEvent) : null);
+                    showingComments ? () => ShowContentCommentDialogAsync(kind, entityId, record, isEvent, onBack: onBack) : null);
             }
             selector.SelectionChanged += (_, _) => { if (selector.SelectedItem is SelectorBarItem item) Select(item); };
-            selector.SelectedItem = openComments ? commentsItem : infoItem;
-            Select(openComments ? commentsItem : infoItem);
+            selector.SelectedItem = openComments && commentsEnabled ? commentsItem : infoItem;
+            Select(openComments && commentsEnabled ? commentsItem : infoItem);
             if (_sectionFrame is not null) NavigateMainSection(page, title); else Reset(BuildApplicationShell(title, page));
-            // Reapply the comment action after a shell rebuild, which initializes the generic Create button.
-            SetTitleBarCreateContext(openComments ? "content-comment" : string.Empty,
-                openComments ? () => ShowContentCommentDialogAsync(kind, entityId, record, isEvent) : null);
+            SetTitleBarCreateContext(openComments && commentsEnabled ? "content-comment" : string.Empty,
+                openComments && commentsEnabled ? () => ShowContentCommentDialogAsync(kind, entityId, record, isEvent, onBack: onBack) : null);
         }
         catch (Exception ex) { await ShowApiErrorAsync(isEvent ? "Unable to load event" : "Unable to load discussion", ex.Message); }
     }
+
+    
 
     private void ReturnFromAssignment(long sectionId)
     {
@@ -6201,7 +6255,7 @@ try {{
             ShowThreePane("Groups", _groups.FirstOrDefault(group => group.Id == _selectedEntityId));
             return;
         }
-        ShowHome(_section == "Upcoming" ? "Upcoming" : "Recent Activity");
+        ShowHome(_section is "Upcoming" or "Calendar" ? _section : "Recent Activity");
     }
 
     private async Task LoadEntityTabAsync(string kind, long entityId, string tab, StackPanel body, TextBlock status)
@@ -8758,6 +8812,21 @@ try {{
         return false;
     }
 
+    private static bool? JsonBooleanValue(System.Text.Json.JsonElement data, params string[] keys)
+    {
+        if (data.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+        foreach (var key in keys)
+        {
+            if (!data.TryGetProperty(key, out var value) ||
+                value.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined) continue;
+            if (value.ValueKind == System.Text.Json.JsonValueKind.True) return true;
+            if (value.ValueKind == System.Text.Json.JsonValueKind.False) return false;
+            if (bool.TryParse(value.ToString(), out var parsed)) return parsed;
+            if (int.TryParse(value.ToString(), out var number)) return number != 0;
+        }
+        return null;
+    }
+
     private Grid BuildMessagesPage()
     {
         var root = new Grid { Margin = new Thickness(18), ColumnSpacing = 12,
@@ -9850,21 +9919,24 @@ try {{
         {
             ColumnSpacing = 12,
             Padding = new Thickness(10 + depth * 22, 9, 14, 9),
-            MinHeight = 48
+            MinHeight = 48,
+            HorizontalAlignment = HorizontalAlignment.Stretch
         };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         var name = Text(title, 14);
         name.VerticalAlignment = VerticalAlignment.Center;
         row.Children.Add(name);
         var scoreText = Text(score, 13, true);
         scoreText.VerticalAlignment = VerticalAlignment.Center;
-        scoreText.HorizontalAlignment = HorizontalAlignment.Right;
+        scoreText.HorizontalAlignment = HorizontalAlignment.Stretch;
+        scoreText.TextAlignment = TextAlignment.Right;
         Grid.SetColumn(scoreText, 1);
         row.Children.Add(scoreText);
         var button = new Button
         {
-            Content = row, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = row, HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Padding = new Thickness(0),
             Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
             BorderThickness = new Thickness(0)
@@ -9931,22 +10003,24 @@ try {{
                 throw new InvalidOperationException("Schoology did not return this course's grade items.");
 
             rows.Children.Clear();
-            var finalGradeRecords = SchoologyApiClient.ReadRecords(
-                finalGradesDocument?.RootElement ?? default,
+            var finalGradeRecords = SchoologyApiClient.ReadRecords(finalGradesDocument?.RootElement ?? default,
                 "final_grade", "finalGrade", "final_grades", "finalGrades");
-            var enrollmentRecords = SchoologyApiClient.ReadRecords(
-                enrollmentsDocument?.RootElement ?? default, "enrollment", "enrollments");
+            var enrollmentRecords = SchoologyApiClient.ReadRecords(enrollmentsDocument?.RootElement ?? default, "enrollment", "enrollments");
             var ownEnrollment = enrollmentRecords.FirstOrDefault(record =>
                 string.Equals(ProfileValue(record.Data, "uid", "user_id", "userId"),
-                    session.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    StringComparison.Ordinal));
+                    session.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal));
             var enrollmentData = ownEnrollment is null ? default : ownEnrollment.Data;
             var enrollmentId = JsonLong(enrollmentData, "id", "enrollment_id", "enrollmentId");
             var finalRecord = finalGradeRecords.FirstOrDefault(record =>
-                enrollmentId > 0 &&
-                JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
-            if (finalRecord is null && finalGradeRecords.Count == 1)
-                finalRecord = finalGradeRecords[0];
+                enrollmentId > 0 && JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
+            if (finalRecord is null && finalGradeRecords.Count == 1) finalRecord = finalGradeRecords[0];
+            if (finalRecord is null)
+            {
+                var embeddedFinalGrades = SchoologyApiClient.ReadRecords(sectionData, "final_grade", "finalGrade", "final_grades", "finalGrades");
+                finalRecord = embeddedFinalGrades.FirstOrDefault(record =>
+                    enrollmentId > 0 && JsonLong(record.Data, "enrollment_id", "enrollmentId") == enrollmentId);
+                if (finalRecord is null && embeddedFinalGrades.Count == 1) finalRecord = embeddedFinalGrades[0];
+            }
             var finalData = finalRecord is null ? default : finalRecord.Data;
             var finalPeriods = SchoologyApiClient.ReadRecords(
                 finalData, "period", "periods", "final_period", "finalPeriod");
@@ -10064,36 +10138,28 @@ try {{
     private static string FormatCourseOverallGrade(
         JsonElement sectionData, JsonElement finalGrade, JsonElement finalPeriod, JsonElement gradingScale)
     {
-        var overrideString = ProfileValue(finalPeriod,
-            "override_str", "overrideStr", "override_string", "overrideString", "grade_override", "gradeOverride") ??
-            ProfileValue(finalGrade,
-            "override_str", "overrideStr", "override_string", "overrideString", "grade_override", "gradeOverride");
+        var overrideString = ProfileValue(finalPeriod, "override_str", "overrideStr", "override_string", "overrideString", "grade_override", "gradeOverride");
+        if (string.IsNullOrWhiteSpace(overrideString))
+            overrideString = ProfileValue(finalGrade, "override_str", "overrideStr", "override_string", "overrideString", "grade_override", "gradeOverride");
         if (!string.IsNullOrWhiteSpace(overrideString)) return overrideString.Trim();
-
-        var numericOverride = ProfileValue(finalPeriod, "override_numeric", "overrideNumeric") ??
-            ProfileValue(finalGrade, "override_numeric", "overrideNumeric");
-        var rawGrade = numericOverride ?? ProfileValue(finalPeriod, "grade") ??
-            ProfileValue(finalGrade, "grade", "calculated_grade", "calculatedGrade") ??
+        var numericOverride = ProfileValue(finalPeriod, "override_numeric", "overrideNumeric");
+        if (string.IsNullOrWhiteSpace(numericOverride)) numericOverride = ProfileValue(finalGrade, "override_numeric", "overrideNumeric");
+        var rawGrade = !string.IsNullOrWhiteSpace(numericOverride) ? numericOverride :
+            ProfileValue(finalPeriod, "grade") ?? ProfileValue(finalGrade, "grade", "calculated_grade", "calculatedGrade") ??
             ProfileValue(sectionData, "grade", "calculated_grade", "calculatedGrade");
         if (string.IsNullOrWhiteSpace(rawGrade)) return "—";
-        if (!decimal.TryParse(rawGrade.Trim().TrimEnd('%').Trim(),
-            System.Globalization.NumberStyles.Number,
-            System.Globalization.CultureInfo.InvariantCulture, out var numeric))
-            return rawGrade.Trim();
-
+        if (!decimal.TryParse(rawGrade.Trim().TrimEnd('%').Trim(), System.Globalization.NumberStyles.Number,
+            System.Globalization.CultureInfo.InvariantCulture, out var numeric)) return rawGrade.Trim();
         var percentage = decimal.Round(numeric, 2, MidpointRounding.AwayFromZero)
             .ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
-        var scaleType = JsonLong(gradingScale, "type", "scale_type", "scaleType");
-        if (gradingScale.ValueKind != JsonValueKind.Object || (scaleType != 0 && scaleType != 1))
+        if (gradingScale.ValueKind != JsonValueKind.Object || JsonLong(gradingScale, "type", "scale_type", "scaleType") != 1)
             return percentage;
         var definition = gradingScale;
         if (gradingScale.TryGetProperty("scale", out var nestedScale)) definition = nestedScale;
         JsonElement levels = default;
         if (definition.ValueKind == JsonValueKind.Object &&
-            !definition.TryGetProperty("level", out levels) &&
-            !definition.TryGetProperty("levels", out levels)) levels = default;
-        if (levels.ValueKind == JsonValueKind.Object &&
-            levels.TryGetProperty("level", out var nestedLevels)) levels = nestedLevels;
+            !definition.TryGetProperty("level", out levels) && !definition.TryGetProperty("levels", out levels)) levels = default;
+        if (levels.ValueKind == JsonValueKind.Object && levels.TryGetProperty("level", out var nestedLevels)) levels = nestedLevels;
         var levelItems = new List<JsonElement>();
         if (levels.ValueKind == JsonValueKind.Array) levelItems.AddRange(levels.EnumerateArray());
         else if (levels.ValueKind == JsonValueKind.Object) levelItems.Add(levels);
@@ -10102,16 +10168,12 @@ try {{
         {
             var grade = ProfileValue(level, "grade", "title", "name");
             var cutoff = ProfileValue(level, "cutoff", "average", "percent", "percentage");
-            if (!string.IsNullOrWhiteSpace(grade) &&
-                decimal.TryParse(cutoff, System.Globalization.NumberStyles.Number,
-                    System.Globalization.CultureInfo.InvariantCulture, out var threshold))
-                parsed.Add((grade, threshold));
+            if (!string.IsNullOrWhiteSpace(grade) && decimal.TryParse(cutoff, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var threshold)) parsed.Add((grade, threshold));
         }
-        var letter = parsed.OrderByDescending(level => level.Cutoff)
-            .FirstOrDefault(level => numeric >= level.Cutoff).Grade;
+        var letter = parsed.OrderByDescending(level => level.Cutoff).FirstOrDefault(level => numeric >= level.Cutoff).Grade;
         if (string.IsNullOrWhiteSpace(letter)) return percentage;
-        return JsonBoolean(gradingScale, "hide_numeric", "hideNumeric")
-            ? letter : $"{letter} ({percentage})";
+        return JsonBoolean(gradingScale, "hide_numeric", "hideNumeric") ? letter : $"{letter} ({percentage})";
     }
 
     private Grid BuildGradesPage(long? onlyCourseId = null)
@@ -10826,85 +10888,116 @@ try {{
         if (_sectionFrame is not null) NavigateMainSection(panel, "Search");
         else Reset(BuildApplicationShell("Recent Activity", panel));
     }
+    private static string CreatePermissionPath(string kind, long entityId, string collection)
+    {
+        var realm = kind switch { "Groups" => "groups", "Profile" => "users", _ => "sections" };
+        return kind == "Profile" ? $"v1/users/{entityId}/{collection}" : $"/v1/{realm}/{entityId}/{collection}";
+    }
+
+    private async Task<Dictionary<string, bool>> LoadPostPermissionMapAsync(SchoologyAuthService.Session session, bool includeUserEvents)
+    {
+        var requests = new List<string>();
+        foreach (var course in _courses)
+        foreach (var collection in new[] { "updates", "discussions", "events" })
+            requests.Add(CreatePermissionPath("Courses", course.Id, collection));
+        foreach (var group in _groups)
+        foreach (var collection in new[] { "updates", "discussions", "events" })
+            requests.Add(CreatePermissionPath("Groups", group.Id, collection));
+        if (includeUserEvents) requests.Add(CreatePermissionPath("Profile", session.UserId, "events"));
+        if (requests.Count == 0) return new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        using var document = await _api.GetPostPermissionsAsync(session, requests);
+        var responses = SchoologyApiClient.ReadRecords(document.RootElement, "response", "responses");
+        var permissions = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var response in responses)
+        {
+            var location = ProfileValue(response.Data, "location");
+            if (string.IsNullOrWhiteSpace(location)) continue;
+            var responseCode = JsonLong(response.Data, "response_code", "responseCode");
+            var body = ProfileValue(response.Data, "body") ?? string.Empty;
+            permissions[location] = responseCode == 200 &&
+                body.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Any(value => string.Equals(value, "POST", StringComparison.OrdinalIgnoreCase));
+        }
+        return permissions;
+    }
+
+    private List<(string Kind, SchoologyEntity Entity)> GetPostableDestinations(
+        SchoologyAuthService.Session session, IReadOnlyDictionary<string, bool> permissions, string collection, bool includeUserEvents = false)
+    {
+        var result = new List<(string Kind, SchoologyEntity Entity)>();
+        foreach (var course in _courses)
+            if (permissions.GetValueOrDefault(CreatePermissionPath("Courses", course.Id, collection))) result.Add(("Courses", course));
+        foreach (var group in _groups)
+            if (permissions.GetValueOrDefault(CreatePermissionPath("Groups", group.Id, collection))) result.Add(("Groups", group));
+        if (includeUserEvents && permissions.GetValueOrDefault(CreatePermissionPath("Profile", session.UserId, "events")))
+            result.Add(("Profile", new SchoologyEntity(session.UserId, "My Account", string.Empty, null, default)));
+        return result;
+    }
+
     private async void ShowCreateMenu()
     {
         var session = _session;
         var context = _titleBarCreateContext;
         if (session is null || context.Length == 0) return;
+        Dictionary<string, bool> permissions;
+        try { permissions = await LoadPostPermissionMapAsync(session, includeUserEvents: context == "home"); }
+        catch (Exception ex) { await ShowApiErrorAsync("Unable to check posting permissions", ex.Message); return; }
         if (context == "home")
         {
+            var updates = GetPostableDestinations(session, permissions, "updates");
+            var discussions = GetPostableDestinations(session, permissions, "discussions");
+            var events = GetPostableDestinations(session, permissions, "events", includeUserEvents: true);
             var menu = new MenuFlyout();
-            if (_courses.Count + _groups.Count > 0)
+            if (updates.Count > 0)
             {
-                var update = new MenuFlyoutItem { Text = "Update", Icon = new SymbolIcon(Symbol.Edit) };
-                update.Click += async (_, _) => await ShowCreateUpdateDialogCoreAsync();
-                menu.Items.Add(update);
+                var item = new MenuFlyoutItem { Text = "Update", Icon = new SymbolIcon(Symbol.Edit) };
+                item.Click += async (_, _) => await ShowCreateUpdateDialogCoreAsync();
+                menu.Items.Add(item);
             }
-            var discussion = new MenuFlyoutItem { Text = "Discussion", Icon = new SymbolIcon(Symbol.Message) };
-            discussion.Click += async (_, _) => await ShowCreateDiscussionOrEventDialogAsync(false);
-            menu.Items.Add(discussion);
-            var calendarEvent = new MenuFlyoutItem { Text = "Event", Icon = new SymbolIcon(Symbol.Calendar) };
-            calendarEvent.Click += async (_, _) => await ShowCreateDiscussionOrEventDialogAsync(true);
-            menu.Items.Add(calendarEvent);
+            if (discussions.Count > 0)
+            {
+                var item = new MenuFlyoutItem { Text = "Discussion", Icon = new SymbolIcon(Symbol.Message) };
+                item.Click += async (_, _) => await ShowCreateDiscussionOrEventDialogAsync(false);
+                menu.Items.Add(item);
+            }
+            if (events.Count > 0)
+            {
+                var item = new MenuFlyoutItem { Text = "Event", Icon = new SymbolIcon(Symbol.Calendar) };
+                item.Click += async (_, _) => await ShowCreateDiscussionOrEventDialogAsync(true);
+                menu.Items.Add(item);
+            }
+            if (menu.Items.Count == 0)
+            {
+                await ShowApiErrorAsync("Nothing to create", "Your account does not currently have permission to post an update, discussion, or event in any available destination.");
+                return;
+            }
             if (_titleBarCreateButton is not null) menu.ShowAt(_titleBarCreateButton);
             return;
         }
         var kind = context == "course-update" ? "Courses" : context == "group-update" ? "Groups" : string.Empty;
-        var destinations = new List<(string Kind, SchoologyEntity Entity)>();
-        if (context == "home")
+        var entity = kind == "Courses" ? _courses.FirstOrDefault(item => item.Id == _selectedEntityId) :
+            kind == "Groups" ? _groups.FirstOrDefault(item => item.Id == _selectedEntityId) : null;
+        if (entity is null || !permissions.GetValueOrDefault(CreatePermissionPath(kind, entity.Id, "updates")))
         {
-            destinations.AddRange(_courses.Select(course => ("Courses", course)));
-            destinations.AddRange(_groups.Select(group => ("Groups", group)));
-        }
-        else if (kind.Length > 0)
-        {
-            var entity = (kind == "Courses" ? _courses : _groups).FirstOrDefault(item => item.Id == _selectedEntityId);
-            if (entity is not null) destinations.Add((kind, entity));
-        }
-        if (destinations.Count == 0)
-        {
-            await ShowApiErrorAsync("Unable to create update", "No available course or group destination was found.");
+            await ShowApiErrorAsync("Unable to create update", "You do not have permission to post an update in this course or group.");
             return;
-        }
-        var content = new StackPanel { Spacing = 10, MinWidth = 360 };
-        if (context == "home")
-        {
-            content.Children.Add(Text("Post to", 12, true));
-            var destinationPicker = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = destinations.Select(item => item.Entity.Name).ToArray(), SelectedIndex = 0 };
-            content.Children.Add(destinationPicker);
-            content.Children.Add(Text("Choose a course or group where you can post an update.", 12));
         }
         var bodyBox = new TextBox { Header = "Write an update", PlaceholderText = "Share an update…", AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap, MinHeight = 120, MaxHeight = 260 };
+        var content = new StackPanel { Spacing = 10, MinWidth = 360 };
         content.Children.Add(bodyBox);
         var attachments = AddPostAttachmentControls(content, session, "TitleBarUpdateComposer");
-        var dialog = new ContentDialog
-        {
-            Title = context == "course-update" ? "Post course update" : context == "group-update" ? "Post group update" : "Create update",
-            Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme,
-            DefaultButton = ContentDialogButton.Primary
-        };
-        var result = await dialog.ShowAsync();
-        if (result != ContentDialogResult.Primary) return;
+        var dialog = new ContentDialog { Title = context == "course-update" ? "Post course update" : "Post group update",
+            Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme, DefaultButton = ContentDialogButton.Primary };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         var body = bodyBox.Text.Trim();
-        if (body.Length == 0)
-        {
-            await ShowApiErrorAsync("Unable to post update", "Write an update before posting.");
-            return;
-        }
-        var selected = destinations[0];
-        if (context == "home" && content.Children.OfType<ComboBox>().FirstOrDefault() is { } picker && picker.SelectedIndex >= 0)
-            selected = destinations[picker.SelectedIndex];
+        if (body.Length == 0) { await ShowApiErrorAsync("Unable to post update", "Write an update before posting."); return; }
         try
         {
-            using var created = await CreateUpdateWithAttachmentsAsync(session, selected.Kind,
-                selected.Entity, body, attachments);
-            if (context == "home") ShowHome("Recent Activity");
-            else
-            {
-                _selectedEntityTab = "Updates";
-                ShowThreePane(selected.Kind, selected.Entity);
-            }
+            using var created = await CreateUpdateWithAttachmentsAsync(session, kind, entity, body, attachments);
+            _selectedEntityTab = "Updates";
+            ShowThreePane(kind, entity);
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to post update", ex.Message); }
     }
