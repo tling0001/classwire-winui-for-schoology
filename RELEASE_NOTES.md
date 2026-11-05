@@ -1,5 +1,9 @@
 # Release notes
 
+## [2026.10.0-port.94] - 2026-11-05
+
+- Add a shared dialog viewport that sizes itself to the available window height and scrolls overflowing content. Apply it to event/discussion, update, message, assignment-submission, comment, release-note, and detail dialogs; keep native ListView scrolling for collection dialogs.
+
 ## [2026.10.0-port.93] - 2026-11-05
 
 - Give the standalone Grades page a height-constrained, auto-resizing scroll viewport. Expanded course, grading-period, category, and assignment rows now scroll together within the available shell space instead of allowing the content stack to grow beyond the window.

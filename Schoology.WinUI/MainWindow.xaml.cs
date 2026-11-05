@@ -1488,7 +1488,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 Title = $"What’s new in Schoology {tag}",
                 Content = new ScrollViewer
                 {
-                    Content = notes,
+                    Content = CreateDialogScrollViewport(notes, 560),
                     MaxHeight = 520,
                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
@@ -1941,7 +1941,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             activeDialog = new ContentDialog
             {
                 Title = "Upload Submission",
-                Content = content,
+                Content = CreateDialogScrollViewport(content),
                 PrimaryButtonText = "Submit",
                 CloseButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Primary,
@@ -2525,7 +2525,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 content.Children.Add(allDay); content.Children.Add(eventDate); content.Children.Add(eventTime);
                 content.Children.Add(hasEnd); content.Children.Add(endFields); content.Children.Add(rsvp); content.Children.Add(commentsEnabled);
             }
-            var dialog = new ContentDialog { Title = isEvent ? "Create event" : "Create discussion", Content = content,
+            var dialog = new ContentDialog { Title = isEvent ? "Create event" : "Create discussion", Content = CreateDialogScrollViewport(content),
                 PrimaryButtonText = "Create", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
@@ -2572,7 +2572,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
             content.Children.Add(picker); content.Children.Add(body);
             var attachments = AddPostAttachmentControls(content, session, "LegacyUpdateComposer");
-            var dialog = new ContentDialog { Title = "Create update", Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel",
+            var dialog = new ContentDialog { Title = "Create update", Content = CreateDialogScrollViewport(content), PrimaryButtonText = "Post", CloseButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(body.Text)) return;
             var selected = destinations[Math.Clamp(picker.SelectedIndex, 0, destinations.Count - 1)];
@@ -3224,7 +3224,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (!string.IsNullOrWhiteSpace(date)) content.Children.Add(Text(date, 12));
         var description = ProfileValue(record.Data, "description", "body", "description_richtext");
         if (!string.IsNullOrWhiteSpace(description)) content.Children.Add(CreateRichContent(description, 13));
-        await new ContentDialog { Title = "Upcoming item", Content = content, CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
+        await new ContentDialog { Title = "Upcoming item", Content = CreateDialogScrollViewport(content), CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
     }
 
     private async Task LoadUpcomingAsync(ListView list, TextBlock status)
@@ -4359,7 +4359,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 var description = ProfileValue(entry.Data, "description", "body", "text");
                 if (!string.IsNullOrWhiteSpace(description)) details.Children.Add(Text(StripMarkup(description), 13));
                 details.Children.Add(Text("Schoology did not provide a destination for this resource.", 12));
-                await new ContentDialog { Title = "Resource details", Content = details,
+                await new ContentDialog { Title = "Resource details", Content = CreateDialogScrollViewport(details, 560),
                     CloseButtonText = "Close", XamlRoot = _root.XamlRoot,
                     RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
                 return;
@@ -4768,7 +4768,7 @@ try {{
         var content = new StackPanel { Spacing = 10, MinWidth = 320 };
         content.Children.Add(status);
         content.Children.Add(progress);
-        var dialog = new ContentDialog { Title = "Try Schoology classic", Content = content, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
+        var dialog = new ContentDialog { Title = "Try Schoology classic", Content = CreateDialogScrollViewport(content), XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         var operation = dialog.ShowAsync();
         try
         {
@@ -7323,7 +7323,7 @@ try {{
             var description = ProfileValue(record.Data, "description", "body", "due", "due_date", "type");
             if (!string.IsNullOrWhiteSpace(description)) details.Children.Add(Text(StripMarkup(description), 13));
             details.Children.Add(Text("Schoology did not provide an embeddable HTTPS link for this material.", 12));
-            await new ContentDialog { Title = "Material details", Content = details,
+            await new ContentDialog { Title = "Material details", Content = CreateDialogScrollViewport(details, 560),
                 CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
         }
 
@@ -8590,7 +8590,7 @@ try {{
         var dialog = new ContentDialog
         {
             Title = parentCommentId > 0 ? "Reply to comment" : "Add comment",
-            Content = content,
+            Content = CreateDialogScrollViewport(content),
             CloseButtonText = "Cancel",
             XamlRoot = _root.XamlRoot,
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
@@ -8783,6 +8783,27 @@ try {{
                 }
             };
         }
+    }
+
+    // Dialog content can exceed the available window height on compact displays or
+    // when attachments/comments expand. Size the viewport from the live root height
+    // and let it re-evaluate its available space whenever the window is resized.
+    private ScrollViewer CreateDialogScrollViewport(UIElement content, double preferredMaxHeight = 640)
+    {
+        var availableHeight = _root.ActualHeight > 0
+            ? Math.Max(240, _root.ActualHeight - 176)
+            : preferredMaxHeight;
+        return new ScrollViewer
+        {
+            Content = content,
+            MinHeight = 0,
+            MaxHeight = Math.Min(preferredMaxHeight, availableHeight),
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollMode = ScrollMode.Enabled,
+            ZoomMode = ZoomMode.Disabled,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
     }
 
     private async Task ShowApiErrorAsync(string title, string message)
@@ -9552,7 +9573,7 @@ try {{
         var dialog = new ContentDialog
         {
             Title = "New Message",
-            Content = content,
+            Content = CreateDialogScrollViewport(content),
             PrimaryButtonText = "Send",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
@@ -11114,7 +11135,7 @@ try {{
         content.Children.Add(bodyBox);
         var attachments = AddPostAttachmentControls(content, session, "TitleBarUpdateComposer");
         var dialog = new ContentDialog { Title = context == "course-update" ? "Post course update" : "Post group update",
-            Content = content, PrimaryButtonText = "Post", CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot,
+            Content = CreateDialogScrollViewport(content), PrimaryButtonText = "Post", CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot,
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme, DefaultButton = ContentDialogButton.Primary };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         var body = bodyBox.Text.Trim();
