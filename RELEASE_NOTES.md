@@ -1,5 +1,11 @@
 # Release notes
 
+## [2026.10.0-port.83] - 2026-11-04
+
+- Match Android SchoologyCookieProvider session-start behavior by requesting `sessionstart?domain=app.schoology.com` and preserving explicit parent-domain cookie scope for authenticated WebView2 content.
+- Load calendar events month-by-month using the Android `start_date` / `end_date` API and 20-item pagination, including past dates; add a calendar density indicator to dates containing events.
+
+
 ## [2026.10.0-port.82] - 2026-11-04
 
 - Fix x64 and ARM64 publishing by removing a tracking-prevention setting unavailable in the project's WebView2 SDK; preserve the authenticated page WebView and explicit Schoology cookie forwarding.

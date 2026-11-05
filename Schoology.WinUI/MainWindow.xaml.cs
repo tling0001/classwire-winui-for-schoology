@@ -2997,50 +2997,138 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         layout.Children.Add(Text("Calendar", 24, true));
-        var calendar = new CalendarView { SelectionMode = CalendarViewSelectionMode.Single, IsTodayHighlighted = true };
-        Grid.SetRow(calendar, 1); layout.Children.Add(calendar);
+
+        var calendar = new CalendarView
+        {
+            SelectionMode = CalendarViewSelectionMode.Single,
+            IsTodayHighlighted = true
+        };
+        Grid.SetRow(calendar, 1);
+        layout.Children.Add(calendar);
+
         var right = new Grid { RowSpacing = 8 };
         right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var heading = Text(DateTime.Today.ToString("dddd, MMMM d", System.Globalization.CultureInfo.CurrentCulture), 18, true);
+        var selectedDate = DateTime.Today;
+        var heading = Text(selectedDate.ToString("dddd, MMMM d",
+            System.Globalization.CultureInfo.CurrentCulture), 18, true);
         right.Children.Add(heading);
-        var list = new ListView { SelectionMode = ListViewSelectionMode.None, IsItemClickEnabled = false,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        AutomationProperties.SetAutomationId(list, "CalendarEventsList");
-        Grid.SetRow(list, 1); right.Children.Add(list);
-        Grid.SetColumn(right, 1); Grid.SetRow(right, 1); layout.Children.Add(right);
-        IReadOnlyList<SchoologyApiRecord> events = [];
-        calendar.SelectedDatesChanged += (_, _) =>
+        var list = new ListView
         {
-            var date = calendar.SelectedDates.FirstOrDefault().Date;
-            heading.Text = date.ToString("dddd, MMMM d", System.Globalization.CultureInfo.CurrentCulture);
-            RenderGroupedUpcoming(list, events, date);
+            SelectionMode = ListViewSelectionMode.None,
+            IsItemClickEnabled = false,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
-        _ = FetchCalendarIntoAsync(list, heading, () => events, value => events = value);
-        return layout;
-    }
+        AutomationProperties.SetAutomationId(list, "CalendarEventsList");
+        Grid.SetRow(list, 1);
+        right.Children.Add(list);
+        Grid.SetColumn(right, 1);
+        Grid.SetRow(right, 1);
+        layout.Children.Add(right);
 
-    private async Task FetchCalendarIntoAsync(ListView list, TextBlock heading,
-        Func<IReadOnlyList<SchoologyApiRecord>> getEvents, Action<IReadOnlyList<SchoologyApiRecord>> setEvents)
-    {
-        try
+        var monthRecords = new Dictionary<DateTime, IReadOnlyList<SchoologyApiRecord>>();
+        var monthEventDates = new Dictionary<DateTime, HashSet<DateTime>>();
+        var loadingMonths = new HashSet<DateTime>();
+        var visibleDayItems = new Dictionary<DateTime, CalendarViewDayItem>();
+        var indicatorColor = ThemeBrush("SchoologyBlueBrush").Color;
+
+        static DateTime MonthKey(DateTime date) => new(date.Year, date.Month, 1);
+
+        void ApplyDayIndicator(CalendarViewDayItem dayItem, DateTime date)
         {
-            var events = await FetchUpcomingRecordsAsync();
-            setEvents(events);
-            _root.DispatcherQueue.TryEnqueue(() => RenderGroupedUpcoming(list, events, DateTime.Today));
+            var month = MonthKey(date);
+            if (!monthEventDates.TryGetValue(month, out var dates))
+            {
+                dayItem.Density = 0;
+                return;
+            }
+
+            if (dates.Contains(date.Date))
+            {
+                dayItem.SetDensityColors(new List<Windows.UI.Color> { indicatorColor });
+                dayItem.Density = 1;
+            }
+            else
+            {
+                dayItem.Density = 0;
+            }
         }
-        catch (Exception ex)
+
+        void RenderSelectedDate()
         {
-            _root.DispatcherQueue.TryEnqueue(() =>
+            var month = MonthKey(selectedDate);
+            if (monthRecords.TryGetValue(month, out var records))
+                RenderGroupedUpcoming(list, records, selectedDate);
+            else
             {
                 list.Items.Clear();
-                var error = new StackPanel { Spacing = 8, Margin = new Thickness(12) };
-                error.Children.Add(Text($"Unable to load calendar: {ex.Message}", 13));
-                error.Children.Add(Action("Retry", async (_, _) =>
-                    await FetchCalendarIntoAsync(list, heading, getEvents, setEvents)));
-                list.Items.Add(new ListViewItem { Content = error });
-            });
+                list.Items.Add(new ListViewItem { Content = LoadingStatus("Loading calendar events…") });
+            }
         }
+
+        async Task LoadMonthAsync(DateTime requestedMonth)
+        {
+            var month = MonthKey(requestedMonth);
+            if (monthRecords.ContainsKey(month) || !loadingMonths.Add(month)) return;
+            try
+            {
+                var session = _session ?? throw new InvalidOperationException("Sign in to view your calendar.");
+                var records = await _api.GetCalendarEventsForMonthAsync(session, month);
+                var dates = records
+                    .Select(record => ParseSchoologyDate(ProfileValue(record.Data,
+                        "start", "start_time", "date", "due", "due_date")))
+                    .Where(date => date.HasValue)
+                    .Select(date => date!.Value.Date)
+                    .ToHashSet();
+
+                monthRecords[month] = records;
+                monthEventDates[month] = dates;
+                foreach (var pair in visibleDayItems.Where(pair => MonthKey(pair.Key) == month).ToArray())
+                    ApplyDayIndicator(pair.Value, pair.Key);
+                if (MonthKey(selectedDate) == month)
+                    RenderSelectedDate();
+            }
+            catch (Exception ex)
+            {
+                if (MonthKey(selectedDate) == month)
+                {
+                    list.Items.Clear();
+                    var error = new StackPanel { Spacing = 8, Margin = new Thickness(12) };
+                    error.Children.Add(Text($"Unable to load calendar: {ex.Message}", 13));
+                    error.Children.Add(Action("Retry", async (_, _) => await LoadMonthAsync(month)));
+                    list.Items.Add(new ListViewItem { Content = error });
+                }
+            }
+            finally
+            {
+                loadingMonths.Remove(month);
+            }
+        }
+
+        // CalendarView virtualizes day items. Cache each month so dates containing
+        // events receive a density marker without issuing a request per day.
+        calendar.CalendarViewDayItemChanging += (_, args) =>
+        {
+            var date = args.Item.Date.Date;
+            visibleDayItems[date] = args.Item;
+            ApplyDayIndicator(args.Item, date);
+            if (!monthRecords.ContainsKey(MonthKey(date)))
+                _ = LoadMonthAsync(date);
+        };
+        calendar.SelectedDatesChanged += (_, _) =>
+        {
+            if (calendar.SelectedDates.Count == 0) return;
+            selectedDate = calendar.SelectedDates[0].Date;
+            heading.Text = selectedDate.ToString("dddd, MMMM d",
+                System.Globalization.CultureInfo.CurrentCulture);
+            RenderSelectedDate();
+            _ = LoadMonthAsync(selectedDate);
+        };
+
+        calendar.SelectedDates.Add(new DateTimeOffset(DateTime.Today));
+        RenderSelectedDate();
+        _ = LoadMonthAsync(selectedDate);
+        return layout;
     }
 
     private sealed record SchoologyRequestItem(string Type, long Id, string Title, string Subtitle, JsonElement Data);

@@ -60,6 +60,42 @@ internal sealed class SchoologyApiClient
         SchoologyAuthService.Session session, long sectionId, long appId, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAtVersionAsync(session, "v2", $"sections/{sectionId}/applications/{appId}/launch", null, cancellationToken);
 
+    internal async Task<IReadOnlyList<SchoologyApiRecord>> GetCalendarEventsForMonthAsync(
+        SchoologyAuthService.Session session, DateTime month, CancellationToken cancellationToken = default)
+    {
+        var monthStart = new DateTime(month.Year, month.Month, 1);
+        var monthEnd = monthStart.AddMonths(1);
+        var records = new List<SchoologyApiRecord>();
+        const int pageSize = 20;
+
+        // Android CalendarApiHelper.getAllEventsBetween requests a bounded month
+        // with start_date/end_date and follows every 20-item page.
+        for (var offset = 0; offset < 2000; offset += pageSize)
+        {
+            using var document = await _auth.GetApiJsonAsync(session, $"users/{session.UserId}/events",
+                new Dictionary<string, string>
+                {
+                    ["start_date"] = monthStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    ["end_date"] = monthEnd.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    ["start"] = offset.ToString(CultureInfo.InvariantCulture),
+                    ["limit"] = pageSize.ToString(CultureInfo.InvariantCulture)
+                }, cancellationToken);
+            var page = ReadRecords(document.RootElement, "event", "events");
+            records.AddRange(page);
+            if (page.Count < pageSize) break;
+        }
+
+        var unique = new Dictionary<long, SchoologyApiRecord>();
+        var recordsWithoutIds = new List<SchoologyApiRecord>();
+        foreach (var record in records)
+        {
+            var id = ReadLong(record.Data, "id", "event_id", "eventId", "assignment_id");
+            if (id > 0) unique[id] = record;
+            else recordsWithoutIds.Add(record);
+        }
+        return unique.Values.Concat(recordsWithoutIds).ToArray();
+    }
+
     internal Task<JsonDocument> GetMessagesAsync(
         SchoologyAuthService.Session session, bool sent, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, sent ? "messages/sent" : "messages/inbox",
@@ -565,7 +601,7 @@ internal sealed partial class SchoologyAuthService
     {
         var defaultDomain = WebHost.EndsWith("schoologyca.com", StringComparison.OrdinalIgnoreCase) ? ".schoologyca.com" : ".schoology.com";
         // Android CSOAssignment.startSession(domain) sends the bare app host (for example app.schoology.com), not a URL with a scheme.
-        var url = $"https://{ApiHost}/v1/sessionstart?for_domain={Uri.EscapeDataString(WebHost)}";
+        var url = $"https://{ApiHost}/v1/sessionstart?domain={Uri.EscapeDataString(WebHost)}";
         var redirectCookies = new List<string>();
         using var response = await SendSignedRequestAsync(HttpMethod.Get, url, () => null,
             session.Token, session.Secret, null, ct, redirectSetCookieHeaders: redirectCookies);
@@ -589,7 +625,9 @@ internal sealed partial class SchoologyAuthService
             // Tauri explicitly scopes the session cookie to Schoology sibling hosts.
             // Use the canonical host form expected by WebView2; a parent-domain
             // cookie still applies to its Schoology app subdomains.
-            domain = host;
+            // Android installs these cookies on the parent Schoology domain;
+            // the native Tauri cookie store uses the same explicit domain scope.
+            domain = "." + host;
             cookies[name] = new(name, value, domain, path, httpOnly, true);
         }
         var allCookieHeaders = redirectCookies.ToList();
