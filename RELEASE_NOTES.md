@@ -1,6 +1,13 @@
 # Release notes
 
-## [2026.10.0-port.86] - 2026-11-04
+## [2026.10.0-port.87] - 2026-11-04
+
+- Fix the x64 and ARM64 publish failure by removing the obsolete duplicate assignment-resource picker; retain the multi-select picker used by staged submissions.
+- Restore embedded content in posts, comments, and messages: preserve native rich-text rendering and add secure embedded-content actions for iframe/embed/object URLs.
+- Replace the rejected `data:text/html` attachment navigation with authenticated HTTPS navigation in the persistent shared WebView2 profile, including Schoology session cookies.
+- Extract only HTTPS embed targets from untrusted markup; do not execute arbitrary embedded scripts or accept unsafe URL schemes.
+
+
 
 - Fix the malformed assignment-submission refresh JSON expression that caused the x64 and ARM64 GitHub Actions publishes to fail at compile time.
 - Replace the Grades TreeView with a virtualized ListView and inline expandable grading-period/category rows, following the course Materials hierarchy pattern.

@@ -2242,75 +2242,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { await ShowApiErrorAsync("Unable to submit text", ex.Message); }
     }
 
-    private async Task ShowAssignmentResourcePickerAsync()
-    {
-        var session = _session;
-        var sectionId = _activeAssignmentSectionId;
-        var assignmentId = _activeAssignmentId;
-        if (session is null || !_activeAssignmentAllowsSubmission || sectionId <= 0 || assignmentId <= 0) return;
-        try
-        {
-            var choices = new List<(long Id, string Title)>();
-            var seenResources = new HashSet<long>();
-            var visitedFolders = new HashSet<(long CollectionId, long FolderId)>();
-            using var collections = await _api.GetResourceCollectionsAsync(session);
-            var collectionRecords = SchoologyApiClient.ReadRecords(collections.RootElement, "collection", "collections", "items");
-            async Task LoadCollectionFolderAsync(long collectionId, long folderId, int depth)
-            {
-                if (depth > 4 || !visitedFolders.Add((collectionId, folderId))) return;
-                using var resources = await _api.GetCollectionResourcesAsync(session, collectionId, folderId);
-                foreach (var resource in SchoologyApiClient.ReadRecords(resources.RootElement, "resource", "resources", "items"))
-                {
-                    if (IsFolderRecord(resource.Data))
-                    {
-                        var nestedFolderId = JsonLong(resource.Data, "id", "folder_id", "folderId");
-                        if (nestedFolderId > 0)
-                            await LoadCollectionFolderAsync(collectionId, nestedFolderId, depth + 1);
-                        continue;
-                    }
-                    var id = JsonLong(resource.Data, "template_id", "templateID", "resource_id", "resourceId", "id");
-                    if (id <= 0 || !seenResources.Add(id)) continue;
-                    var title = ProfileValue(resource.Data, "title", "name") ?? resource.Title;
-                    choices.Add((id, title));
-                }
-            }
-            foreach (var collection in collectionRecords)
-            {
-                var collectionId = JsonLong(collection.Data, "id", "collection_id", "collectionId");
-                if (collectionId > 0) await LoadCollectionFolderAsync(collectionId, 0, 0);
-            }
-            if (choices.Count == 0)
-            {
-                await ShowApiErrorAsync("No Schoology resources", "No attachable resources were found in your resource collections.");
-                return;
-            }
-            var list = new ListView { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 460,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            AutomationProperties.SetAutomationId(list, "AssignmentResourcePickerList");
-            foreach (var choice in choices)
-                list.Items.Add(new ListViewItem { Content = Text(choice.Title, 13), Tag = choice.Id,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch });
-            var dialog = new ContentDialog { Title = "Choose Schoology resource", Content = list,
-                PrimaryButtonText = "Submit resource", CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            if (list.SelectedItem is not ListViewItem selected || selected.Tag is not long resourceId)
-            {
-                await ShowApiErrorAsync("Choose a resource", "Select a resource before submitting.");
-                return;
-            }
-            using var response = await _api.SubmitAssignmentResourceAsync(session, sectionId, assignmentId, resourceId);
-            await ShowAssignmentDetailsAsync(sectionId, new SchoologyApiRecord("Assignment", "",
-                JsonDocument.Parse("{\"id\":" + assignmentId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}").RootElement.Clone()));
-        }
-        catch (Exception ex)
-        {
-            App.WriteStartupLog("Assignment resource submission failed.", ex);
-            await ShowApiErrorAsync("Unable to submit resource", ex.Message);
-        }
-    }
-
-    private static string GetSubmissionMimeType(string filename) => Path.GetExtension(filename).ToLowerInvariant() switch
+        private static string GetSubmissionMimeType(string filename) => Path.GetExtension(filename).ToLowerInvariant() switch
     {
         ".pdf" => "application/pdf",
         ".doc" => "application/msword",
@@ -7576,7 +7508,7 @@ try {{
 
         var body = ProfileValue(data, "comment_richtext", "commentRichtext", "richtext_comment", "richtextComment", "comment", "body", "text", "message") ?? comment.Subtitle;
         if (!string.IsNullOrWhiteSpace(body))
-            content.Children.Add(CreateRichContent(body, 12));
+            content.Children.Add(CreateRichContentWithEmbeds(body, 12));
 
         var created = ProfileValue(data, "created", "created_at", "timestamp");
         if (!string.IsNullOrWhiteSpace(created))
@@ -7895,11 +7827,17 @@ try {{
                 embedContent.Children.Add(Text(name, 13, true));
                 embedButton.Content = embedContent;
                 AutomationProperties.SetName(embedButton, $"Open embedded content {name}");
-                embedButton.Click += async (_, _) =>
+                var embeddedUrl = ExtractEmbeddedContentUrls(embedCode).FirstOrDefault();
+                if (embeddedUrl is null)
                 {
-                    var dataUrl = "data:text/html;charset=utf-8," + Uri.EscapeDataString(embedCode);
-                    await OpenSharedWebViewAsync(dataUrl, name, allowLtiExternal: false, requiresBrowserSession: false);
-                };
+                    embedButton.IsEnabled = false;
+                    embedContent.Children.Add(Text("No secure embedded URL was provided.", 11));
+                }
+                else
+                {
+                    embedButton.Click += async (_, _) =>
+                        await OpenSharedWebViewAsync(embeddedUrl, name, allowLtiExternal: true);
+                }
                 panel.Children.Add(embedButton);
                 continue;
             }
@@ -8012,6 +7950,54 @@ try {{
         if (kind.Contains("wordprocessing") || kind.Contains("document") ||
             Regex.IsMatch(name, @"\.(doc|docx|docm|odt|rtf)$")) return "\uE8A5";
         return "\uE8A5";
+    }
+
+    private static IReadOnlyList<string> ExtractEmbeddedContentUrls(string? markup)
+    {
+        if (string.IsNullOrWhiteSpace(markup)) return [];
+        var decoded = System.Net.WebUtility.HtmlDecode(markup);
+        var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(decoded,
+            @"<(?:iframe|embed|object)\b[^>]*?\b(?:src|data)\s*=\s*(['""])(.*?)\1",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline))
+        {
+            var raw = match.Groups[2].Value.Trim();
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var normalized = NormalizeSchoologyWebUrl(raw);
+            if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri) ||
+                uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo))
+                continue;
+            urls.Add(uri.AbsoluteUri);
+        }
+        return urls.ToArray();
+    }
+
+    private StackPanel CreateRichContentWithEmbeds(string? markup, double fontSize)
+    {
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(CreateRichContent(markup, fontSize));
+        foreach (var url in ExtractEmbeddedContentUrls(markup))
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) continue;
+            var button = new Button
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(8, 6, 8, 6)
+            };
+            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            content.Children.Add(new SymbolIcon(Symbol.OpenInNewWindow)
+            {
+                Foreground = ThemeBrush("SchoologyBlueBrush")
+            });
+            content.Children.Add(Text($"Open embedded content · {uri.Host}", 13, true));
+            button.Content = content;
+            AutomationProperties.SetName(button, $"Open embedded content from {uri.Host}");
+            button.Click += async (_, _) =>
+                await OpenSharedWebViewAsync(url, "Embedded content", allowLtiExternal: true);
+            panel.Children.Add(button);
+        }
+        return panel;
     }
 
     private RichTextBlock CreateRichContent(string? markup, double fontSize)
@@ -8159,7 +8145,7 @@ try {{
             "body", "message", "description", "update_body", "updateBody", "text") ?? update.Subtitle;
         if (!string.IsNullOrWhiteSpace(postBody))
         {
-            card.Children.Add(CreateRichContent(postBody, 14));
+            card.Children.Add(CreateRichContentWithEmbeds(postBody, 14));
             var inlineImages = BuildInlinePostImages(postBody);
             if (inlineImages.Children.Count > 0) card.Children.Add(inlineImages);
         }
@@ -9232,7 +9218,7 @@ try {{
                     var messageBodyText = ProfileValue(message, "message_richtext", "messageRichtext", "richtext_message", "richtextMessage",
                         "message", "body", "text", "message_body", "content");
                     if (!string.IsNullOrWhiteSpace(messageBodyText))
-                        messageCard.Children.Add(CreateRichContent(messageBodyText, 14));
+                        messageCard.Children.Add(CreateRichContentWithEmbeds(messageBodyText, 14));
                     else messageCard.Children.Add(Text("No message text was returned.", 12));
                     var attachmentRoot = FindJsonPropertyRecursive(message, "attachments", "attachment", "files", "file-attachment");
                     if (attachmentRoot.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
