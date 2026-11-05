@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.84] - 2026-11-04
+
+- Fix the WinUI 3 calendar build by using CalendarViewDayItem.SetDensityColors without the unsupported Density property and avoiding a sender/discard variable collision in the asynchronous month loader.
+- Preserve authored text colors from Schoology rich text, including CSS color declarations, RGB/RGBA values, hexadecimal colors, and legacy font color attributes.
+
 ## [2026.10.0-port.83] - 2026-11-04
 
 - Match Android SchoologyCookieProvider session-start behavior by requesting `sessionstart?domain=app.schoology.com` and preserving explicit parent-domain cookie scope for authenticated WebView2 content.

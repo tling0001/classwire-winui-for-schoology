@@ -3037,21 +3037,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         void ApplyDayIndicator(CalendarViewDayItem dayItem, DateTime date)
         {
             var month = MonthKey(date);
-            if (!monthEventDates.TryGetValue(month, out var dates))
+            if (!monthEventDates.TryGetValue(month, out var dates) || !dates.Contains(date.Date))
             {
-                dayItem.Density = 0;
+                // SetDensityColors controls the CalendarView marker directly;
+                // the WinUI 3 CalendarViewDayItem has no Density property.
+                dayItem.SetDensityColors(new List<Windows.UI.Color>());
                 return;
             }
 
-            if (dates.Contains(date.Date))
-            {
-                dayItem.SetDensityColors(new List<Windows.UI.Color> { indicatorColor });
-                dayItem.Density = 1;
-            }
-            else
-            {
-                dayItem.Density = 0;
-            }
+            dayItem.SetDensityColors(new List<Windows.UI.Color> { indicatorColor });
         }
 
         void RenderSelectedDate()
@@ -3107,7 +3101,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
         // CalendarView virtualizes day items. Cache each month so dates containing
         // events receive a density marker without issuing a request per day.
-        calendar.CalendarViewDayItemChanging += (_, args) =>
+        calendar.CalendarViewDayItemChanging += (_sender, args) =>
         {
             var date = args.Item.Date.Date;
             visibleDayItems[date] = args.Item;

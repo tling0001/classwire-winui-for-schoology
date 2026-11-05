@@ -25,7 +25,8 @@ internal static class SchoologyRichContent
     private static readonly Uri SchoologyBaseUri = new("https://app.schoology.com/");
 
     private readonly record struct InlineStyle(
-        string? FontFamily, double FontSize, FontWeight FontWeight, FontStyle FontStyle, bool Underline);
+        string? FontFamily, double FontSize, FontWeight FontWeight, FontStyle FontStyle,
+        bool Underline, Windows.UI.Color? ForegroundColor);
 
     private readonly record struct StyleFrame(string Tag, InlineStyle PreviousStyle, Uri? PreviousLink);
 
@@ -45,7 +46,7 @@ internal static class SchoologyRichContent
 
         var paragraph = new Paragraph { Margin = new Thickness(0) };
         block.Blocks.Add(paragraph);
-        var style = new InlineStyle(null, fontSize, FontWeights.Normal, FontStyle.Normal, false);
+        var style = new InlineStyle(null, fontSize, FontWeights.Normal, FontStyle.Normal, false, null);
         var frames = new Stack<StyleFrame>();
         Uri? activeUri = null;
         Hyperlink? activeLink = null;
@@ -85,6 +86,8 @@ internal static class SchoologyRichContent
             };
             if (!string.IsNullOrWhiteSpace(style.FontFamily))
                 run.FontFamily = new FontFamily(style.FontFamily);
+            if (style.ForegroundColor is { } foregroundColor)
+                run.Foreground = new SolidColorBrush(foregroundColor);
 
             Inline inline = run;
             if (style.Underline)
@@ -151,6 +154,58 @@ internal static class SchoologyRichContent
             return current;
         }
 
+        static bool TryParseColor(string? value, out Windows.UI.Color color)
+        {
+            color = default;
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            var text = value.Trim().ToLowerInvariant();
+            var named = text switch
+            {
+                "black" => "#000000", "white" => "#ffffff", "red" => "#ff0000",
+                "green" => "#008000", "blue" => "#0000ff", "yellow" => "#ffff00",
+                "orange" => "#ffa500", "purple" => "#800080", "gray" or "grey" => "#808080",
+                "silver" => "#c0c0c0", "maroon" => "#800000", "navy" => "#000080",
+                "teal" => "#008080", "olive" => "#808000", "lime" => "#00ff00",
+                "aqua" or "cyan" => "#00ffff", "fuchsia" or "magenta" => "#ff00ff",
+                "transparent" => "#00000000", _ => text
+            };
+            if (named.StartsWith('#'))
+            {
+                var hex = named[1..];
+                if (hex.Length == 3)
+                    hex = string.Concat(hex.Select(character => new string(character, 2)));
+                if (hex.Length == 6) hex = "ff" + hex;
+                if (hex.Length == 8 &&
+                    uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber,
+                        System.Globalization.CultureInfo.InvariantCulture, out var argb))
+                {
+                    color = Windows.UI.Color.FromArgb((byte)(argb >> 24), (byte)(argb >> 16),
+                        (byte)(argb >> 8), (byte)argb);
+                    return true;
+                }
+                return false;
+            }
+
+            var rgb = Regex.Match(text,
+                @"^rgba?\(\s*(?<r>[\d.]+)\s*,\s*(?<g>[\d.]+)\s*,\s*(?<b>[\d.]+)(?:\s*,\s*(?<a>[\d.]+)\s*)?\)$",
+                RegexOptions.CultureInvariant);
+            if (!rgb.Success ||
+                !byte.TryParse(rgb.Groups["r"].Value, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var red) ||
+                !byte.TryParse(rgb.Groups["g"].Value, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var green) ||
+                !byte.TryParse(rgb.Groups["b"].Value, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var blue))
+                return false;
+            byte alpha = 255;
+            if (rgb.Groups["a"].Success &&
+                double.TryParse(rgb.Groups["a"].Value, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var opacity))
+                alpha = (byte)Math.Clamp(Math.Round(opacity <= 1 ? opacity * 255 : opacity), 0, 255);
+            color = Windows.UI.Color.FromArgb(alpha, red, green, blue);
+            return true;
+        }
+
         static InlineStyle ApplyCss(InlineStyle current, string? css)
         {
             if (string.IsNullOrWhiteSpace(css)) return current;
@@ -164,6 +219,8 @@ internal static class SchoologyRichContent
                 {
                     "font-family" => current with { FontFamily = NormalizeFontFamily(value) ?? current.FontFamily },
                     "font-size" => current with { FontSize = ParseFontSize(value, current.FontSize) },
+                    "color" => TryParseColor(value, out var parsedColor)
+                        ? current with { ForegroundColor = parsedColor } : current,
                     "font-weight" => current with
                     {
                         FontWeight = value.Equals("bold", StringComparison.OrdinalIgnoreCase) ||
@@ -221,6 +278,9 @@ internal static class SchoologyRichContent
                 case "font":
                     var face = NormalizeFontFamily(AttributeValue(attributes, "face"));
                     var size = AttributeValue(attributes, "size");
+                    var colorValue = AttributeValue(attributes, "color");
+                    var fontStyle = TryParseColor(colorValue, out var fontColor)
+                        ? current with { ForegroundColor = fontColor } : current;
                     if (int.TryParse(size, out var htmlSize))
                     {
                         var scale = htmlSize switch
@@ -228,13 +288,13 @@ internal static class SchoologyRichContent
                             <= 1 => 0.75d, 2 => 0.875d, 3 => 1d, 4 => 1.125d,
                             5 => 1.25d, 6 => 1.5d, _ => 1.75d
                         };
-                        return current with
+                        return fontStyle with
                         {
                             FontFamily = face ?? current.FontFamily,
                             FontSize = Math.Clamp(current.FontSize * scale, 8d, 48d)
                         };
                     }
-                    return current with { FontFamily = face ?? current.FontFamily };
+                    return fontStyle with { FontFamily = face ?? current.FontFamily };
                 case "span":
                     return ApplyCss(current, AttributeValue(attributes, "style"));
                 default:
