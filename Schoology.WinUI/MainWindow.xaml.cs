@@ -5178,6 +5178,9 @@ try {{
             IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Background = new SolidColorBrush(Colors.Transparent) };
         AutomationProperties.SetAutomationId(navigation, kind + "ProfileNavigation");
+        // Declare caches before wiring item events: the handlers capture these locals.
+        var wideTabCache = new Dictionary<string, UIElement>(StringComparer.Ordinal);
+        var compactTabCache = new Dictionary<string, UIElement>(StringComparer.Ordinal);
         foreach (var tab in tabs)
         {
             var tabRow = new Grid { ColumnSpacing = 12 };
@@ -5258,8 +5261,6 @@ try {{
         Grid.SetRow(compactIdentity, 1); narrow.Children.Add(compactIdentity);
         Grid.SetRow(compactFrame, 2); narrow.Children.Add(compactFrame);
 
-        var wideTabCache = new Dictionary<string, UIElement>(StringComparer.Ordinal);
-        var compactTabCache = new Dictionary<string, UIElement>(StringComparer.Ordinal);
         UIElement BuildSelectedTabContent(string tab) => tab switch
         {
             "Upcoming" => BuildEntityUpcomingContent(kind, entityId),
