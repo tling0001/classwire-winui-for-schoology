@@ -1,3 +1,8 @@
+## [2026.10.0-port.97] - 2026-11-05
+
+- Preserve each attachment's type when opening the Assignment Attachments list so Schoology links and video URLs open in the system browser instead of the file View/Download dialog.
+- Reuse the same type-aware attachment opening path for notification document attachments and shared attachment controls; retain the existing native View/Download flow for actual files.
+
 # Release notes
 
 ## [2026.10.0-port.96] - 2026-11-05

@@ -2116,6 +2116,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         AutomationProperties.SetAutomationId(list, "AssignmentAttachmentsList");
         JsonElement selectedAttachment = default;
+        string? selectedAttachmentKind = null;
         ContentDialog dialog = null!;
         foreach (var attachment in attachments)
         {
@@ -2136,6 +2137,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             item.Tapped += (_, _) =>
             {
                 selectedAttachment = attachment.Item.Clone();
+                selectedAttachmentKind = attachment.Kind;
                 dialog.Hide();
             };
             list.Items.Add(item);
@@ -2149,9 +2151,13 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
         await dialog.ShowAsync();
-        if (selectedAttachment.ValueKind != JsonValueKind.Undefined)
+        if (selectedAttachment.ValueKind != JsonValueKind.Undefined && selectedAttachmentKind is not null)
         {
-            try { await ShowAttachmentOptionsAsync(selectedAttachment, () => ReturnFromAssignment(sectionId)); }
+            try
+            {
+                await OpenAttachmentAsync(selectedAttachment, selectedAttachmentKind,
+                    () => ReturnFromAssignment(sectionId));
+            }
             catch (Exception ex) { await ShowApiErrorAsync("Unable to open assignment attachment", ex.Message); }
         }
     }
@@ -3661,7 +3667,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     var attachments = ReadAttachmentItems(documentRoot);
                     if (attachments.Count > 0)
                     {
-                        await ShowAttachmentOptionsAsync(attachments[0].Item, () => ShowHome("Notifications"));
+                        await OpenAttachmentAsync(attachments[0].Item, attachments[0].Kind,
+                            () => ShowHome("Notifications"));
                         return true;
                     }
                 }
@@ -7779,6 +7786,23 @@ try {{
         if (!opened) await ShowApiErrorAsync("Unable to open link", "Windows could not open this link in the default browser.");
     }
 
+    private async Task OpenAttachmentAsync(JsonElement attachment, string kind, Action onBack)
+    {
+        if (kind is "link" or "video")
+        {
+            var rawUrl = kind == "video"
+                ? ProfileValue(attachment, "video_url", "videoURL", "videoUrl", "url", "href")
+                : ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url",
+                    "launch_url", "launchUrl");
+            if (string.IsNullOrWhiteSpace(rawUrl))
+                throw new InvalidOperationException("Schoology did not provide a URL for this link.");
+            await OpenExternalLinkAsync(rawUrl);
+            return;
+        }
+
+        await ShowAttachmentOptionsAsync(attachment, onBack);
+    }
+
     private async Task<bool> TryOpenDocumentAttachmentAsync(string? rawUrl, Action onBack)
     {
         if (_session is null || string.IsNullOrWhiteSpace(rawUrl)) return false;
@@ -7872,7 +7896,8 @@ try {{
                 "converted_download_path", "convertedDownloadPath");
             var thumbnail = ProfileValue(attachment, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
             var url = kind == "link"
-                ? ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url")
+                ? ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url",
+                    "launch_url", "launchUrl")
                 : originalUrl ?? convertedUrl ?? ProfileValue(attachment, "url", "href", "video_url", "videoURL", "videoUrl") ?? thumbnail;
 
             if (kind == "embed" && ProfileValue(attachment, "embed_code", "embedCode") is { Length: > 0 } embedCode)
@@ -7974,8 +7999,7 @@ try {{
             };
             button.Click += async (_, _) =>
             {
-                if (kind == "link" || kind == "video") await OpenExternalLinkAsync(url);
-                else await ShowAttachmentOptionsAsync(attachment, onBack);
+                await OpenAttachmentAsync(attachment, kind, onBack);
             };
             AutomationProperties.SetName(button, kind == "link" ? $"Open link {name}" : $"Open attachment {name}");
             panel.Children.Add(button);
