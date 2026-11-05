@@ -1,5 +1,10 @@
 # Release notes
 
+## [2026.10.0-port.82] - 2026-11-04
+
+- Fix x64 and ARM64 publishing by removing a tracking-prevention setting unavailable in the project's WebView2 SDK; preserve the authenticated page WebView and explicit Schoology cookie forwarding.
+
+
 ## [2026.10.0-port.81] - 2026-11-04
 
 - Keep Schoology Page HTML out of course-material row subtitles so page entries display only their names.

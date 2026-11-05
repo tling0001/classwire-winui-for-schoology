@@ -5656,9 +5656,9 @@ try {{
                 core.Settings.IsScriptEnabled = true;
                 core.Settings.AreDefaultScriptDialogsEnabled = true;
                 core.Settings.IsZoomControlEnabled = true;
-                // Android explicitly accepts third-party cookies for page WebViews;
-                // disable tracking prevention here so embedded course content can sign in.
-                core.Settings.IsTrackingPreventionEnabled = false;
+                // The WinUI 1.8 WebView2 SDK has no equivalent to Android's
+                // setAcceptThirdPartyCookies API. Keep the explicit Schoology session-cookie
+                // forwarding below without assigning an unsupported WebView2 setting.
 
                 if (!_sharedWebViewInitialized || _sharedWebViewSessionUserId != session.UserId)
                 {
