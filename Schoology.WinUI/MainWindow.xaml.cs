@@ -1635,8 +1635,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var item = new NavigationViewItem { Content = entry.Name == "Upcoming" ? "Calendar" : entry.Name,
                 Tag = entry.Name == "Upcoming" ? "Calendar" : entry.Name,
                 Icon = entry.Name == "Notifications"
-                    ? new FontIcon { Glyph = "\uE7F4", FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 18 }
-                    : new SymbolIcon(entry.Icon) };
+                    ? new FontIcon { Glyph = "\uF2A3", FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 18 }
+                    : entry.Name == "Grades"
+                        ? new FontIcon { Glyph = "\uE9D5", FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 18 }
+                        : new SymbolIcon(entry.Icon) };
             // Parent rows only expand/collapse. Selecting a specific child performs navigation.
             item.SelectsOnInvoked = entry.Name is not ("Courses" or "Groups");
             if (entry.Name is "Courses" or "Groups") item.IsExpanded = false;
@@ -2125,7 +2127,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 7, 8, 7) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.Children.Add(new FontIcon { Glyph = MaterialGlyph(attachment.Item), FontSize = 18,
+            row.Children.Add(new FontIcon { Glyph = AttachmentGlyph(attachment.Item), FontSize = 18,
                 Foreground = ThemeBrush("SchoologyMutedTextBrush"), VerticalAlignment = VerticalAlignment.Center });
             var label = Text(name, 13, true);
             label.VerticalAlignment = VerticalAlignment.Center;
@@ -3962,7 +3964,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             if (isFolder) row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
             row.Children.Add(isFolder ? FolderIcons.CreateIcon(FolderColorName(entry.Data), 27) :
-                new FontIcon { Glyph = MaterialGlyph(entry.Data), FontSize = 23,
+                new FontIcon { Glyph = AttachmentGlyph(entry.Data), FontSize = 23,
                     Foreground = ThemeBrush("SchoologyBlueBrush"), VerticalAlignment = VerticalAlignment.Center });
             var labels = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
             labels.Children.Add(Text(entry.Title, 14, true));
@@ -5746,7 +5748,7 @@ try {{
                 var comments = new StackPanel { Spacing = 8, Margin = new Thickness(8) };
                 if (commentLoadError is not null) comments.Children.Add(EmptyState("Unable to load assignment comments.", commentLoadError));
                 else if (commentRecords.Count == 0) comments.Children.Add(EmptyState("No comments yet."));
-                else foreach (var comment in commentRecords) comments.Children.Add(BuildCommentRow(comment, assignmentId));
+                else comments.Children.Add(BuildCommentThreadRows(commentRecords, assignmentId));
                 return new ScrollViewer { Content = comments, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             }
 
@@ -6209,18 +6211,15 @@ try {{
             }
             UIElement BuildComments()
             {
-                var commentList = new ListView { SelectionMode = ListViewSelectionMode.None,
-                    IsItemClickEnabled = false, HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                    Background = new SolidColorBrush(Colors.Transparent) };
-                AutomationProperties.SetAutomationId(commentList, $"ContentCommentsList_{itemId}");
+                var commentList = new StackPanel { Spacing = 8 };
                 if (commentsError is not null)
-                    commentList.Items.Add(new ListViewItem { Content = EmptyState("Unable to load comments.", commentsError) });
+                    commentList.Children.Add(EmptyState("Unable to load comments.", commentsError));
                 else if (comments.Count == 0)
-                    commentList.Items.Add(new ListViewItem { Content = EmptyState("No comments yet.") });
-                else foreach (var comment in comments)
-                    commentList.Items.Add(new ListViewItem { Content = BuildCommentRow(comment, itemId,
-                        (parentId, author) => _ = ShowContentCommentDialogAsync(kind, entityId, record, isEvent, parentId, author, onBack)) });
-                return commentList;
+                    commentList.Children.Add(EmptyState("No comments yet."));
+                else
+                    commentList.Children.Add(BuildCommentThreadRows(comments, itemId,
+                        (parentId, author) => _ = ShowContentCommentDialogAsync(kind, entityId, record, isEvent, parentId, author, onBack)));
+                return new ScrollViewer { Content = commentList, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             }
             var header = new Grid { ColumnSpacing = 12, Margin = new Thickness(16, 10, 16, 4) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -7548,6 +7547,52 @@ try {{
             Background = ThemeBrush("SchoologySubtleBrush"), Clip = null, Child = image };
     }
 
+    private StackPanel BuildCommentThreadRows(IReadOnlyList<SchoologyApiRecord> comments,
+        long parentEntityId, Action<long, string>? onReply = null)
+    {
+        var root = new StackPanel { Spacing = 8 };
+        if (comments.Count == 0) return root;
+
+        var byId = comments
+            .Select(comment => (Comment: comment, Id: JsonLong(comment.Data, "id", "comment_id", "commentId"),
+                ParentId: JsonLong(comment.Data, "parent_id", "parentId", "parent_comment_id", "parentCommentId")))
+            .Where(item => item.Id > 0)
+            .ToArray();
+        var knownIds = byId.Select(item => item.Id).ToHashSet();
+        var children = byId.GroupBy(item => item.ParentId)
+            .ToDictionary(group => group.Key, group => group.Select(item => item.Comment).ToArray());
+        var rendered = new HashSet<long>();
+
+        void AppendComment(StackPanel destination, SchoologyApiRecord comment)
+        {
+            var id = JsonLong(comment.Data, "id", "comment_id", "commentId");
+            if (id > 0 && !rendered.Add(id)) return;
+
+            var item = new StackPanel { Spacing = 6 };
+            item.Children.Add(BuildCommentRow(comment, parentEntityId, onReply));
+            if (id > 0 && children.TryGetValue(id, out var replies) && replies.Length > 0)
+            {
+                var replyStack = new StackPanel { Spacing = 8, Margin = new Thickness(24, 0, 0, 0) };
+                foreach (var reply in replies) AppendComment(replyStack, reply);
+                if (replyStack.Children.Count > 0) item.Children.Add(replyStack);
+            }
+            destination.Children.Add(item);
+        }
+
+        if (children.TryGetValue(0, out var topLevel))
+            foreach (var comment in topLevel) AppendComment(root, comment);
+
+        // Keep orphaned replies visible and guard against malformed parent cycles.
+        foreach (var item in byId)
+            if (!rendered.Contains(item.Id) &&
+                (item.ParentId <= 0 || !knownIds.Contains(item.ParentId)))
+                AppendComment(root, item.Comment);
+        foreach (var item in byId)
+            if (!rendered.Contains(item.Id)) AppendComment(root, item.Comment);
+
+        return root;
+    }
+
     private Border BuildCommentRow(SchoologyApiRecord comment, long parentEntityId = 0, Action<long, string>? onReply = null)
     {
         var data = comment.Data;
@@ -7880,6 +7925,20 @@ try {{
             await OpenNativeMaterialFileAsync(previewUrl, previewMime, originalUrl, name, mime, name, onBack);
         else if (choice == ContentDialogResult.Secondary)
             await SaveOriginalMaterialAsync(originalUrl, name, mime);
+    }
+
+    private string AttachmentGlyph(JsonElement attachment)
+    {
+        var filename = ProfileValue(attachment, "filename", "fileName", "file_title", "fileTitle",
+            "title", "name") ?? string.Empty;
+        var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ?? string.Empty;
+        var extension = Path.GetExtension(filename).ToLowerInvariant();
+        if (extension == ".pptx" || mime.Contains("presentation", StringComparison.OrdinalIgnoreCase))
+            return "\uE786"; // Segoe Fluent Icons: Slideshow
+        if (mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+            extension is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".tif" or ".tiff" or ".heic")
+            return "\uE91B"; // Segoe Fluent Icons: Photo
+        return MaterialGlyph(attachment);
     }
 
     private StackPanel BuildAttachmentControls(JsonElement attachmentRoot, Action onBack)
@@ -8513,7 +8572,7 @@ try {{
             using var document = await _api.GetUpdateCommentsAsync(_session, kind, entityId, updateId);
             var comments = SchoologyApiClient.ReadRecords(document.RootElement, "comment", "comments");
             await ResolveCommentAuthorsAsync(comments, _session);
-            foreach (var comment in comments) list.Children.Add(BuildCommentRow(comment, updateId));
+            list.Children.Add(BuildCommentThreadRows(comments, updateId));
             SetStatusText(status, comments.Count == 0 ? "No comments yet. Be the first to comment." : $"{comments.Count} comments");
         }
         catch (Exception ex)
@@ -8579,13 +8638,10 @@ try {{
                 return;
             }
 
-            foreach (var comment in comments.TakeLast(2))
-            {
-                preview.Children.Add(BuildCommentRow(comment, updateId, (parentId, author) =>
-                    _ = ShowUpdateCommentComposerAsync(kind, entityId, updateId,
-                        () => _ = LoadRecentPostCommentsAsync(kind, entityId, updateId, preview, onCountChanged),
-                        parentId)));
-            }
+            preview.Children.Add(BuildCommentThreadRows(comments.TakeLast(2).ToArray(), updateId, (parentId, author) =>
+                _ = ShowUpdateCommentComposerAsync(kind, entityId, updateId,
+                    () => _ = LoadRecentPostCommentsAsync(kind, entityId, updateId, preview, onCountChanged),
+                    parentId)));
             preview.Visibility = Visibility.Visible;
         }
         catch
@@ -8662,9 +8718,8 @@ try {{
             await ResolveCommentAuthorsAsync(comments, _session);
             content.Children.Clear();
             if (comments.Count == 0) content.Children.Add(Text("No comments yet.", 13));
-            foreach (var comment in comments)
-                content.Children.Add(BuildCommentRow(comment, updateId, (parentId, author) =>
-                    _ = ShowUpdateCommentComposerAsync(kind, entityId, updateId, onPosted, parentId)));
+            content.Children.Add(BuildCommentThreadRows(comments, updateId, (parentId, author) =>
+                _ = ShowUpdateCommentComposerAsync(kind, entityId, updateId, onPosted, parentId)));
             dialog.Title = comments.Count == 0 ? "Comments" : $"Comments ({comments.Count})";
         }
         catch (Exception ex)

@@ -1,3 +1,10 @@
+## [2026.10.0-port.98] - 2026-11-05
+
+- Use the Segoe Fluent Icons MobNotificationBell glyph for the Notifications navigation item.
+- Match the main Grades navigation icon to the Grades icon used in the course sidebar.
+- Use the Segoe Fluent Icons Slideshow glyph for PowerPoint presentations and Photo glyph for image attachments and resources.
+- Render comment replies directly beneath their parent comments, following the parent-ID hierarchy used by the Android and SwiftUI implementations. Keep orphaned or malformed comments visible.
+
 ## [2026.10.0-port.97] - 2026-11-05
 
 - Preserve each attachment's type when opening the Assignment Attachments list so Schoology links and video URLs open in the system browser instead of the file View/Download dialog.
