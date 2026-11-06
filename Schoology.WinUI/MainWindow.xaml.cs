@@ -122,6 +122,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         internal required string Kind { get; init; }
         internal IStorageFile? File { get; init; }
         internal long ResourceId { get; init; }
+        internal string ResourceField { get; init; } = "schoology_resource_id";
         internal string? UploadedFileId { get; set; }
         internal required ProgressBar Progress { get; init; }
         internal required TextBlock Status { get; init; }
@@ -1797,13 +1798,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         AutomationProperties.SetAutomationId(list, "AssignmentSubmissionPendingFilesList");
 
-        void AddPendingItem(string name, string kind, IStorageFile? file, long resourceId)
+        void AddPendingItem(string name, string kind, IStorageFile? file, long resourceId,
+            string resourceField = "schoology_resource_id")
         {
             if (kind == "File" && file is not null &&
                 pending.Any(item => item.Kind == "File" &&
                     string.Equals(item.File?.Path, file.Path, StringComparison.OrdinalIgnoreCase)))
                 return;
-            if (kind == "Resource" && pending.Any(item => item.Kind == "Resource" && item.ResourceId == resourceId))
+            if (kind == "Resource" && pending.Any(item => item.Kind == "Resource" &&
+                item.ResourceId == resourceId && item.ResourceField == resourceField))
                 return;
 
             var status = Text(kind == "File" ? "Ready to upload" : "Ready to submit", 11);
@@ -1841,7 +1844,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             };
             var item = new PendingAssignmentSubmissionItem
             {
-                Name = name, Kind = kind, File = file, ResourceId = resourceId,
+                Name = name, Kind = kind, File = file, ResourceId = resourceId, ResourceField = resourceField,
                 Progress = progress, Status = status, Row = row
             };
             remove.Click += (_, _) =>
@@ -1956,7 +1959,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 requestedAction = null;
                 var resources = await ShowAssignmentResourcePickerAsync();
                 foreach (var resource in resources)
-                    AddPendingItem(resource.Title, "Resource", null, resource.Id);
+                    AddPendingItem(resource.Title, "Resource", null, resource.Id,
+                        resource.IsImported ? "imported_resource_id" : "schoology_resource_id");
                 continue;
             }
             if (result != ContentDialogResult.Primary) return;
@@ -1992,7 +1996,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     {
                         files.Add(new Dictionary<string, string>
                         {
-                            ["schoology_resource_id"] = item.ResourceId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                            [item.ResourceField] = item.ResourceId.ToString(System.Globalization.CultureInfo.InvariantCulture)
                         });
                         item.Progress.Visibility = Visibility.Visible;
                         item.Progress.Value = 100;
@@ -2029,74 +2033,112 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
     }
 
-    private async Task<IReadOnlyList<(long Id, string Title)>> ShowAssignmentResourcePickerAsync()
+    private async Task<IReadOnlyList<(long Id, string Title, bool IsImported)>> ShowAssignmentResourcePickerAsync()
     {
         var session = _session;
         if (session is null || !_activeAssignmentAllowsSubmission) return [];
         try
         {
-            var choices = new List<(long Id, string Title)>();
-            var seenResources = new HashSet<long>();
-            var visitedFolders = new HashSet<(long CollectionId, long FolderId)>();
-            using var collections = await _api.GetResourceCollectionsAsync(session);
-            var collectionRecords = SchoologyApiClient.ReadRecords(collections.RootElement, "collection", "collections", "items");
-            async Task LoadCollectionFolderAsync(long collectionId, long folderId, int depth)
-            {
-                if (depth > 4 || !visitedFolders.Add((collectionId, folderId))) return;
-                using var resources = await _api.GetCollectionResourcesAsync(session, collectionId, folderId);
-                foreach (var resource in SchoologyApiClient.ReadRecords(resources.RootElement, "resource", "resources", "items"))
-                {
-                    if (IsFolderRecord(resource.Data))
-                    {
-                        var nestedFolderId = JsonLong(resource.Data, "id", "folder_id", "folderId");
-                        if (nestedFolderId > 0) await LoadCollectionFolderAsync(collectionId, nestedFolderId, depth + 1);
-                        continue;
-                    }
-                    var id = JsonLong(resource.Data, "template_id", "templateID", "resource_id", "resourceId", "id");
-                    if (id <= 0 || !seenResources.Add(id)) continue;
-                    var title = ProfileValue(resource.Data, "title", "name") ?? resource.Title;
-                    choices.Add((id, title));
-                }
-            }
+            using var collectionsDocument = await _api.GetResourceCollectionsAsync(session);
+            var collectionRecords = SchoologyApiClient.ReadRecords(
+                collectionsDocument.RootElement, "collection", "collections", "collection_list", "items");
+            var mine = new List<ResourceTreeEntry>();
+            var shared = new List<ResourceTreeEntry>();
+            var groups = new List<ResourceTreeEntry>();
             foreach (var collection in collectionRecords)
             {
-                var collectionId = JsonLong(collection.Data, "id", "collection_id", "collectionId");
-                if (collectionId > 0) await LoadCollectionFolderAsync(collectionId, 0, 0);
+                var owner = JsonLong(collection.Data, "collection_owner_id", "collectionOwnerId", "uid", "owner_id");
+                var realm = (ProfileValue(collection.Data, "collection_realm", "collectionRealm", "realm") ?? "").ToLowerInvariant();
+                var sharedCount = JsonLong(collection.Data, "shared_users_count", "sharedUsersCount", "shared_users");
+                var title = ProfileValue(collection.Data, "collection_title", "title", "name") ?? collection.Title;
+                var id = JsonLong(collection.Data, "collection_id", "collectionID", "id");
+                if (id <= 0) continue;
+                var entry = new ResourceTreeEntry(title, "collection", id, id, collection.Data.Clone());
+                if (string.IsNullOrWhiteSpace(realm) && owner == session.UserId) mine.Add(entry);
+                else if (sharedCount > 0) shared.Add(entry);
+                else if (realm == "group") groups.Add(entry);
             }
-            if (choices.Count == 0)
+            var appEntries = new List<ResourceTreeEntry>();
+            try
             {
-                await ShowApiErrorAsync("No Schoology resources", "No attachable resources were found in your resource collections.");
-                return [];
+                using var appsDocument = await _api.GetResourceAppsAsync(session);
+                appEntries.AddRange(SchoologyApiClient.ReadRecords(
+                        appsDocument.RootElement, "resource_apps", "resourceApps", "collection", "collections", "items")
+                    .Select(app => new ResourceTreeEntry(
+                        ProfileValue(app.Data, "collection_title", "app_title", "appTitle", "title", "name") ?? app.Title,
+                        "app", JsonLong(app.Data, "collection_id", "collectionID", "id", "app_id", "appId"),
+                        0, app.Data.Clone()))
+                    .Where(entry => entry.Id > 0));
             }
-            var list = new ListView
+            catch (Exception ex) { App.WriteStartupLog("Resource Apps could not be loaded in the assignment picker.", ex); }
+
+            var categories = new List<(string Title, IReadOnlyList<ResourceTreeEntry> Entries)>
             {
-                SelectionMode = ListViewSelectionMode.Multiple,
-                MaxHeight = 460,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch
+                ("My Resources", mine), ("Shared", shared), ("Groups", groups), ("Resource Apps", appEntries)
             };
-            AutomationProperties.SetAutomationId(list, "AssignmentResourcePickerList");
-            foreach (var choice in choices)
-                list.Items.Add(new ListViewItem
+            var selected = new Dictionary<(long Id, bool IsImported), string>();
+            while (true)
+            {
+                ResourceTreeEntry? requestedApp = null;
+                ContentDialog? pickerDialog = null;
+                var selectedIds = selected.Keys.Where(key => !key.IsImported).Select(key => key.Id).ToHashSet();
+                var selectedSummary = Text($"{selected.Count} selected", 12);
+                selectedSummary.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+                var tree = BuildResourceEntriesView(categories, "Resources", 0, () => { },
+                    entry =>
+                    {
+                        if (entry.Kind == "app")
+                        {
+                            requestedApp = entry;
+                            pickerDialog?.Hide();
+                            return;
+                        }
+                        if (entry.Id <= 0) return;
+                        var key = (entry.Id, false);
+                        if (selected.ContainsKey(key))
+                        {
+                            selected.Remove(key);
+                            selectedIds.Remove(entry.Id);
+                        }
+                        else
+                        {
+                            selected[key] = entry.Title;
+                            selectedIds.Add(entry.Id);
+                        }
+                        selectedSummary.Text = $"{selected.Count} selected";
+                    }, selectedIds);
+                var content = new StackPanel { Spacing = 8, MinWidth = 440 };
+                content.Children.Add(selectedSummary);
+                content.Children.Add(new TextBlock
                 {
-                    Content = Text(choice.Title, 13),
-                    Tag = choice.Id,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch
+                    Text = "Choose resources from the same categories and folders shown on the Resources page. Select individual items, or open a Resource App to import its files and links.",
+                    TextWrapping = TextWrapping.Wrap,
+                    Style = (Style)Application.Current.Resources["BodyTextBlockStyle"]
                 });
-            var dialog = new ContentDialog
-            {
-                Title = "Choose Schoology resources",
-                Content = list,
-                PrimaryButtonText = "Add selected",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = _root.XamlRoot,
-                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
-            };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return [];
-            return list.SelectedItems.OfType<ListViewItem>()
-                .Where(item => item.Tag is long id && id > 0)
-                .Select(item => ((long)item.Tag!, ((TextBlock)item.Content).Text))
-                .ToArray();
+                content.Children.Add(new ScrollViewer
+                {
+                    Content = tree, MaxHeight = 500,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+                });
+                pickerDialog = new ContentDialog
+                {
+                    Title = "Attach resources",
+                    Content = CreateDialogScrollViewport(content, 650),
+                    PrimaryButtonText = "Add selected",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Primary,
+                    XamlRoot = _root.XamlRoot,
+                    RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+                };
+                var result = await pickerDialog.ShowAsync();
+                if (requestedApp is not null)
+                {
+                    await ImportResourceAppForAssignmentAsync(requestedApp, selected);
+                    continue;
+                }
+                if (result != ContentDialogResult.Primary) return [];
+                return selected.Select(item => (item.Key.Id, item.Value, item.Key.IsImported)).ToArray();
+            }
         }
         catch (Exception ex)
         {
@@ -2104,6 +2146,101 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             await ShowApiErrorAsync("Unable to load resources", ex.Message);
             return [];
         }
+    }
+
+    private async Task ImportResourceAppForAssignmentAsync(
+        ResourceTreeEntry app, Dictionary<(long Id, bool IsImported), string> selected)
+    {
+        var session = _session ?? throw new InvalidOperationException("Sign in to import a resource app.");
+        if (app.Id <= 0) throw new InvalidOperationException("This resource app is missing its ID.");
+        using var launch = await _api.LaunchResourceAppAsync(session, app.Id);
+        var launchUrl = ProfileValue(launch.RootElement, "url", "launch_token_url", "launchTokenUrl");
+        if (string.IsNullOrWhiteSpace(launchUrl) &&
+            launch.RootElement.TryGetProperty("data", out var data))
+            launchUrl = ProfileValue(data, "url", "launchTokenUrl", "launch_token_url");
+        if (string.IsNullOrWhiteSpace(launchUrl))
+            throw new InvalidOperationException("Schoology did not return a resource-app launch URL.");
+        var importUrl = BuildResourceAppsImportUrl(launchUrl);
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? importError = null;
+        var importedCount = 0;
+        void ReturnToPicker()
+        {
+            if (_sectionFrame?.CanGoBack == true) _sectionFrame.GoBack();
+            else ShowHome("Assignments");
+        }
+        async Task<bool> HandleImportCallbackAsync(Uri destination)
+        {
+            if (!destination.AbsolutePath.Contains("/content_app/import", StringComparison.OrdinalIgnoreCase))
+                return false;
+            try
+            {
+                using var imports = await _api.GetResourceAppImportsAsync(session, destination.AbsoluteUri);
+                var importRecords = SchoologyApiClient.ReadRecords(imports.RootElement, "imports", "import", "items");
+                foreach (var importRecord in importRecords)
+                {
+                    if (!importRecord.Data.TryGetProperty("attachments", out var attachments) &&
+                        !importRecord.Data.TryGetProperty("attachment", out attachments)) continue;
+                    foreach (var file in SchoologyApiClient.ReadRecords(
+                        attachments, "files", "file", "file_list", "fileList", "items"))
+                    {
+                        var id = JsonLong(file.Data, "id", "file_id", "fileID");
+                        if (id <= 0) continue;
+                        var title = ProfileValue(file.Data, "title", "file_title", "fileTitle", "filename", "file_name") ?? file.Title;
+                        selected[(id, true)] = string.IsNullOrWhiteSpace(title) ? "Imported file" : title;
+                        importedCount++;
+                    }
+                    foreach (var link in SchoologyApiClient.ReadRecords(
+                        attachments, "links", "link", "link_list", "linkList", "items"))
+                    {
+                        var id = JsonLong(link.Data, "id", "link_id", "linkID");
+                        if (id <= 0) continue;
+                        var title = ProfileValue(link.Data, "title", "link_title", "linkTitle", "url") ?? link.Title;
+                        selected[(id, true)] = string.IsNullOrWhiteSpace(title) ? "Imported link" : title;
+                        importedCount++;
+                    }
+                }
+                if (importedCount == 0)
+                    importError = "The Resource App completed without returning attachable files or links.";
+            }
+            catch (Exception ex)
+            {
+                App.WriteStartupLog("Resource App import callback failed.", ex);
+                importError = ex.Message;
+            }
+            ReturnToPicker();
+            completion.TrySetResult(true);
+            return true;
+        }
+        await OpenSharedWebViewAsync(importUrl, app.Title, allowLtiExternal: true,
+            onBack: () =>
+            {
+                ReturnToPicker();
+                completion.TrySetResult(false);
+            }, navigationHandler: HandleImportCallbackAsync);
+        var completed = await completion.Task.WaitAsync(TimeSpan.FromMinutes(15));
+        if (completed && importError is not null)
+            await ShowApiErrorAsync("Unable to import resources", importError);
+    }
+
+    private static string BuildResourceAppsImportUrl(string rawLaunchUrl)
+    {
+        if (!Uri.TryCreate(rawLaunchUrl, UriKind.Absolute, out var launchUri) ||
+            launchUri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(launchUri.UserInfo))
+            throw new InvalidOperationException("Schoology returned an invalid Resource App launch URL.");
+        var outerQuery = HttpUtility.ParseQueryString(launchUri.Query);
+        var relayState = outerQuery["RelayState"];
+        if (string.IsNullOrWhiteSpace(relayState) || !Uri.TryCreate(relayState, UriKind.Absolute, out var relayUri))
+            throw new InvalidOperationException("The Resource App launch URL did not contain a valid RelayState.");
+        var relayBuilder = new UriBuilder(relayUri);
+        var relayQuery = HttpUtility.ParseQueryString(relayUri.Query);
+        relayQuery["mobile"] = "1";
+        relayQuery["is_ssl"] = "1";
+        relayQuery["import_view"] = "1";
+        relayQuery["acceptible_types"] = "F,L,E";
+        relayBuilder.Query = relayQuery.ToString() ?? string.Empty;
+        outerQuery["RelayState"] = relayBuilder.Uri.AbsoluteUri;
+        return new UriBuilder(launchUri) { Query = outerQuery.ToString() ?? string.Empty }.Uri.AbsoluteUri;
     }
 
     private async Task ShowAssignmentAttachmentsDialogAsync(
@@ -3938,20 +4075,23 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private StackPanel BuildResourceEntriesView(
         IReadOnlyList<(string Title, IReadOnlyList<ResourceTreeEntry> Entries)> categories,
-        string contextKind, long contextId, Action? onBack = null)
+        string contextKind, long contextId, Action? onBack = null,
+        Action<ResourceTreeEntry>? onSelect = null, HashSet<long>? selectedResourceIds = null)
     {
         var content = new StackPanel { Spacing = 8, Margin = new Thickness(4, 4, 4, 16) };
         foreach (var category in categories)
         {
             content.Children.Add(Text(category.Title, 13, true));
             if (category.Entries.Count == 0) content.Children.Add(EmptyState("No resources"));
-            else AddResourceEntryRows(content, category.Entries, contextKind, contextId, onBack, 0);
+            else AddResourceEntryRows(content, category.Entries, contextKind, contextId, onBack, 0,
+                onSelect, selectedResourceIds);
         }
         return content;
     }
 
     private void AddResourceEntryRows(StackPanel destination, IReadOnlyList<ResourceTreeEntry> entries,
-        string contextKind, long contextId, Action? onBack, int depth)
+        string contextKind, long contextId, Action? onBack, int depth,
+        Action<ResourceTreeEntry>? onSelect = null, HashSet<long>? selectedResourceIds = null)
     {
         foreach (var entry in entries)
         {
@@ -3962,7 +4102,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(8 + depth * 24, 9, 8, 9), MinHeight = 52 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            if (isFolder) row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            if (isFolder || onSelect is not null) row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
             row.Children.Add(isFolder ? FolderIcons.CreateIcon(FolderColorName(entry.Data), 27) :
                 new FontIcon { Glyph = AttachmentGlyph(entry.Data), FontSize = 23,
                     Foreground = ThemeBrush("SchoologyBlueBrush"), VerticalAlignment = VerticalAlignment.Center });
@@ -3974,6 +4114,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             row.Children.Add(labels);
 
             FontIcon? arrow = null;
+            FontIcon? selectionIcon = null;
             if (isFolder)
             {
                 arrow = new FontIcon { Glyph = "\uE70D", FontSize = 14,
@@ -3983,6 +4124,19 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 arrow.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
                 Grid.SetColumn(arrow, 2);
                 row.Children.Add(arrow);
+            }
+            else if (onSelect is not null)
+            {
+                selectionIcon = new FontIcon
+                {
+                    Glyph = selectedResourceIds?.Contains(entry.Id) == true ? "\uE73E" : string.Empty,
+                    FontSize = 16,
+                    Foreground = ThemeBrush("SchoologyBlueBrush"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                };
+                Grid.SetColumn(selectionIcon, 2);
+                row.Children.Add(selectionIcon);
             }
 
             var wrapper = new StackPanel { Spacing = 0 };
@@ -4043,7 +4197,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                         children.Children.Add(new TextBlock { Text = "This folder is empty.",
                             Style = (Style)Application.Current.Resources["BodyTextBlockStyle"],
                             Margin = new Thickness(24, 8, 8, 8), Foreground = ThemeBrush("TextFillColorSecondaryBrush") });
-                    else AddResourceEntryRows(children, nested, contextKind, contextId, onBack, depth + 1);
+                    else AddResourceEntryRows(children, nested, contextKind, contextId, onBack, depth + 1,
+                        onSelect, selectedResourceIds);
                     loaded = true;
                 }
                 catch (Exception ex)
@@ -4079,7 +4234,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             item.Tapped += async (_, args) =>
             {
                 args.Handled = true;
-                if (!isFolder) { await OpenResourceTreeEntryAsync(entry, onBack); return; }
+                if (!isFolder)
+                {
+                    if (onSelect is not null)
+                    {
+                        onSelect(entry);
+                        if (selectionIcon is not null)
+                            selectionIcon.Glyph = selectedResourceIds?.Contains(entry.Id) == true ? "\uE73E" : string.Empty;
+                        return;
+                    }
+                    await OpenResourceTreeEntryAsync(entry, onBack);
+                    return;
+                }
                 if (expanded)
                 {
                     expanded = false;
@@ -10678,7 +10844,8 @@ try {{
     }
 
     private async Task OpenSharedWebViewAsync(string rawUrl, string title, bool allowLtiExternal = false,
-        System.Action? onBack = null, bool requiresBrowserSession = true)
+        System.Action? onBack = null, bool requiresBrowserSession = true,
+        Func<Uri, Task<bool>>? navigationHandler = null)
     {
         await _sharedWebViewGate.WaitAsync();
         try
@@ -10752,6 +10919,11 @@ try {{
             {
                 if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out var destination)) return;
                 if (destination.Scheme != Uri.UriSchemeHttps)
+                {
+                    args.Cancel = true;
+                    return;
+                }
+                if (navigationHandler is not null && await navigationHandler(destination))
                 {
                     args.Cancel = true;
                     return;

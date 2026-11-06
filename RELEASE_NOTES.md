@@ -1,3 +1,10 @@
+## [2026.10.0-port.99] - 2026-11-05
+
+- Rebuild the assignment attachment resource picker around the standalone Resources categories: My Resources, Shared, Groups, and Resource Apps.
+- Preserve expandable collection and nested-folder navigation in the assignment picker, with selectable individual Schoology resources.
+- Add the Android-style Resource App import path: launch with import_view=1 and acceptable file/link/embed types, intercept the Schoology /content_app/import callback, retrieve imported file and link IDs using the authenticated Schoology session, and submit them as imported_resource_id attachments.
+- Keep ordinary Schoology resources submitted as schoology_resource_id attachments and uploaded local files submitted as file IDs.
+
 ## [2026.10.0-port.98] - 2026-11-05
 
 - Use the Segoe Fluent Icons MobNotificationBell glyph for the Notifications navigation item.

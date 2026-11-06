@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Web;
 
 namespace Schoology.WinUI;
 
@@ -371,6 +372,9 @@ internal sealed class SchoologyApiClient
     }
     internal Task<JsonDocument> LaunchResourceAppAsync(SchoologyAuthService.Session session, long appId, CancellationToken ct = default) =>
         _auth.GetApiJsonAtVersionAsync(session, "v2", $"resources/applications/{appId}/launch", null, ct);
+    internal Task<JsonDocument> GetResourceAppImportsAsync(
+        SchoologyAuthService.Session session, string callbackUrl, CancellationToken ct = default) =>
+        _auth.GetResourceAppImportsAsync(session, callbackUrl, ct);
 
     internal Task<JsonDocument> GetDiscussionAsync(SchoologyAuthService.Session session, string kind, long entityId, long id, CancellationToken ct = default) =>
         _auth.GetApiJsonAsync(session, $"{EntityRealm(kind)}/{entityId}/discussions/{id}",
@@ -661,6 +665,38 @@ internal sealed partial class SchoologyAuthService
 
 internal sealed partial class SchoologyAuthService
 {
+    /// <summary>Fetch the Resource App import callback using Android's authenticated import flow.</summary>
+    internal async Task<JsonDocument> GetResourceAppImportsAsync(
+        Session session, string rawCallbackUrl, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (!Uri.TryCreate(rawCallbackUrl, UriKind.Absolute, out var callback) ||
+            callback.Scheme != Uri.UriSchemeHttps || !IsSchoologyOrLausdHost(callback.Host) ||
+            !callback.AbsolutePath.Contains("/content_app/import", StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrEmpty(callback.UserInfo))
+            throw new InvalidOperationException("Schoology returned an invalid Resource App import callback.");
+
+        var query = HttpUtility.ParseQueryString(callback.Query);
+        query["mobile"] = "1";
+        var builder = new UriBuilder(callback) { Query = query.ToString() ?? string.Empty };
+        var cookies = await GetWebSessionCookiesAsync(session, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, builder.Uri);
+        request.Headers.TryAddWithoutValidation("User-Agent", "okhttp/4.8.0");
+        request.Headers.TryAddWithoutValidation("Accept", "text/json, application/json, */*");
+        request.Headers.TryAddWithoutValidation("Cookie",
+            string.Join("; ", cookies.Select(cookie => $"{cookie.Name}={cookie.Value}")));
+        AddPlaintextOAuth(request, session.Token, session.Secret);
+        using var response = await OAuthHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        var body = await ReadResponseTextAsync(response.Content, ct);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(ReadableError(body, "Schoology could not import this Resource App", response.StatusCode));
+        try { return JsonDocument.Parse(body); }
+        catch (JsonException)
+        {
+            throw new InvalidOperationException("Schoology returned an unreadable Resource App import response.");
+        }
+    }
+
     internal string WebSessionUrl => $"https://{WebHost}/";
 
     internal sealed record WebSessionCookie(string Name, string Value, string Domain, string Path, bool HttpOnly, bool Secure);
