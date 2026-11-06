@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using System.Web;
 using Windows.Data.Pdf;
 using Windows.Graphics;
+using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -2160,7 +2161,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             launchUrl = ProfileValue(data, "url", "launchTokenUrl", "launch_token_url");
         if (string.IsNullOrWhiteSpace(launchUrl))
             throw new InvalidOperationException("Schoology did not return a resource-app launch URL.");
-        var importUrl = BuildResourceAppsImportUrl(launchUrl);
+        // Match the working SwiftUI implementation: navigate to Schoology's
+        // launch URL unchanged. The launch token may not expose a RelayState
+        // query parameter; the import callback itself receives mobile=1 when
+        // GetResourceAppImportsAsync fetches /content_app/import.
+        var importUrl = launchUrl;
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? importError = null;
         var importedCount = 0;
@@ -2221,26 +2226,6 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var completed = await completion.Task.WaitAsync(TimeSpan.FromMinutes(15));
         if (completed && importError is not null)
             await ShowApiErrorAsync("Unable to import resources", importError);
-    }
-
-    private static string BuildResourceAppsImportUrl(string rawLaunchUrl)
-    {
-        if (!Uri.TryCreate(rawLaunchUrl, UriKind.Absolute, out var launchUri) ||
-            launchUri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(launchUri.UserInfo))
-            throw new InvalidOperationException("Schoology returned an invalid Resource App launch URL.");
-        var outerQuery = HttpUtility.ParseQueryString(launchUri.Query);
-        var relayState = outerQuery["RelayState"];
-        if (string.IsNullOrWhiteSpace(relayState) || !Uri.TryCreate(relayState, UriKind.Absolute, out var relayUri))
-            throw new InvalidOperationException("The Resource App launch URL did not contain a valid RelayState.");
-        var relayBuilder = new UriBuilder(relayUri);
-        var relayQuery = HttpUtility.ParseQueryString(relayUri.Query);
-        relayQuery["mobile"] = "1";
-        relayQuery["is_ssl"] = "1";
-        relayQuery["import_view"] = "1";
-        relayQuery["acceptible_types"] = "F,L,E";
-        relayBuilder.Query = relayQuery.ToString() ?? string.Empty;
-        outerQuery["RelayState"] = relayBuilder.Uri.AbsoluteUri;
-        return new UriBuilder(launchUri) { Query = outerQuery.ToString() ?? string.Empty }.Uri.AbsoluteUri;
     }
 
     private async Task ShowAssignmentAttachmentsDialogAsync(
@@ -6679,6 +6664,65 @@ try {{
         };
     }
 
+    private static bool IsAudioMaterial(string filename, string mime, string? url = null)
+    {
+        var normalizedMime = mime.Split(';')[0].Trim();
+        if (normalizedMime.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)) return true;
+        var extension = Path.GetExtension(filename);
+        if (IsAudioExtension(extension)) return true;
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+            IsAudioExtension(Path.GetExtension(uri.AbsolutePath));
+    }
+
+    private static bool IsAudioExtension(string extension) =>
+        extension.ToLowerInvariant() is
+            ".mp3" or ".m4a" or ".aac" or ".wav" or ".wma" or ".flac" or ".ogg" or ".oga" or
+            ".opus" or ".aiff" or ".aif" or ".mid" or ".midi";
+
+    private static bool IsPlayableMedia(string filename, string mime, string? url = null)
+    {
+        var normalizedMime = mime.Split(';')[0].Trim();
+        if (normalizedMime.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
+            normalizedMime.StartsWith("video/", StringComparison.OrdinalIgnoreCase)) return true;
+        if (IsKnownPlayableMediaExtension(Path.GetExtension(filename))) return true;
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+            IsKnownPlayableMediaExtension(Path.GetExtension(uri.AbsolutePath));
+    }
+
+    private static bool IsKnownPlayableMediaExtension(string extension) =>
+        extension.ToLowerInvariant() is
+            ".mp4" or ".m4v" or ".mov" or ".avi" or ".wmv" or ".mkv" or ".webm" or
+            ".mpeg" or ".mpg" or ".3gp" or ".ts" or ".m2ts" or ".ogv" or
+            ".mp3" or ".m4a" or ".aac" or ".wav" or ".wma" or ".flac" or ".ogg" or
+            ".oga" or ".opus" or ".aiff" or ".aif" or ".mid" or ".midi";
+
+    private static string GetPlayableMediaExtension(string filename, string mime, string? url = null)
+    {
+        var extension = Path.GetExtension(filename);
+        if (IsKnownPlayableMediaExtension(extension)) return extension.ToLowerInvariant();
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            extension = Path.GetExtension(uri.AbsolutePath);
+            if (IsKnownPlayableMediaExtension(extension)) return extension.ToLowerInvariant();
+        }
+        return mime.Split(';')[0].Trim().ToLowerInvariant() switch
+        {
+            "video/quicktime" => ".mov",
+            "video/webm" => ".webm",
+            "video/x-msvideo" => ".avi",
+            "video/x-ms-wmv" => ".wmv",
+            "audio/mpeg" => ".mp3",
+            "audio/mp4" => ".m4a",
+            "audio/aac" => ".aac",
+            "audio/wav" or "audio/x-wav" => ".wav",
+            "audio/flac" or "audio/x-flac" => ".flac",
+            "audio/ogg" => ".ogg",
+            _ when mime.StartsWith("video/", StringComparison.OrdinalIgnoreCase) => ".mp4",
+            _ when mime.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) => ".mp3",
+            _ => ".bin"
+        };
+    }
+
     private static string FormatFileSize(long bytes) => bytes < 1024 * 1024
         ? $"{bytes / 1024d:0.#} KB"
         : $"{bytes / (1024d * 1024d):0.##} MB";
@@ -6809,6 +6853,31 @@ try {{
                 var urlExtension = Path.GetExtension(previewUri.AbsolutePath).ToLowerInvariant();
                 if (urlExtension.Length > 0) extension = urlExtension;
             }
+            var previewIsMedia = IsPlayableMedia(filename, previewMime, previewUrl) ||
+                IsPlayableMedia(filename, originalMime, originalUrl);
+            if (previewIsMedia && IsPlayableMedia(filename, originalMime, originalUrl))
+            {
+                previewUrl = originalUrl;
+                previewMime = originalMime;
+            }
+            if (previewIsMedia)
+            {
+                var mediaName = SafeMaterialFileName(filename);
+                var mediaExtension = GetPlayableMediaExtension(filename, previewMime, previewUrl);
+                var currentExtension = Path.GetExtension(mediaName);
+                if (string.IsNullOrWhiteSpace(currentExtension) ||
+                    !IsKnownPlayableMediaExtension(currentExtension))
+                    mediaName = Path.ChangeExtension(mediaName, mediaExtension);
+                var mediaBytes = await DownloadSchoologyBytesWithProgressAsync(previewUrl, mediaName);
+                if (mediaBytes is null) return;
+                var mediaCache = Path.Combine(Path.GetTempPath(), "Schoology", "MaterialPreviews");
+                Directory.CreateDirectory(mediaCache);
+                var mediaPath = Path.Combine(mediaCache, Guid.NewGuid().ToString("N") + "_" + mediaName);
+                await File.WriteAllBytesAsync(mediaPath, mediaBytes);
+                await ShowNativeMediaFileViewerAsync(mediaPath, title, originalUrl, filename, originalMime, onBack);
+                return;
+            }
+
             var previewIsPdf = previewMime.Contains("pdf", StringComparison.OrdinalIgnoreCase) ||
                 extension == ".pdf" || previewUrl.Contains(".pdf", StringComparison.OrdinalIgnoreCase);
             var previewIsImage = previewMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
@@ -6834,6 +6903,113 @@ try {{
         {
             await ShowApiErrorAsync("Unable to open material", ex.Message);
         }
+    }
+
+    private async Task ShowNativeMediaFileViewerAsync(
+        string previewPath, string title, string originalUrl, string originalFilename,
+        string originalMime, Action onBack)
+    {
+        var isAudio = IsAudioMaterial(Path.GetFileName(previewPath), originalMime, previewPath) ||
+            IsAudioMaterial(originalFilename, originalMime, previewPath);
+        var viewer = new Grid
+        {
+            Background = new SolidColorBrush(Colors.Transparent),
+            RowSpacing = 8
+        };
+        viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        viewer.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        viewer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var toolbar = new Grid { ColumnSpacing = 8 };
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var closing = false;
+        var player = new MediaPlayer();
+        Button back = null!;
+        back = Action("‹ Back", async (_, _) =>
+        {
+            if (closing) return;
+            closing = true;
+            back.IsEnabled = false;
+            player.Pause();
+            player.Source = null;
+            player.Dispose();
+            _activeNativeFileViewerRoot = null;
+            _refreshNativeFileViewer = null;
+            try { File.Delete(previewPath); } catch { }
+            await Task.Yield();
+            onBack();
+        });
+        var mediaElement = new MediaPlayerElement
+        {
+            AreTransportControlsEnabled = true,
+            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+            MinHeight = isAudio ? 180 : 360,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetName(mediaElement, isAudio ? "Audio player" : "Video player");
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(previewPath);
+            player.Source = MediaSource.CreateFromStorageFile(file);
+            mediaElement.SetMediaPlayer(player);
+            player.Play();
+        }
+        catch
+        {
+            player.Dispose();
+            try { File.Delete(previewPath); } catch { }
+            throw;
+        }
+
+        var heading = Text(title, 16, true);
+        heading.TextTrimming = TextTrimming.CharacterEllipsis;
+        heading.VerticalAlignment = VerticalAlignment.Center;
+        var typeLabel = Text(isAudio ? "Audio" : "Video", 12);
+        typeLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        typeLabel.VerticalAlignment = VerticalAlignment.Center;
+        var download = Action(string.Empty, async (_, _) =>
+            await SaveOriginalMaterialAsync(originalUrl, originalFilename, originalMime));
+        download.Content = new FontIcon
+        {
+            Glyph = "\uE896",
+            FontFamily = new FontFamily("Segoe Fluent Icons"),
+            FontSize = 16
+        };
+        AutomationProperties.SetName(download, "Download original file");
+        ToolTipService.SetToolTip(download, "Download original");
+
+        Grid.SetColumn(back, 0);
+        toolbar.Children.Add(back);
+        var titleStack = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+        titleStack.Children.Add(heading);
+        titleStack.Children.Add(typeLabel);
+        Grid.SetColumn(titleStack, 1);
+        toolbar.Children.Add(titleStack);
+        Grid.SetColumn(download, 2);
+        toolbar.Children.Add(download);
+
+        var status = Text("", 12);
+        status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        Grid.SetRow(toolbar, 0);
+        viewer.Children.Add(toolbar);
+        Grid.SetRow(mediaElement, 1);
+        viewer.Children.Add(mediaElement);
+        Grid.SetRow(status, 2);
+        viewer.Children.Add(status);
+
+        back.IsEnabled = true;
+        _activeNativeFileViewerRoot = viewer;
+        _refreshNativeFileViewer = () =>
+        {
+            viewer.Background = new SolidColorBrush(Colors.Transparent);
+            status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+            typeLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        };
+        if (_sectionFrame is not null) NavigateMainSection(viewer, title);
+        else Reset(BuildApplicationShell(title, viewer));
     }
 
     private async Task ShowNativeFileViewerAsync(
@@ -7999,14 +8175,27 @@ try {{
 
     private async Task OpenAttachmentAsync(JsonElement attachment, string kind, Action onBack)
     {
-        if (kind is "link" or "video")
+        if (kind == "link")
         {
-            var rawUrl = kind == "video"
-                ? ProfileValue(attachment, "video_url", "videoURL", "videoUrl", "url", "href")
-                : ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url",
-                    "launch_url", "launchUrl");
+            var rawUrl = ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url",
+                "launch_url", "launchUrl");
             if (string.IsNullOrWhiteSpace(rawUrl))
                 throw new InvalidOperationException("Schoology did not provide a URL for this link.");
+            await OpenExternalLinkAsync(rawUrl);
+            return;
+        }
+        if (kind == "video")
+        {
+            var rawUrl = ProfileValue(attachment, "video_url", "videoURL", "videoUrl", "url", "href");
+            var filename = ProfileValue(attachment, "filename", "fileName", "file_title", "fileTitle", "title", "name") ?? "";
+            var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ?? "";
+            if (IsPlayableMedia(filename, mime, rawUrl))
+            {
+                await ShowAttachmentOptionsAsync(attachment, onBack);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(rawUrl))
+                throw new InvalidOperationException("Schoology did not provide a URL for this video.");
             await OpenExternalLinkAsync(rawUrl);
             return;
         }
@@ -8052,11 +8241,19 @@ try {{
         var convertedUrl = ProfileValue(attachment, "file_converted_download_url", "fileConvertedDownloadURL",
             "converted_download_path", "convertedDownloadPath");
         var convertedStatus = ProfileValue(attachment, "converted_status", "convertedStatus")?.ToLowerInvariant() ?? "";
-        var convertedReady = !string.IsNullOrWhiteSpace(convertedUrl) &&
-            (convertedStatus.Length == 0 || convertedStatus is "success" or "converted" or "1");
         var thumbnail = ProfileValue(attachment, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
-        originalUrl ??= ProfileValue(attachment, "url", "href") ?? convertedUrl ?? thumbnail;
-        if (!string.IsNullOrWhiteSpace(originalUrl) &&
+        originalUrl ??= ProfileValue(attachment, "url", "href", "video_url", "videoURL", "videoUrl") ?? convertedUrl ?? thumbnail;
+        var declaredMediaType = ProfileValue(attachment, "type", "attachment_type", "attachmentType")?.ToLowerInvariant();
+        if (declaredMediaType == "video" && !mime.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+            mime = "video/mp4";
+        else if (declaredMediaType == "audio" && !mime.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+            mime = "audio/mpeg";
+        // Schoology may expose a PDF conversion for a media attachment. Never
+        // route audio/video through that conversion: keep the original stream.
+        var convertedReady = !IsPlayableMedia(name, mime, originalUrl) &&
+            !string.IsNullOrWhiteSpace(convertedUrl) &&
+            (convertedStatus.Length == 0 || convertedStatus is "success" or "converted" or "1");
+        if (!IsPlayableMedia(name, mime, originalUrl) && !string.IsNullOrWhiteSpace(originalUrl) &&
             await TryOpenDocumentAttachmentAsync(originalUrl, onBack)) return;
         if (string.IsNullOrWhiteSpace(originalUrl))
         {
