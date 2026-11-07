@@ -111,7 +111,7 @@ public partial class App : Application
         _instanceMutex = new Mutex(initiallyOwned: true, name: @"Local\Schoology.WinUI.Singleton", createdNew: out var isFirstInstance);
         if (!isFirstInstance)
         {
-            var existingWindow = FindWindow(null, "Schoology");
+            var existingWindow = FindWindow(null, "ClassWire");
             if (existingWindow != IntPtr.Zero) PostMessage(existingWindow, 0x8000 + 42, IntPtr.Zero, IntPtr.Zero);
             WriteStartupLog("Forwarded launch request to the existing background instance.");
             GC.KeepAlive(_instanceMutex);
@@ -156,7 +156,7 @@ public partial class App : Application
             "Schoology", "Logs", "CrashDumps");
         Directory.CreateDirectory(dumpDirectory);
         using var key = Registry.CurrentUser.CreateSubKey(
-            @"Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\Schoology.WinUI.exe",
+            @"Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\ClassWire.exe",
             writable: true) ?? throw new InvalidOperationException("Could not create the per-user Windows Error Reporting settings.");
         key.SetValue("DumpFolder", dumpDirectory, RegistryValueKind.ExpandString);
         key.SetValue("DumpCount", 5, RegistryValueKind.DWord);

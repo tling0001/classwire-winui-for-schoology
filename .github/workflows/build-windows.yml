@@ -1,4 +1,4 @@
-name: Build Schoology WinUI 3
+name: Build ClassWire
 
 on:
   push:
@@ -97,14 +97,14 @@ jobs:
           & $iscc "/DArchitecture=${{ matrix.architecture }}" "/DAppVersion=$version" "/DSourceDir=$sourceDir" "installer\Schoology-WinUI.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for ${{ matrix.architecture }}." }
 
-          $installer = Join-Path $env:GITHUB_WORKSPACE "installer-output\Schoology-WinUI-$version-${{ matrix.architecture }}-Setup.exe"
+          $installer = Join-Path $env:GITHUB_WORKSPACE "installer-output\ClassWire-WinUI-$version-${{ matrix.architecture }}-Setup.exe"
           if (!(Test-Path -LiteralPath $installer)) { throw "Expected installer was not created: $installer" }
           Write-Host "Created per-user installer: $installer"
 
       - name: Upload installer and published files
         uses: actions/upload-artifact@v5
         with:
-          name: Schoology-WinUI-${{ matrix.rid }}
+          name: ClassWire-WinUI-${{ matrix.rid }}
           path: |
             installer-output/*.exe
             publish/${{ matrix.rid }}/**
@@ -112,7 +112,7 @@ jobs:
           retention-days: 14
 
   release:
-    name: Publish versioned Schoology release
+    name: Publish versioned ClassWire release
     if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
     needs: [build]
     runs-on: ubuntu-latest
@@ -144,7 +144,7 @@ jobs:
       - name: Download installer artifacts
         uses: actions/download-artifact@v5
         with:
-          pattern: Schoology-WinUI-*
+          pattern: ClassWire-WinUI-*
           path: release-assets
           merge-multiple: true
 

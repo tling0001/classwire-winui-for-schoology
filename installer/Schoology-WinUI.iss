@@ -2,26 +2,26 @@
   #define Architecture "x64"
 #endif
 #ifndef AppVersion
-  #define AppVersion "2026.10.0-port.47"
+  #define AppVersion "2026.10.0-port.103"
 #endif
 #ifndef SourceDir
   #define SourceDir "publish\win-x64"
 #endif
 
-#define AppName "Schoology WinUI"
-#define AppExeName "Schoology.WinUI.exe"
+#define AppName "ClassWire"
+#define AppExeName "ClassWire.exe"
 
 [Setup]
 AppId={{2D38A5B1-5F8D-4CB7-9F30-8F6D2A01A7C2}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=Schoology
+AppPublisher=ClassWire
 DefaultDirName={localappdata}\Programs\Schoology
-DefaultGroupName=Schoology
+DefaultGroupName=ClassWire
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\installer-output
-OutputBaseFilename=Schoology-WinUI-{#AppVersion}-{#Architecture}-Setup
+OutputBaseFilename=ClassWire-WinUI-{#AppVersion}-{#Architecture}-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -29,24 +29,30 @@ ArchitecturesAllowed=x64 arm64
 CloseApplications=yes
 RestartApplications=no
 Uninstallable=yes
-UninstallDisplayName=Schoology WinUI
+UninstallDisplayName=ClassWire
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a Schoology WinUI desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
+Name: "desktopicon"; Description: "Create a ClassWire desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Schoology WinUI"; Filename: "{app}\{#AppExeName}"
-Name: "{autodesktop}\Schoology WinUI"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{group}\ClassWire"; Filename: "{app}\{#AppExeName}"
+Name: "{autodesktop}\ClassWire"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+
+[InstallDelete]
+; Remove previous executable and shortcut names during the in-place rebrand.
+Type: files; Name: "{app}\Schoology.WinUI.*"
+Type: files; Name: "{group}\Schoology WinUI.lnk"
+Type: files; Name: "{autodesktop}\Schoology WinUI.lnk"
 
 [Run]
 ; Normal interactive installs offer the usual post-install launch checkbox.
-Filename: "{app}\{#AppExeName}"; Description: "Launch Schoology WinUI"; Flags: postinstall nowait skipifsilent; Check: not IsUpdateRestart
+Filename: "{app}\{#AppExeName}"; Description: "Launch ClassWire"; Flags: postinstall nowait skipifsilent; Check: not IsUpdateRestart
 ; Updates pass /RESTARTAPP=1 so the updated app is relaunched after silent installation.
 Filename: "{app}\{#AppExeName}"; Flags: nowait; Check: IsUpdateRestart
 

@@ -17,14 +17,14 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.102</Version>
-    <AssemblyVersion>2026.10.0.102</AssemblyVersion>
-    <FileVersion>2026.10.0.102</FileVersion>
-    <InformationalVersion>2026.10.0-port.102</InformationalVersion>
-    <Title>Schoology</Title>
-    <Product>Schoology</Product>
-    <AssemblyName>Schoology.WinUI</AssemblyName>
-    <ApplicationIcon>Assets\\Schoology.ico</ApplicationIcon>
+    <Version>2026.10.0-port.103</Version>
+    <AssemblyVersion>2026.10.0.103</AssemblyVersion>
+    <FileVersion>2026.10.0.103</FileVersion>
+    <InformationalVersion>2026.10.0-port.103</InformationalVersion>
+    <Title>ClassWire</Title>
+    <Product>ClassWire</Product>
+    <AssemblyName>ClassWire</AssemblyName>
+    <ApplicationIcon>Assets\\ClassWire.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Using Include="Windows.UI.Text.FontWeight" Alias="FontWeight" />
@@ -44,10 +44,9 @@
     <Copy SourceFiles="@(_WinUIResourceIndex)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
   </Target>
   <ItemGroup>
-    <EmbeddedResource Include="Assets\\logo_schoology.png" />
     <EmbeddedResource Include="Assets\\ic_school.svg" />
-    <EmbeddedResource Include="Assets\\ic_sgy_logo.svg" />
+    <EmbeddedResource Include="Assets\\ic_person.svg" />
     <EmbeddedResource Include="Assets\\ic_qr_code.svg" />
-    <EmbeddedResource Include="Assets\\Schoology.ico" />
+    <EmbeddedResource Include="Assets\\ClassWire.ico" />
   </ItemGroup>
 </Project>

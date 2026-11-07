@@ -1,3 +1,11 @@
+## [2026.10.0-port.103] - 2026-11-06
+
+- Rebrand the Windows desktop product as ClassWire across app titles, login and splash screens, tray, notifications, settings, dialogs, and user-facing error messages.
+- Replace the circular S identity with a matching blue-ring C app icon and native C login/splash lockup; use a light ClassWire wordmark with a blue Wire suffix.
+- Replace the account action's old S logo with a neutral person icon.
+- Rename the executable/product metadata to ClassWire and update installer, shortcuts, uninstaller, update-asset naming, and CI release artifacts.
+- Keep the existing install/data directories, stable installer AppId, singleton mutex, Schoology OAuth/API hosts, callback scheme, and service identifiers so upgrades, saved sessions, and Schoology connectivity remain compatible.
+
 ## [2026.10.0-port.102] - 2026-11-06
 
 - Fix the x64 and ARM64 publish failures in the login brand lockup by using supported WinUI shape, path-geometry, document-run, and accessibility APIs.
