@@ -1,3 +1,8 @@
+## [2026.10.0-port.102] - 2026-11-06
+
+- Fix the x64 and ARM64 publish failures in the login brand lockup by using supported WinUI shape, path-geometry, document-run, and accessibility APIs.
+- Preserve the SwiftUI-matched circular Schoology mark and exact S glyph path using native WinUI Bezier and line segments.
+
 ## [2026.10.0-port.101] - 2026-11-06
 
 - Replace the login screen's raster logo with the same native Schoology brand lockup as SwiftUI: circular S mark, light-weight Schoology wordmark, and matching blue suffix.

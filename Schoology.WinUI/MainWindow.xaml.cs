@@ -862,13 +862,40 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         var brandBlue = Microsoft.UI.ColorHelper.FromArgb(255, 72, 175, 236);
         var brandMark = new Grid { Width = 38, Height = 38 };
-        brandMark.Children.Add(new Ellipse
+        brandMark.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
         {
-            Margin = new Thickness(1.6), Stroke = new SolidColorBrush(brandBlue), StrokeThickness = 3.15
+            Margin = new Thickness(1.6),
+            Stroke = new SolidColorBrush(brandBlue),
+            StrokeThickness = 3.15
         });
+        // Recreate the SwiftUI Schoology glyph with supported WinUI path segments.
+        var glyphFigure = new Microsoft.UI.Xaml.Media.PathFigure
+        {
+            StartPoint = new Windows.Foundation.Point(9.634, 10.54),
+            IsClosed = true
+        };
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(8.165, 10.18), Point2 = new Windows.Foundation.Point(6.368, 9.762), Point3 = new Windows.Foundation.Point(6.368, 7.801) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(6.368, 6.08), Point2 = new Windows.Foundation.Point(7.776, 5), Point3 = new Windows.Foundation.Point(9.885, 5) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(11.624, 5), Point2 = new Windows.Foundation.Point(13.479, 5.859), Point3 = new Windows.Foundation.Point(13.789, 8.081) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.LineSegment { Point = new Windows.Foundation.Point(12.127, 8.301) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(12.108, 7.72), Point2 = new Windows.Foundation.Point(12.068, 7.261), Point3 = new Windows.Foundation.Point(11.469, 6.778) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(10.869, 6.3), Point2 = new Windows.Foundation.Point(10.174, 6.22), Point3 = new Windows.Foundation.Point(9.713, 6.22) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(8.512, 6.22), Point2 = new Windows.Foundation.Point(7.915, 6.959), Point3 = new Windows.Foundation.Point(7.915, 7.6) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(7.915, 8.501), Point2 = new Windows.Foundation.Point(8.899, 8.781), Point3 = new Windows.Foundation.Point(10.096, 9.08) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.LineSegment { Point = new Windows.Foundation.Point(10.967, 9.299) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(12.048, 9.559), Point2 = new Windows.Foundation.Point(14, 10.041), Point3 = new Windows.Foundation.Point(14, 12.021) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(14, 13.559), Point2 = new Windows.Foundation.Point(12.687, 15), Point3 = new Windows.Foundation.Point(10.174, 15) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(9.149, 15), Point2 = new Windows.Foundation.Point(8.088, 14.781), Point3 = new Windows.Foundation.Point(7.354, 14.241) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(7.063, 14.019), Point2 = new Windows.Foundation.Point(6.174, 13.26), Point3 = new Windows.Foundation.Point(6, 11.681) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.LineSegment { Point = new Windows.Foundation.Point(7.739, 11.401) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(7.72, 11.821), Point2 = new Windows.Foundation.Point(7.68, 12.621), Point3 = new Windows.Foundation.Point(8.375, 13.24) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(8.915, 13.72), Point2 = new Windows.Foundation.Point(9.594, 13.782), Point3 = new Windows.Foundation.Point(10.214, 13.782) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(11.565, 13.782), Point2 = new Windows.Foundation.Point(12.355, 13.24), Point3 = new Windows.Foundation.Point(12.355, 12.22) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(12.355, 11.141), Point2 = new Windows.Foundation.Point(11.565, 10.941), Point3 = new Windows.Foundation.Point(10.462, 10.721) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.LineSegment { Point = new Windows.Foundation.Point(9.594, 10.54) });
         brandMark.Children.Add(new Microsoft.UI.Xaml.Shapes.Path
         {
-            Data = Geometry.Parse("M 9.634,10.54 C 8.165,10.18 6.368,9.762 6.368,7.801 C 6.368,6.08 7.776,5 9.885,5 C 11.624,5 13.479,5.859 13.789,8.081 L 12.127,8.301 C 12.108,7.72 12.068,7.261 11.469,6.778 C 10.869,6.3 10.174,6.22 9.713,6.22 C 8.512,6.22 7.915,6.959 7.915,7.6 C 7.915,8.501 8.899,8.781 10.096,9.08 L 10.967,9.299 C 12.048,9.559 14,10.041 14,12.021 C 14,13.559 12.687,15 10.174,15 C 9.149,15 8.088,14.781 7.354,14.241 C 7.063,14.019 6.174,13.26 6,11.681 L 7.739,11.401 C 7.72,11.821 7.68,12.621 8.375,13.24 C 8.915,13.72 9.594,13.782 10.214,13.782 C 11.565,13.782 12.355,13.24 12.355,12.22 C 12.355,11.141 11.565,10.941 10.462,10.721 L 9.594,10.54 Z"),
+            Data = new Microsoft.UI.Xaml.Media.PathGeometry { Figures = { glyphFigure } },
             Fill = ThemeBrush("SchoologyTextBrush"),
             Stretch = Microsoft.UI.Xaml.Media.Stretch.Fill,
             Margin = new Thickness(5.8)
@@ -879,8 +906,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             FontFamily = new FontFamily("Segoe UI"), FontSize = 34,
             FontWeight = Microsoft.UI.Text.FontWeights.Light, VerticalAlignment = VerticalAlignment.Center
         };
-        wordmark.Inlines.Add(new Run { Text = "School", Foreground = ThemeBrush("SchoologyTextBrush") });
-        wordmark.Inlines.Add(new Run { Text = "ogy", Foreground = new SolidColorBrush(brandBlue) });
+        wordmark.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "School", Foreground = ThemeBrush("SchoologyTextBrush") });
+        wordmark.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "ogy", Foreground = new SolidColorBrush(brandBlue) });
         logo.Children.Add(wordmark);
         stack.Children.Add(LoginActionButton("Sign in through my school", "ic_school.svg", ShowSchoolSignInPage));
         App.WriteStartupLog("Login school sign-in button created.");
@@ -943,7 +970,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         Reset(page);
         App.WriteStartupLog("Login visual tree attached to the window.");
         AutomationProperties.SetName(logo, "Schoology");
-        AutomationProperties.SetAccessibilityView(logo, AccessibilityView.Content);
+        AutomationProperties.SetAccessibilityView(logo, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Content);
     }
 
     private Button LoginActionButton(string label, string iconResource, Action navigate)
