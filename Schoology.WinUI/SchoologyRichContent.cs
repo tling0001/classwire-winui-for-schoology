@@ -60,13 +60,18 @@ internal static class SchoologyRichContent
     private readonly record struct StyleFrame(string Tag, InlineStyle PreviousStyle, Uri? PreviousLink);
 
     internal static RichTextBlock Create(string? markup, double fontSize,
-        Func<Uri, Task>? openLink = null, bool darkTheme = false)
+        Func<Uri, Task>? openLink = null, bool darkTheme = false, double minimumFontSize = 15.5)
     {
+        // Match SwiftUI's 15.5pt minimum @ScaledMetric, while retaining the
+        // user's Windows text-scale preference for accessibility.
+        minimumFontSize = Math.Clamp(minimumFontSize, 12d, 32d);
+        var effectiveFontSize = Math.Max(fontSize, minimumFontSize);
         var block = new RichTextBlock
         {
             TextWrapping = TextWrapping.Wrap,
             IsTextSelectionEnabled = true,
-            FontSize = fontSize
+            IsTextScaleFactorEnabled = true,
+            FontSize = effectiveFontSize
         };
         if (string.IsNullOrWhiteSpace(markup)) return block;
 
@@ -76,7 +81,7 @@ internal static class SchoologyRichContent
 
         var paragraph = new Paragraph { Margin = new Thickness(0) };
         block.Blocks.Add(paragraph);
-        var style = new InlineStyle(null, fontSize, FontWeights.Normal, FontStyle.Normal, false, null);
+        var style = new InlineStyle(null, effectiveFontSize, FontWeights.Normal, FontStyle.Normal, false, null);
         var frames = new Stack<StyleFrame>();
         Uri? activeUri = null;
         Hyperlink? activeLink = null;
@@ -110,7 +115,7 @@ internal static class SchoologyRichContent
             var run = new Run
             {
                 Text = markupWasEncoded ? value : WebUtility.HtmlDecode(value),
-                FontSize = style.FontSize,
+                FontSize = Math.Max(style.FontSize, minimumFontSize),
                 FontWeight = style.FontWeight,
                 FontStyle = style.FontStyle
             };

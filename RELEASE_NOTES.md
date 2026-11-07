@@ -1,3 +1,9 @@
+## [2026.10.0-port.101] - 2026-11-06
+
+- Replace the login screen's raster logo with the same native Schoology brand lockup as SwiftUI: circular S mark, light-weight Schoology wordmark, and matching blue suffix.
+- Apply a 15.5pt minimum to rich-text runs across posts, comments, assignment details, discussion details, and event details, including inline Schoology HTML font-size styling.
+- Enable Windows text-scale support for rich-text blocks so content responds to the system's accessibility text-size setting while retaining links, emphasis, lists, and paragraph formatting.
+
 ## [2026.10.0-port.100] - 2026-11-06
 
 - Keep audio and video attachments on their original media URL instead of using Schoology's PDF conversion, including in View or Download flows.

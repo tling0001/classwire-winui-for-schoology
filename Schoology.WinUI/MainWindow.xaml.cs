@@ -851,15 +851,37 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Spacing = 14,
             Margin = new Thickness(16, 12, 16, 12)
         };
-        var logo = new Image
+        // Match SwiftUI's SchoologyBrandLockup with a native circular S mark
+        // and the light-weight Schoology wordmark.
+        var logo = new StackPanel
         {
-            Width = 265,
-            Height = 72,
-            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+            Orientation = Orientation.Horizontal, Spacing = 10,
             HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 0, 20)
         };
-        stack.Children.Add(logo);
+        var brandBlue = Microsoft.UI.ColorHelper.FromArgb(255, 72, 175, 236);
+        var brandMark = new Grid { Width = 38, Height = 38 };
+        brandMark.Children.Add(new Ellipse
+        {
+            Margin = new Thickness(1.6), Stroke = new SolidColorBrush(brandBlue), StrokeThickness = 3.15
+        });
+        brandMark.Children.Add(new Microsoft.UI.Xaml.Shapes.Path
+        {
+            Data = Geometry.Parse("M 9.634,10.54 C 8.165,10.18 6.368,9.762 6.368,7.801 C 6.368,6.08 7.776,5 9.885,5 C 11.624,5 13.479,5.859 13.789,8.081 L 12.127,8.301 C 12.108,7.72 12.068,7.261 11.469,6.778 C 10.869,6.3 10.174,6.22 9.713,6.22 C 8.512,6.22 7.915,6.959 7.915,7.6 C 7.915,8.501 8.899,8.781 10.096,9.08 L 10.967,9.299 C 12.048,9.559 14,10.041 14,12.021 C 14,13.559 12.687,15 10.174,15 C 9.149,15 8.088,14.781 7.354,14.241 C 7.063,14.019 6.174,13.26 6,11.681 L 7.739,11.401 C 7.72,11.821 7.68,12.621 8.375,13.24 C 8.915,13.72 9.594,13.782 10.214,13.782 C 11.565,13.782 12.355,13.24 12.355,12.22 C 12.355,11.141 11.565,10.941 10.462,10.721 L 9.594,10.54 Z"),
+            Fill = ThemeBrush("SchoologyTextBrush"),
+            Stretch = Microsoft.UI.Xaml.Media.Stretch.Fill,
+            Margin = new Thickness(5.8)
+        });
+        logo.Children.Add(brandMark);
+        var wordmark = new TextBlock
+        {
+            FontFamily = new FontFamily("Segoe UI"), FontSize = 34,
+            FontWeight = Microsoft.UI.Text.FontWeights.Light, VerticalAlignment = VerticalAlignment.Center
+        };
+        wordmark.Inlines.Add(new Run { Text = "School", Foreground = ThemeBrush("SchoologyTextBrush") });
+        wordmark.Inlines.Add(new Run { Text = "ogy", Foreground = new SolidColorBrush(brandBlue) });
+        logo.Children.Add(wordmark);
         stack.Children.Add(LoginActionButton("Sign in through my school", "ic_school.svg", ShowSchoolSignInPage));
         App.WriteStartupLog("Login school sign-in button created.");
         stack.Children.Add(LoginActionButton("Sign in with my account", "ic_sgy_logo.svg", ShowAccountSignInPage));
@@ -916,11 +938,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             // buttons inside their card and clipped their outer edges.
             stack.Margin = new Thickness(16, args.NewSize.Height < 560 ? 8 : 16, 16, args.NewSize.Height < 560 ? 8 : 16);
             stack.Width = Math.Max(180, card.Width - stack.Margin.Left - stack.Margin.Right);
-            logo.Width = Math.Min(265, Math.Max(140, stack.Width - 40));
+            logo.MaxWidth = Math.Max(180, stack.Width - 40);
         };
         Reset(page);
         App.WriteStartupLog("Login visual tree attached to the window.");
-        _ = SetEmbeddedImageAsync(logo, "Schoology.WinUI.Assets.logo_schoology.png");
+        AutomationProperties.SetName(logo, "Schoology");
+        AutomationProperties.SetAccessibilityView(logo, AccessibilityView.Content);
     }
 
     private Button LoginActionButton(string label, string iconResource, Action navigate)
