@@ -34,6 +34,47 @@ public partial class App : Application
     private static extern IntPtr FindWindow(string? className, string? windowName);
     [DllImport("user32.dll", EntryPoint = "PostMessageW")]
     private static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+    private const uint WmCopyData = 0x004A;
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CopyDataStruct
+    {
+        public IntPtr Data;
+        public int ByteCount;
+        public IntPtr Buffer;
+    }
+
+    private static string? GetProtocolUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var candidate = value.Trim().Trim('"');
+        return Uri.TryCreate(candidate, UriKind.Absolute, out var uri) &&
+            string.Equals(uri.Scheme, "schoology", StringComparison.OrdinalIgnoreCase)
+                ? uri.AbsoluteUri : null;
+    }
+
+    private static bool ForwardProtocolUrl(IntPtr window, string url)
+    {
+        var textPointer = Marshal.StringToHGlobalUni(url);
+        var dataPointer = Marshal.AllocHGlobal(Marshal.SizeOf<CopyDataStruct>());
+        try
+        {
+            var data = new CopyDataStruct
+            {
+                Data = new IntPtr(0x534759),
+                ByteCount = Encoding.Unicode.GetByteCount(url) + sizeof(char),
+                Buffer = textPointer
+            };
+            Marshal.StructureToPtr(data, dataPointer, false);
+            return SendMessage(window, WmCopyData, IntPtr.Zero, dataPointer) != IntPtr.Zero;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(dataPointer);
+            Marshal.FreeHGlobal(textPointer);
+        }
+    }
     internal static bool IsBackgroundLaunch { get; private set; }
     private static readonly string LogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -108,12 +149,28 @@ public partial class App : Application
             Environment.Exit(0);
             return;
         }
+        var protocolUrl = GetProtocolUrl(args.Arguments);
+        if (protocolUrl is null)
+        {
+            foreach (var argument in Environment.GetCommandLineArgs().Skip(1))
+            {
+                protocolUrl = GetProtocolUrl(argument);
+                if (protocolUrl is not null) break;
+            }
+        }
         _instanceMutex = new Mutex(initiallyOwned: true, name: @"Local\Schoology.WinUI.Singleton", createdNew: out var isFirstInstance);
         if (!isFirstInstance)
         {
             var existingWindow = FindWindow(null, "ClassWire");
-            if (existingWindow != IntPtr.Zero) PostMessage(existingWindow, 0x8000 + 42, IntPtr.Zero, IntPtr.Zero);
-            WriteStartupLog("Forwarded launch request to the existing background instance.");
+            if (existingWindow != IntPtr.Zero)
+            {
+                if (protocolUrl is not null && !ForwardProtocolUrl(existingWindow, protocolUrl))
+                    WriteStartupLog("The existing instance did not acknowledge the incoming Schoology URL.");
+                PostMessage(existingWindow, 0x8000 + 42, IntPtr.Zero, IntPtr.Zero);
+            }
+            WriteStartupLog(protocolUrl is null
+                ? "Forwarded launch request to the existing background instance."
+                : "Forwarded Schoology protocol URL to the existing instance.");
             GC.KeepAlive(_instanceMutex);
             return;
         }
@@ -133,7 +190,7 @@ public partial class App : Application
         try
         {
             WriteStartupLog("Creating MainWindow.");
-            _window = new MainWindow();
+            _window = new MainWindow(protocolUrl);
             WriteStartupLog("MainWindow constructor completed.");
 
             _window.Activate();

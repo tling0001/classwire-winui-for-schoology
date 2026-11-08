@@ -92,6 +92,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private const uint HighContrastOn = 0x00000001;
     private const uint WmTrayCallback = 0x8000 + 41;
     private const uint WmActivateExisting = 0x8000 + 42;
+    private const uint WmCopyData = 0x004A;
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CopyDataStruct
+    {
+        public IntPtr Data;
+        public int ByteCount;
+        public IntPtr Buffer;
+    }
     private const int GwlWndProc = -4;
     private const uint WmLButtonDoubleClick = 0x0203;
     private const uint WmRButtonUp = 0x0205;
@@ -114,6 +122,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private bool _updateDialogOpen;
     private UpdateReleaseInfo? _pendingUpdateInfo;
     private bool _restoringWindowState;
+    private readonly ConcurrentQueue<string> _pendingProtocolUrls = new();
+    private bool _protocolDispatchReady;
+    private bool _processingProtocolUrls;
 
     private sealed record UpdateReleaseInfo(string Tag, string Version, string AssetName, Uri DownloadUri, long Size, string? Digest);
     private sealed record UpdateCheckState(long LastSuccessfulCheckUnixMilliseconds, string LastRemoteTag);
@@ -130,9 +141,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         internal required ListViewItem Row { get; init; }
     }
 
-    public MainWindow()
+    public MainWindow(string? initialProtocolUrl = null)
     {
         App.WriteStartupLog("MainWindow constructor entered.");
+        if (IsValidSchoologyProtocolUrl(initialProtocolUrl))
+            _pendingProtocolUrls.Enqueue(initialProtocolUrl!);
         // The unpackaged publish can omit this empty window's standalone ms-appx
         // XAML resource. Construct the root directly so startup does not depend
         // on a resource that is not present in the installed EXE layout.
@@ -190,6 +203,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 ShowLogin();
                 App.WriteStartupLog("Login screen created; beginning saved-session restoration.");
                 await RestoreSavedSessionAsync();
+                _protocolDispatchReady = true;
+                await ProcessPendingProtocolUrlsAsync();
                 if (_isBackgroundHidden) _releaseNotesPending = true;
                 else await CheckAndShowReleaseNotesAsync();
                 StartAutomaticUpdateChecks();
@@ -347,6 +362,24 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             ShowNativeWindow(hwnd, 0);
             return IntPtr.Zero;
         }
+        if (message == WmCopyData && lParam != IntPtr.Zero)
+        {
+            var data = Marshal.PtrToStructure<CopyDataStruct>(lParam);
+            if (data.ByteCount is > 1 and <= 131072 && data.ByteCount % sizeof(char) == 0 &&
+                data.Buffer != IntPtr.Zero)
+            {
+                var incoming = Marshal.PtrToStringUni(data.Buffer, data.ByteCount / sizeof(char))?.TrimEnd('\0');
+                if (IsValidSchoologyProtocolUrl(incoming))
+                {
+                    _pendingProtocolUrls.Enqueue(incoming!);
+                    ShowFromBackgroundNotification();
+                    if (_protocolDispatchReady)
+                        DispatcherQueue.TryEnqueue(() => _ = ProcessPendingProtocolUrlsAsync());
+                    return new IntPtr(1);
+                }
+            }
+            return IntPtr.Zero;
+        }
         if (message == WmActivateExisting)
         {
             ShowFromBackgroundNotification();
@@ -408,6 +441,138 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         _isBackgroundHidden = true;
         ShowNativeWindow(Win32Interop.GetWindowFromWindowId(AppWindow.Id), 0);
     }
+    private static bool IsValidSchoologyProtocolUrl(string? rawUrl) =>
+        Uri.TryCreate(rawUrl, UriKind.Absolute, out var parsed) &&
+        string.Equals(parsed.Scheme, "schoology", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryGetSafeExternalUri(string? rawUrl, out Uri? destination)
+    {
+        destination = null;
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var candidate) ||
+            candidate.Scheme is not ("http" or "https") ||
+            !string.IsNullOrEmpty(candidate.UserInfo) || string.IsNullOrWhiteSpace(candidate.Host))
+            return false;
+        destination = candidate;
+        return true;
+    }
+
+    private static bool TryGetSafeDocumentUri(string? rawUrl, out Uri? destination)
+    {
+        destination = null;
+        if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var candidate) ||
+            candidate.Scheme is not ("http" or "https" or "ms-word" or "ms-excel" or "ms-powerpoint" or "file") ||
+            !string.IsNullOrEmpty(candidate.UserInfo))
+            return false;
+        if (candidate.Scheme is "http" or "https" && string.IsNullOrWhiteSpace(candidate.Host))
+            return false;
+        destination = candidate;
+        return true;
+    }
+
+    private static bool IsSchoologyWebHost(string host) =>
+        host.Equals("lms.lausd.net", StringComparison.OrdinalIgnoreCase) ||
+        host.Equals("schoology.com", StringComparison.OrdinalIgnoreCase) ||
+        host.EndsWith(".schoology.com", StringComparison.OrdinalIgnoreCase);
+
+    private async Task ProcessPendingProtocolUrlsAsync()
+    {
+        if (!_protocolDispatchReady || _processingProtocolUrls) return;
+        _processingProtocolUrls = true;
+        try
+        {
+            while (_pendingProtocolUrls.TryPeek(out var rawUrl))
+            {
+                if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) ||
+                    !string.Equals(uri.Scheme, "schoology", StringComparison.OrdinalIgnoreCase))
+                {
+                    _pendingProtocolUrls.TryDequeue(out _);
+                    continue;
+                }
+                var host = uri.Host.ToLowerInvariant();
+                if (_session is null && host is not ("external_login_callback" or "link" or "external-document" or "lti-assignment"))
+                    break;
+                _pendingProtocolUrls.TryDequeue(out _);
+                try { await HandleSchoologyProtocolUrlAsync(uri); }
+                catch (Exception ex)
+                {
+                    App.WriteStartupLog($"Could not route Schoology protocol URL host '{host}'.", ex);
+                    await ShowApiErrorAsync("Unable to open Schoology link", ex.Message);
+                }
+            }
+        }
+        finally { _processingProtocolUrls = false; }
+    }
+
+    private async Task HandleSchoologyProtocolUrlAsync(Uri uri)
+    {
+        var host = uri.Host.ToLowerInvariant();
+        var query = HttpUtility.ParseQueryString(uri.Query);
+        if (host == "external_login_callback")
+        {
+            var requestToken = query.Get("request_token") ?? query.Get("oauth_token");
+            if (string.IsNullOrWhiteSpace(requestToken))
+                throw new InvalidOperationException("The Schoology sign-in callback did not include a request token.");
+            _session = await _auth.CompleteSchoolBrowserSignInAsync(requestToken);
+            ShowHome();
+            await LoadAccountCollectionsAsync();
+            return;
+        }
+        if (host == "lti-assignment")
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Unable to open LTI assignment",
+                Content = query.Get("error-message") ?? "Schoology could not open this LTI assignment.",
+                CloseButtonText = "OK",
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+            };
+            await dialog.ShowAsync();
+            return;
+        }
+        if (host == "link")
+        {
+            if (!TryGetSafeExternalUri(query.Get("url"), out var destination))
+                throw new InvalidOperationException("The link does not contain a valid HTTP or HTTPS destination.");
+            if (IsSchoologyWebHost(destination!.Host) && _session is not null)
+                await OpenSharedWebViewAsync(destination.AbsoluteUri, "Schoology Link");
+            else if (!await Launcher.LaunchUriAsync(destination!))
+                throw new InvalidOperationException("Windows could not open the requested link.");
+            return;
+        }
+        if (host == "external-document")
+        {
+            foreach (var candidate in new[] { query.Get("uri"), query.Get("fallback-url") })
+                if (TryGetSafeDocumentUri(candidate, out var destination) &&
+                    await Launcher.LaunchUriAsync(destination!)) return;
+            throw new InvalidOperationException("Neither the document link nor its fallback could be opened.");
+        }
+        if (host is "lti" or "scorm" or "external-tool")
+        {
+            var parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2 && long.TryParse(parts[0], out var sectionId) && sectionId > 0 &&
+                long.TryParse(parts[1], out var materialId) && materialId > 0)
+            {
+                var title = host switch { "lti" => "LTI Assignment", "scorm" => "SCORM", _ => "External Tool" };
+                await OpenSharedWebViewAsync(
+                    $"https://app.schoology.com/section/{sectionId}/{host}/{materialId}",
+                    title, allowLtiExternal: true);
+                return;
+            }
+            throw new InvalidOperationException($"The {host} link does not contain a valid section and material ID.");
+        }
+
+        var path = host + uri.AbsolutePath;
+        if (string.IsNullOrWhiteSpace(path))
+            throw new InvalidOperationException("The Schoology link does not contain a destination.");
+        var builder = new UriBuilder("https", "app.schoology.com")
+        {
+            Path = path,
+            Query = uri.Query.TrimStart('?')
+        };
+        await OpenSharedWebViewAsync(builder.Uri.AbsoluteUri, "Schoology Link", allowLtiExternal: true);
+    }
+
     internal void ShowFromBackgroundNotification()
     {
         var hwnd = Win32Interop.GetWindowFromWindowId(AppWindow.Id);
@@ -2597,6 +2762,125 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { await ShowApiErrorAsync("Unable to submit text", ex.Message); }
     }
 
+    private (StackPanel Container, RichEditBox Editor) CreateRichTextComposer(
+        string label, string placeholder, string automationPrefix, double minHeight, double maxHeight)
+    {
+        var container = new StackPanel { Spacing = 6 };
+        container.Children.Add(Text(label, 13, true));
+        var editor = new RichEditBox
+        {
+            PlaceholderText = placeholder,
+            MinHeight = minHeight,
+            MaxHeight = maxHeight,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            IsTabStop = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            IsSpellCheckEnabled = true,
+            VerticalContentAlignment = VerticalAlignment.Top
+        };
+        AutomationProperties.SetName(editor, label);
+        AutomationProperties.SetAutomationId(editor, automationPrefix + "Editor");
+        var toolbarScroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollMode = ScrollMode.Enabled,
+            VerticalScrollMode = ScrollMode.Disabled,
+            ZoomMode = ZoomMode.Disabled,
+            Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 }
+        };
+        var toolbar = (StackPanel)toolbarScroll.Content;
+        void ApplyInlineFormat(Action<Microsoft.UI.Text.ITextCharacterFormat> apply)
+        {
+            var selection = editor.Document.Selection;
+            var format = selection.CharacterFormat;
+            apply(format);
+            selection.CharacterFormat = format;
+            editor.Focus(FocusState.Programmatic);
+        }
+        void AddFormatButton(string name, string glyph, Action action)
+        {
+            var button = new Button
+            {
+                Width = 40, Height = 40, Padding = new Thickness(8),
+                Content = new FontIcon { Glyph = glyph, FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 16 }
+            };
+            AutomationProperties.SetName(button, name);
+            AutomationProperties.SetAutomationId(button, automationPrefix + "Format" +
+                Regex.Replace(name, "[^A-Za-z0-9]", string.Empty));
+            ToolTipService.SetToolTip(button, name);
+            button.Click += (_, _) => action();
+            toolbar.Children.Add(button);
+        }
+        AddFormatButton("Bold", "\uE8DD", () => ApplyInlineFormat(format =>
+            format.Bold = format.Bold == Microsoft.UI.Text.FormatEffect.On ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On));
+        AddFormatButton("Italic", "\uE8DB", () => ApplyInlineFormat(format =>
+            format.Italic = format.Italic == Microsoft.UI.Text.FormatEffect.On ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On));
+        AddFormatButton("Underline", "\uE8DC", () => ApplyInlineFormat(format =>
+            format.Underline = format.Underline == Microsoft.UI.Text.UnderlineType.None ? Microsoft.UI.Text.UnderlineType.Single : Microsoft.UI.Text.UnderlineType.None));
+        AddFormatButton("Bulleted list", "\uE8FD", () =>
+        {
+            var paragraph = editor.Document.Selection.ParagraphFormat;
+            paragraph.ListType = paragraph.ListType == Microsoft.UI.Text.MarkerType.Bullet ? Microsoft.UI.Text.MarkerType.None : Microsoft.UI.Text.MarkerType.Bullet;
+            editor.Document.Selection.ParagraphFormat = paragraph;
+            editor.Focus(FocusState.Programmatic);
+        });
+        AddFormatButton("Numbered list", "\uE8F7", () =>
+        {
+            var paragraph = editor.Document.Selection.ParagraphFormat;
+            paragraph.ListType = paragraph.ListType == Microsoft.UI.Text.MarkerType.Arabic ? Microsoft.UI.Text.MarkerType.None : Microsoft.UI.Text.MarkerType.Arabic;
+            editor.Document.Selection.ParagraphFormat = paragraph;
+            editor.Focus(FocusState.Programmatic);
+        });
+        AddFormatButton("Clear formatting", "\uE75C", () =>
+        {
+            ApplyInlineFormat(format =>
+            {
+                format.Bold = Microsoft.UI.Text.FormatEffect.Off;
+                format.Italic = Microsoft.UI.Text.FormatEffect.Off;
+                format.Underline = Microsoft.UI.Text.UnderlineType.None;
+            });
+            editor.Document.Selection.Link = string.Empty;
+            var paragraph = editor.Document.Selection.ParagraphFormat;
+            paragraph.ListType = Microsoft.UI.Text.MarkerType.None;
+            editor.Document.Selection.ParagraphFormat = paragraph;
+        });
+        AddFormatButton("Insert hyperlink", "\uE71B", () => _ = InsertComposerLinkAsync());
+        async Task InsertComposerLinkAsync()
+        {
+            var address = new TextBox { Header = "Link address", PlaceholderText = "https://example.com" };
+            var linkText = new TextBox { Header = "Link text (optional)", PlaceholderText = "Uses selected text, or the address" };
+            var linkContent = new StackPanel { Spacing = 8, Children = { address, linkText } };
+            var linkDialog = new ContentDialog
+            {
+                Title = "Insert hyperlink", Content = linkContent, PrimaryButtonText = "Insert", CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+            };
+            if (await linkDialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (!Uri.TryCreate(address.Text.Trim(), UriKind.Absolute, out var uri) ||
+                uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo))
+            {
+                await ShowApiErrorAsync("Unable to insert hyperlink", "Enter a valid http or https address.");
+                return;
+            }
+            var selection = editor.Document.Selection;
+            if (selection.Length > 0) selection.Link = uri.AbsoluteUri;
+            else
+            {
+                var insertedText = string.IsNullOrWhiteSpace(linkText.Text) ? uri.AbsoluteUri : linkText.Text.Trim();
+                var start = selection.StartPosition;
+                selection.Text = insertedText;
+                editor.Document.GetRange(start, start + insertedText.Length).Link = uri.AbsoluteUri;
+            }
+            editor.Focus(FocusState.Programmatic);
+        }
+        container.Children.Add(toolbarScroll);
+        container.Children.Add(editor);
+        return (container, editor);
+    }
+
     private static string SerializeTextSubmission(RichEditBox editor, out string plainText)
     {
         var storyLength = editor.Document.GetRange(0, 0).StoryLength;
@@ -2920,9 +3204,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var destination = new ComboBox { Header = "Post to", HorizontalAlignment = HorizontalAlignment.Stretch,
                 ItemsSource = destinations.Select(item => item.Entity.Name).ToArray(), SelectedIndex = 0 };
             var title = new TextBox { Header = "Title", PlaceholderText = isEvent ? "Event title" : "Discussion title" };
-            var description = new TextBox { Header = "Description", PlaceholderText = "Add details…", AcceptsReturn = true,
-                TextWrapping = TextWrapping.Wrap, MinHeight = 100 };
-            content.Children.Add(destination); content.Children.Add(title); content.Children.Add(description);
+            var descriptionComposer = CreateRichTextComposer("Description", "Add details…",
+                "DiscussionEventDescription", 100, 220);
+            var description = descriptionComposer.Editor;
+            content.Children.Add(destination); content.Children.Add(title); content.Children.Add(descriptionComposer.Container);
             var attachments = AddPostAttachmentControls(content, session, isEvent ? "EventComposer" : "DiscussionComposer");
             DatePicker? eventDate = null; TimePicker? eventTime = null;
             DatePicker? eventEndDate = null; TimePicker? eventEndTime = null;
@@ -2962,12 +3247,13 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 { await ShowApiErrorAsync("Unable to create event", "The end date and time cannot be before the start date and time."); return; }
                 end = endAt.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
             }
+            var descriptionHtml = SerializeTextSubmission(description, out _);
             using var created = isEvent
-                ? await CreateEventWithAttachmentsAsync(session, selected.Kind, selected.Entity, title.Text.Trim(), description.Text.Trim(),
+                ? await CreateEventWithAttachmentsAsync(session, selected.Kind, selected.Entity, title.Text.Trim(), descriptionHtml,
                     (eventDate!.Date.DateTime.Date + (allDay!.IsOn ? TimeSpan.Zero : eventTime!.Time))
                         .ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture),
                     allDay.IsOn, commentsEnabled!.IsOn, rsvp!.SelectedIndex, end, attachments)
-                : await CreateDiscussionWithAttachmentsAsync(session, selected.Kind, selected.Entity, title.Text.Trim(), description.Text.Trim(), attachments);
+                : await CreateDiscussionWithAttachmentsAsync(session, selected.Kind, selected.Entity, title.Text.Trim(), descriptionHtml, attachments);
             if (selected.Kind == "Profile") ShowHome("Recent Activity");
             else ShowThreePane(selected.Kind, selected.Entity);
         }
@@ -2989,15 +3275,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var content = new StackPanel { Spacing = 10, MinWidth = 360 };
             var picker = new ComboBox { Header = "Post to", ItemsSource = destinations.Select(item => item.Entity.Name).ToArray(),
                 SelectedIndex = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
-            var body = new TextBox { Header = "Write an update", PlaceholderText = "Share an update…", AcceptsReturn = true,
-                TextWrapping = TextWrapping.Wrap, MinHeight = 120 };
-            content.Children.Add(picker); content.Children.Add(body);
+            var bodyComposer = CreateRichTextComposer("Write an update", "Share an update…",
+                "LegacyUpdateComposer", 120, 240);
+            var body = bodyComposer.Editor;
+            content.Children.Add(picker); content.Children.Add(bodyComposer.Container);
             var attachments = AddPostAttachmentControls(content, session, "LegacyUpdateComposer");
             var dialog = new ContentDialog { Title = "Create update", Content = CreateDialogScrollViewport(content), PrimaryButtonText = "Post", CloseButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(body.Text)) return;
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            var bodyHtml = SerializeTextSubmission(body, out var bodyPlainText);
+            if (string.IsNullOrWhiteSpace(bodyPlainText)) return;
             var selected = destinations[Math.Clamp(picker.SelectedIndex, 0, destinations.Count - 1)];
-            using var created = await CreateUpdateWithAttachmentsAsync(session, selected.Kind, selected.Entity, body.Text.Trim(), attachments);
+            using var created = await CreateUpdateWithAttachmentsAsync(session, selected.Kind, selected.Entity, bodyHtml, attachments);
             ShowThreePane(selected.Kind, selected.Entity);
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to create update", ex.Message); }
@@ -3031,6 +3320,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private void ShowHome(string section = "Recent Activity")
     {
+        if (_protocolDispatchReady && !_processingProtocolUrls)
+            DispatcherQueue.TryEnqueue(() => _ = ProcessPendingProtocolUrlsAsync());
         _ = StopQrScannerAsync();
         _page = "home";
         _section = section;
@@ -10196,23 +10487,16 @@ try {{
         AutomationProperties.SetAutomationId(suggestions, "MessageRecipientSuggestions");
         var subject = new TextBox { Header = "Subject", PlaceholderText = "Subject" };
         AutomationProperties.SetAutomationId(subject, "MessageSubject");
-        var body = new TextBox
-        {
-            Header = "Message",
-            PlaceholderText = "Write a message…",
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
-            MinHeight = 140,
-            VerticalContentAlignment = VerticalAlignment.Top
-        };
-        AutomationProperties.SetAutomationId(body, "MessageBody");
+        var bodyComposer = CreateRichTextComposer("Message", "Write a message…",
+            "MessageBody", 140, 260);
+        var body = bodyComposer.Editor;
 
         content.Children.Add(toLabel);
         content.Children.Add(recipientSearch);
         content.Children.Add(selectedRecipientsScroll);
         content.Children.Add(suggestions);
         content.Children.Add(subject);
-        content.Children.Add(body);
+        content.Children.Add(bodyComposer.Container);
 
         var attachmentActions = new Grid { ColumnSpacing = 10 };
         attachmentActions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -10468,7 +10752,8 @@ try {{
                     subject.Focus(FocusState.Programmatic);
                     return;
                 }
-                if (string.IsNullOrWhiteSpace(body.Text))
+                var messageHtml = SerializeTextSubmission(body, out var messagePlainText);
+                if (string.IsNullOrWhiteSpace(messagePlainText))
                 {
                     status.Text = "Enter a message.";
                     body.Focus(FocusState.Programmatic);
@@ -10479,7 +10764,7 @@ try {{
                 dialog.IsPrimaryButtonEnabled = false;
                 using var response = await _api.CreateMessageAsync(session,
                     recipients.Select(item => item.Id).ToArray(),
-                    subject.Text.Trim(), body.Text.Trim(),
+                    subject.Text.Trim(), messageHtml,
                     fileAttachments.Select(item => item.Id).ToArray(),
                     resourceAttachments.Select(item => item.Id).ToArray());
                 status.Text = "Message sent.";
@@ -11905,17 +12190,18 @@ try {{
             await ShowApiErrorAsync("Unable to create update", "You do not have permission to post an update in this course or group.");
             return;
         }
-        var bodyBox = new TextBox { Header = "Write an update", PlaceholderText = "Share an update…", AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap, MinHeight = 120, MaxHeight = 260 };
+        var bodyComposer = CreateRichTextComposer("Write an update", "Share an update…",
+            "TitleBarUpdateComposer", 120, 260);
+        var bodyBox = bodyComposer.Editor;
         var content = new StackPanel { Spacing = 10, MinWidth = 360 };
-        content.Children.Add(bodyBox);
+        content.Children.Add(bodyComposer.Container);
         var attachments = AddPostAttachmentControls(content, session, "TitleBarUpdateComposer");
         var dialog = new ContentDialog { Title = context == "course-update" ? "Post course update" : "Post group update",
             Content = CreateDialogScrollViewport(content), PrimaryButtonText = "Post", CloseButtonText = "Cancel", XamlRoot = _root.XamlRoot,
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme, DefaultButton = ContentDialogButton.Primary };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        var body = bodyBox.Text.Trim();
-        if (body.Length == 0) { await ShowApiErrorAsync("Unable to post update", "Write an update before posting."); return; }
+        var body = SerializeTextSubmission(bodyBox, out var plainText);
+        if (string.IsNullOrWhiteSpace(plainText)) { await ShowApiErrorAsync("Unable to post update", "Write an update before posting."); return; }
         try
         {
             using var created = await CreateUpdateWithAttachmentsAsync(session, kind, entity, body, attachments);

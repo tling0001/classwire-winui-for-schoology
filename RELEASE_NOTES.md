@@ -1,3 +1,9 @@
+## [2026.10.0-port.107] - 2026-11-08
+
+- Add a reusable native WinUI rich-text composer to discussion and event descriptions, both update composers, and outgoing Messages; send serialized HTML while retaining plain-text validation and existing attachments.
+- Register the `schoology://` protocol per user, handle cold launches, and forward incoming URLs to the running single instance.
+- Route OAuth callbacks, external links, external documents, LTI assignment errors, LTI, SCORM, and external-tool links through validated native handlers or the authenticated Schoology WebView.
+
 ## [2026.10.0-port.106] - 2026-11-07
 
 - Restore the native ClassWire lockup on the login screen and use transparent C-mark icon artwork so the Windows taskbar and tile icons have no white square backdrop.

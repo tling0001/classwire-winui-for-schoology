@@ -2,7 +2,7 @@
   #define Architecture "x64"
 #endif
 #ifndef AppVersion
-  #define AppVersion "2026.10.0-port.106"
+  #define AppVersion "2026.10.0-port.107"
 #endif
 #ifndef SourceDir
   #define SourceDir "publish\win-x64"
@@ -39,6 +39,12 @@ Name: "desktopicon"; Description: "Create a ClassWire desktop shortcut"; GroupDe
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\schoology"; ValueType: string; ValueName: ""; ValueData: "URL:ClassWire Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\schoology"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\schoology\DefaultIcon"; ValueType: string; ValueData: "{app}\ClassWire.exe,0"
+Root: HKCU; Subkey: "Software\Classes\schoology\shell\open\command"; ValueType: string; ValueData: """{app}\ClassWire.exe"" ""%1"""
 
 [Icons]
 Name: "{group}\ClassWire"; Filename: "{app}\{#AppExeName}"
