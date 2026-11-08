@@ -377,7 +377,7 @@ internal static class SchoologyRichContent
             var closing = parsed.Groups[1].Value == "/";
             var name = parsed.Groups[2].Value.ToLowerInvariant();
             var attributes = parsed.Groups[3].Value;
-            var selfClosing = attributes.TrimEnd().EndsWith("/", StringComparison.Ordinal) || IsVoidTag(name);
+            var selfClosing = attributes.TrimEnd().EndsWith('/') || IsVoidTag(name);
 
             if (skippedDepth > 0)
             {

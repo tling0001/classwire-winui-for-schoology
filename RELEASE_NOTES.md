@@ -1,3 +1,11 @@
+## [2026.10.0-port.105] - 2026-11-07
+
+- Replace the missing WebView2 text submission input with a native WinUI rich editor and preserve submission, draft, and cancel behavior.
+- Keep bold, italic, underline, hyperlink, bulleted-list, numbered-list, and clear-formatting controls; export only supported semantic HTML and safe HTTP(S) links.
+- Match the canonical SwiftUI ClassWire C mark in the native login and splash lockup, app icons, and installer icon assets.
+- Point update and release-note checks at the renamed ClassWire repository and match the current ClassWire installer asset name.
+- Resolve the reported CA1822, CA1826, CA1853, CA1859, and CA1865 build warnings.
+
 ## [2026.10.0-port.104] - 2026-11-07
 
 - Add a rich-text editor to Create Text Submission with bold, italic, underline, hyperlinks, bulleted and numbered lists, and clear formatting.

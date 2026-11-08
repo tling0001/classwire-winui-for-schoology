@@ -785,22 +785,29 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             StrokeThickness = markSize * 0.083
         });
         // The ClassWire C is native vector geometry, crisp at every scale.
+        Windows.Foundation.Point MarkPoint(double x, double y) => new(
+            markSize / 2 + (x - 9.1) * markSize / 20 * 0.70,
+            markSize / 2 + (y - 10) * markSize / 20 * 0.70);
         var glyphFigure = new Microsoft.UI.Xaml.Media.PathFigure
         {
-            StartPoint = new Windows.Foundation.Point(15.6, 5.6), IsClosed = true
+            StartPoint = MarkPoint(15.7, 4.6), IsClosed = true
         };
-        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(12.4, 3.6), Point2 = new Windows.Foundation.Point(7.3, 3.6), Point3 = new Windows.Foundation.Point(5.2, 6.9) });
-        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(3.5, 9.2), Point2 = new Windows.Foundation.Point(3.5, 10.8), Point3 = new Windows.Foundation.Point(5.2, 13.1) });
-        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(7.3, 16.4), Point2 = new Windows.Foundation.Point(12.4, 16.4), Point3 = new Windows.Foundation.Point(15.6, 14.4) });
-        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.LineSegment { Point = new Windows.Foundation.Point(13.8, 12.8) });
-        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(11.8, 14.2), Point2 = new Windows.Foundation.Point(8.5, 14.2), Point3 = new Windows.Foundation.Point(7.7, 12.2) });
-        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(6.4, 10.7), Point2 = new Windows.Foundation.Point(6.4, 9.3), Point3 = new Windows.Foundation.Point(7.7, 7.8) });
-        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = new Windows.Foundation.Point(8.5, 5.8), Point2 = new Windows.Foundation.Point(11.8, 5.8), Point3 = new Windows.Foundation.Point(13.8, 7.2) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(13.5, 2.9), Point2 = MarkPoint(11.8, 2), Point3 = MarkPoint(9.8, 2) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(5, 2), Point2 = MarkPoint(2, 5.3), Point3 = MarkPoint(2, 10) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(2, 14.7), Point2 = MarkPoint(5, 18), Point3 = MarkPoint(9.8, 18) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(11.8, 18), Point2 = MarkPoint(13.5, 17.1), Point3 = MarkPoint(15.7, 15.4) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.LineSegment { Point = MarkPoint(13.5, 13.2) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(12.5, 14.5), Point2 = MarkPoint(11.2, 14.8), Point3 = MarkPoint(9.8, 14.8) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(6.8, 14.8), Point2 = MarkPoint(5.1, 12.8), Point3 = MarkPoint(5.1, 10) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(5.1, 7.2), Point2 = MarkPoint(6.8, 5.2), Point3 = MarkPoint(9.8, 5.2) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(11.2, 5.2), Point2 = MarkPoint(12.5, 5.5), Point3 = MarkPoint(13.5, 6.8) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.LineSegment { Point = MarkPoint(15.7, 4.6) });
         brandMark.Children.Add(new Microsoft.UI.Xaml.Shapes.Path
         {
             Data = new Microsoft.UI.Xaml.Media.PathGeometry { Figures = { glyphFigure } },
-            Fill = ThemeBrush("SchoologyTextBrush"), Stretch = Microsoft.UI.Xaml.Media.Stretch.Fill,
-            Margin = new Thickness(markSize * 0.145)
+            Width = markSize, Height = markSize,
+            Fill = ThemeBrush("SchoologyTextBrush"), Stretch = Microsoft.UI.Xaml.Media.Stretch.None,
+            Margin = new Thickness(0)
         });
         logo.Children.Add(brandMark);
         var wordmark = new TextBlock { FontFamily = new FontFamily("Segoe UI"), FontSize = fontSize,
@@ -1459,7 +1466,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
             var releaseTag = Uri.EscapeDataString(installedVersion);
             using var request = new HttpRequestMessage(HttpMethod.Get,
-                $"https://api.github.com/repos/tling0001/schoology-winui/releases/tags/{releaseTag}");
+                $"https://api.github.com/repos/tling0001/classwire-winui-for-schoology/releases/tags/{releaseTag}");
             request.Headers.TryAddWithoutValidation("User-Agent", "ClassWire-WinUI");
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var response = await ReleaseNotesClient.SendAsync(request);
@@ -2108,9 +2115,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                         }
                         if (entry.Id <= 0) return;
                         var key = (entry.Id, false);
-                        if (selected.ContainsKey(key))
+                        if (selected.Remove(key))
                         {
-                            selected.Remove(key);
                             selectedIds.Remove(entry.Id);
                         }
                         else
@@ -2353,12 +2359,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var sectionId = _activeAssignmentSectionId;
         var gradeItemId = _activeAssignmentGradeItemId;
         if (session is null || !_activeAssignmentAllowsSubmission || sectionId <= 0 || gradeItemId <= 0) return;
-        var editor = new WebView2
+        var editor = new RichEditBox
         {
             MinHeight = 180,
             Height = 220,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            IsTabStop = true
+            IsTabStop = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            IsSpellCheckEnabled = true
         };
         AutomationProperties.SetName(editor, "Text submission editor");
         AutomationProperties.SetAutomationId(editor, "TextSubmissionEditor");
@@ -2373,16 +2382,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 }
         };
         var toolbar = (StackPanel)toolbarScroll.Content;
-        async Task ApplyEditorCommandAsync(string command)
+        void ApplyInlineFormat(Action<Microsoft.UI.Text.ITextCharacterFormat> apply)
         {
-            try
-            {
-                await editor.ExecuteScriptAsync($"document.execCommand({JsonSerializer.Serialize(command)}, false, null);");
-                await editor.ExecuteScriptAsync("document.getElementById('submissionEditor').focus();");
-            }
-            catch (Exception ex) { App.WriteStartupLog("Could not apply text-submission formatting.", ex); }
+            var selection = editor.Document.Selection;
+            var format = selection.CharacterFormat;
+            apply(format);
+            selection.CharacterFormat = format;
+            editor.Focus(FocusState.Programmatic);
         }
-        Button AddFormattingButton(string name, string glyph, string command)
+        Button AddFormattingButton(string name, string glyph, Action apply)
         {
             var button = new Button
             {
@@ -2399,21 +2407,53 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             AutomationProperties.SetName(button, name);
             AutomationProperties.SetAutomationId(button, "TextSubmissionFormat" + name.Replace(" ", string.Empty));
             ToolTipService.SetToolTip(button, name);
-            button.Click += async (_, _) => await ApplyEditorCommandAsync(command);
+            button.Click += (_, _) => apply();
             toolbar.Children.Add(button);
             return button;
         }
 
-        AddFormattingButton("Bold", "\uE8DD", "bold");
-        AddFormattingButton("Italic", "\uE8DB", "italic");
-        AddFormattingButton("Underline", "\uE8DC", "underline");
-        AddFormattingButton("Bulleted list", "\uE8FD", "insertUnorderedList");
-        AddFormattingButton("Numbered list", "\uE8F7", "insertOrderedList");
-        AddFormattingButton("Clear formatting", "\uE75C", "removeFormat");
+        AddFormattingButton("Bold", "\uE8DD", () => ApplyInlineFormat(format =>
+            format.Bold = format.Bold == Microsoft.UI.Text.FormatEffect.On
+                ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On));
+        AddFormattingButton("Italic", "\uE8DB", () => ApplyInlineFormat(format =>
+            format.Italic = format.Italic == Microsoft.UI.Text.FormatEffect.On
+                ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On));
+        AddFormattingButton("Underline", "\uE8DC", () => ApplyInlineFormat(format =>
+            format.Underline = format.Underline == Microsoft.UI.Text.UnderlineType.None
+                ? Microsoft.UI.Text.UnderlineType.Single : Microsoft.UI.Text.UnderlineType.None));
+        AddFormattingButton("Bulleted list", "\uE8FD", () =>
+        {
+            var paragraph = editor.Document.Selection.ParagraphFormat;
+            paragraph.ListType = paragraph.ListType == Microsoft.UI.Text.MarkerType.Bullet
+                ? Microsoft.UI.Text.MarkerType.None : Microsoft.UI.Text.MarkerType.Bullet;
+            editor.Document.Selection.ParagraphFormat = paragraph;
+            editor.Focus(FocusState.Programmatic);
+        });
+        AddFormattingButton("Numbered list", "\uE8F7", () =>
+        {
+            var paragraph = editor.Document.Selection.ParagraphFormat;
+            paragraph.ListType = paragraph.ListType == Microsoft.UI.Text.MarkerType.Arabic
+                ? Microsoft.UI.Text.MarkerType.None : Microsoft.UI.Text.MarkerType.Arabic;
+            editor.Document.Selection.ParagraphFormat = paragraph;
+            editor.Focus(FocusState.Programmatic);
+        });
+        AddFormattingButton("Clear formatting", "\uE75C", () =>
+        {
+            ApplyInlineFormat(format =>
+            {
+                format.Bold = Microsoft.UI.Text.FormatEffect.Off;
+                format.Italic = Microsoft.UI.Text.FormatEffect.Off;
+                format.Underline = Microsoft.UI.Text.UnderlineType.None;
+            });
+            editor.Document.Selection.Link = string.Empty;
+            var paragraph = editor.Document.Selection.ParagraphFormat;
+            paragraph.ListType = Microsoft.UI.Text.MarkerType.None;
+            editor.Document.Selection.ParagraphFormat = paragraph;
+        });
 
         var linkPanel = new StackPanel
         {
-            Orientation = Orientation.Horizontal,
+            Orientation = Orientation.Vertical,
             Spacing = 8,
             Visibility = Visibility.Collapsed
         };
@@ -2424,19 +2464,27 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             MinWidth = 220,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
+        var linkText = new TextBox
+        {
+            Header = "Link text (optional)",
+            PlaceholderText = "Uses selected text, or the address",
+            MinWidth = 220,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetAutomationId(linkText, "TextSubmissionLinkText");
         AutomationProperties.SetAutomationId(linkAddress, "TextSubmissionLinkAddress");
         var linkStatus = new TextBlock
         {
             VerticalAlignment = VerticalAlignment.Center,
             TextWrapping = TextWrapping.Wrap
         };
-        var insertLinkButton = new Button { Content = "Insert link", VerticalAlignment = VerticalAlignment.Center };
+        var insertLinkButton = new Button { Content = "Insert link", HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetName(insertLinkButton, "Insert hyperlink");
         AutomationProperties.SetAutomationId(insertLinkButton, "TextSubmissionInsertLink");
-        insertLinkButton.Click += async (_, _) =>
+        insertLinkButton.Click += (_, _) =>
         {
             if (!Uri.TryCreate(linkAddress.Text.Trim(), UriKind.Absolute, out var linkUri) ||
-                linkUri.Scheme is not ("http" or "https"))
+                linkUri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(linkUri.UserInfo))
             {
                 linkStatus.Text = "Enter a valid http or https address.";
                 return;
@@ -2444,32 +2492,30 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
             try
             {
-                var encodedUri = JsonSerializer.Serialize(linkUri.AbsoluteUri);
-                var script = """
-                (() => {
-                    const target = document.getElementById('submissionEditor');
-                    target.focus();
-                    const selection = window.getSelection();
-                    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-                        const range = selection && selection.rangeCount ? selection.getRangeAt(0) : document.createRange();
-                        if (!selection || selection.rangeCount === 0) { range.selectNodeContents(target); range.collapse(false); }
-                        const anchor = document.createElement('a');
-                        anchor.href = __LINK_URL__;
-                        anchor.textContent = __LINK_URL__;
-                        range.insertNode(anchor);
-                        range.setStartAfter(anchor);
-                        range.collapse(true);
-                        if (selection) { selection.removeAllRanges(); selection.addRange(range); }
-                    } else {
-                        document.execCommand('createLink', false, __LINK_URL__);
-                    }
-                })();
-                """;
-                script = script.Replace("__LINK_URL__", encodedUri, StringComparison.Ordinal);
-                await editor.ExecuteScriptAsync(script);
+                var selection = editor.Document.Selection;
+                if (selection.Length == 0)
+                {
+                    var inserted = string.IsNullOrWhiteSpace(linkText.Text) ? linkUri.AbsoluteUri : linkText.Text.Trim();
+                    var start = selection.StartPosition;
+                    selection.Text = inserted;
+                    var insertedLink = editor.Document.GetRange(start, start + inserted.Length);
+                    insertedLink.Link = linkUri.AbsoluteUri;
+                    var format = insertedLink.CharacterFormat;
+                    format.Underline = Microsoft.UI.Text.UnderlineType.Single;
+                    insertedLink.CharacterFormat = format;
+                }
+                else
+                {
+                    selection.Link = linkUri.AbsoluteUri;
+                    var format = selection.CharacterFormat;
+                    format.Underline = Microsoft.UI.Text.UnderlineType.Single;
+                    selection.CharacterFormat = format;
+                }
                 linkAddress.Text = string.Empty;
+                linkText.Text = string.Empty;
                 linkStatus.Text = string.Empty;
                 linkPanel.Visibility = Visibility.Collapsed;
+                editor.Focus(FocusState.Programmatic);
             }
             catch (Exception ex)
             {
@@ -2477,15 +2523,17 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 App.WriteStartupLog("Could not insert a text-submission hyperlink.", ex);
             }
         };
-        var cancelLinkButton = new Button { Content = "Cancel", VerticalAlignment = VerticalAlignment.Center };
+        var cancelLinkButton = new Button { Content = "Cancel", HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetName(cancelLinkButton, "Cancel hyperlink");
         AutomationProperties.SetAutomationId(cancelLinkButton, "TextSubmissionCancelLink");
         cancelLinkButton.Click += (_, _) =>
         {
             linkAddress.Text = string.Empty;
+            linkText.Text = string.Empty;
             linkStatus.Text = string.Empty;
             linkPanel.Visibility = Visibility.Collapsed;
         };
+        linkPanel.Children.Add(linkText);
         linkPanel.Children.Add(linkAddress);
         linkPanel.Children.Add(insertLinkButton);
         linkPanel.Children.Add(cancelLinkButton);
@@ -2512,6 +2560,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         toolbar.Children.Insert(3, linkButton);
 
         var content = new StackPanel { Spacing = 8, MinWidth = 360 };
+        content.Children.Add(Text("Submission text", 13, true));
         content.Children.Add(toolbarScroll);
         content.Children.Add(linkPanel);
         content.Children.Add(linkStatus);
@@ -2528,81 +2577,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             XamlRoot = _root.XamlRoot,
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
-        await editor.EnsureCoreWebView2Async();
-        editor.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-        editor.CoreWebView2.Settings.IsStatusBarEnabled = false;
-        editor.CoreWebView2.Settings.AreDevToolsEnabled = false;
-        editor.CoreWebView2.NavigationStarting += (_, args) =>
-        {
-            if (!string.Equals(args.Uri, "about:blank", StringComparison.OrdinalIgnoreCase)) args.Cancel = true;
-        };
-        editor.CoreWebView2.NavigationCompleted += async (_, _) =>
-        {
-            try { await editor.ExecuteScriptAsync("document.getElementById('submissionEditor').focus();"); }
-            catch (Exception ex) { App.WriteStartupLog("Could not focus the text-submission editor.", ex); }
-        };
-        editor.Loaded += async (_, _) =>
-        {
-            try { await editor.ExecuteScriptAsync("document.getElementById('submissionEditor').focus();"); }
-            catch (Exception ex) { App.WriteStartupLog("Could not focus the loaded text-submission editor.", ex); }
-        };
-        var darkTheme = _highContrastEnabled ? "high-contrast" : _root.ActualTheme == ElementTheme.Dark ? "dark" : "light";
-        var editorHtml = """
-        <!doctype html>
-        <html lang="en" data-theme="__EDITOR_THEME__"><head><meta charset="utf-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-        <style>
-        html,body { box-sizing:border-box; width:100%; min-height:100%; margin:0; }
-        body { padding:10px; background:Canvas; color:CanvasText; font:15px "Segoe UI",sans-serif; }
-        #submissionEditor { min-height:198px; outline:none; overflow-wrap:anywhere; }
-        #submissionEditor:empty::before { content:attr(data-placeholder); color:GrayText; pointer-events:none; }
-        html[data-theme="light"] body { color-scheme:light; }
-        html[data-theme="dark"] body { color-scheme:dark; }
-        html[data-theme="high-contrast"] body { color-scheme:light dark; forced-color-adjust:auto; }
-        a { color:LinkText; text-decoration:underline; }
-        </style></head><body><div id="submissionEditor" contenteditable="true" role="textbox" aria-label="Text submission" aria-multiline="true" data-placeholder="Enter your submission…"></div>
-        <script>
-        const editor=document.getElementById('submissionEditor');
-        editor.addEventListener('paste',event=>{
-          event.preventDefault();
-          const text=event.clipboardData?.getData('text/plain')||'';
-          if(text)document.execCommand('insertText',false,text);
-        });
-        editor.addEventListener('drop',event=>event.preventDefault());
-        window.getSubmission=()=>{
-          const escapeText=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          const serialize=node=>{
-            if(node.nodeType===Node.TEXT_NODE)return escapeText(node.nodeValue||'');
-            if(node.nodeType!==Node.ELEMENT_NODE)return '';
-            const children=Array.from(node.childNodes).map(serialize).join('');
-            const tag=node.tagName.toLowerCase();
-            if(tag==='br')return '<br>';
-            if(tag==='b'||tag==='strong')return '<strong>'+children+'</strong>';
-            if(tag==='i'||tag==='em')return '<em>'+children+'</em>';
-            if(tag==='u')return '<u>'+children+'</u>';
-            if(tag==='a'){
-              const href=node.getAttribute('href')||'';
-              try{const url=new URL(href);if(url.protocol==='http:'||url.protocol==='https:')return '<a href="'+escapeText(url.href)+'">'+children+'</a>';}catch{}
-              return children;
-            }
-            if(tag==='ul')return '<ul>'+children+'</ul>';
-            if(tag==='ol')return '<ol>'+children+'</ol>';
-            if(tag==='li')return '<li>'+children+'</li>';
-            if(tag==='p'||tag==='div')return '<p>'+children+'</p>';
-            return children;
-          };
-          return {html:Array.from(editor.childNodes).map(serialize).join(''),text:editor.innerText||editor.textContent||''};
-        };
-        </script></body></html>
-""";
-        editor.NavigateToString(editorHtml.Replace("__EDITOR_THEME__", darkTheme, StringComparison.Ordinal));
+        dialog.Opened += (_, _) => editor.Focus(FocusState.Programmatic);
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.None) return;
-        var serialized = await editor.ExecuteScriptAsync("window.getSubmission()");
-        using var submissionDocument = JsonDocument.Parse(serialized);
-        var submission = submissionDocument.RootElement;
-        var body = submission.GetProperty("html").GetString() ?? string.Empty;
-        var plainText = submission.GetProperty("text").GetString() ?? string.Empty;
+        var body = SerializeTextSubmission(editor, out var plainText);
         if (string.IsNullOrWhiteSpace(plainText))
         {
             await ShowApiErrorAsync("Unable to submit text", "Enter a submission before posting.");
@@ -2618,7 +2596,73 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { await ShowApiErrorAsync("Unable to submit text", ex.Message); }
     }
 
-        private static string GetSubmissionMimeType(string filename) => Path.GetExtension(filename).ToLowerInvariant() switch
+    private static string SerializeTextSubmission(RichEditBox editor, out string plainText)
+    {
+        var storyLength = editor.Document.GetRange(0, 0).StoryLength;
+        plainText = editor.Document.GetRange(0, storyLength).Text;
+        var text = plainText.Replace("\r\n", "\r", StringComparison.Ordinal).TrimEnd('\r');
+        if (text.Length == 0) return string.Empty;
+        var html = new StringBuilder();
+        var position = 0;
+        var activeList = Microsoft.UI.Text.MarkerType.None;
+        foreach (var paragraph in text.Split('\r'))
+        {
+            var paragraphRange = editor.Document.GetRange(position, position + paragraph.Length);
+            var listType = paragraphRange.ParagraphFormat.ListType;
+            if (listType is not (Microsoft.UI.Text.MarkerType.Bullet or Microsoft.UI.Text.MarkerType.Arabic))
+                listType = Microsoft.UI.Text.MarkerType.None;
+            if (activeList != listType)
+            {
+                if (activeList != Microsoft.UI.Text.MarkerType.None)
+                    html.Append(activeList == Microsoft.UI.Text.MarkerType.Bullet ? "</ul>" : "</ol>");
+                if (listType != Microsoft.UI.Text.MarkerType.None)
+                    html.Append(listType == Microsoft.UI.Text.MarkerType.Bullet ? "<ul>" : "<ol>");
+                activeList = listType;
+            }
+            html.Append(listType == Microsoft.UI.Text.MarkerType.None ? "<p>" : "<li>");
+            string? runSignature = null;
+            var runText = new StringBuilder();
+            void FlushRun()
+            {
+                if (runText.Length == 0 || runSignature is null) return;
+                var parts = runSignature.Split('\u001f');
+                var link = parts[3];
+                if (link.Length > 0) html.Append("<a href=\"").Append(System.Net.WebUtility.HtmlEncode(link)).Append("\">");
+                if (parts[0] == "1") html.Append("<strong>");
+                if (parts[1] == "1") html.Append("<em>");
+                if (parts[2] == "1") html.Append("<u>");
+                html.Append(System.Net.WebUtility.HtmlEncode(runText.ToString()));
+                if (parts[2] == "1") html.Append("</u>");
+                if (parts[1] == "1") html.Append("</em>");
+                if (parts[0] == "1") html.Append("</strong>");
+                if (link.Length > 0) html.Append("</a>");
+                runText.Clear();
+            }
+            for (var index = 0; index < paragraph.Length; index++)
+            {
+                var range = editor.Document.GetRange(position + index, position + index + 1);
+                var format = range.CharacterFormat;
+                var link = range.Link ?? string.Empty;
+                if (!Uri.TryCreate(link, UriKind.Absolute, out var linkUri) ||
+                    linkUri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(linkUri.UserInfo)) link = string.Empty;
+                var signature = string.Join('\u001f',
+                    format.Bold == Microsoft.UI.Text.FormatEffect.On ? "1" : "0",
+                    format.Italic == Microsoft.UI.Text.FormatEffect.On ? "1" : "0",
+                    format.Underline != Microsoft.UI.Text.UnderlineType.None ? "1" : "0", link);
+                if (runSignature is not null && signature != runSignature) FlushRun();
+                runSignature = signature;
+                runText.Append(paragraph[index]);
+            }
+            FlushRun();
+            html.Append(listType == Microsoft.UI.Text.MarkerType.None ? "</p>" : "</li>");
+            position += paragraph.Length + 1;
+        }
+        if (activeList != Microsoft.UI.Text.MarkerType.None)
+            html.Append(activeList == Microsoft.UI.Text.MarkerType.Bullet ? "</ul>" : "</ol>");
+        return html.ToString();
+    }
+
+    private static string GetSubmissionMimeType(string filename) => Path.GetExtension(filename).ToLowerInvariant() switch
     {
         ".pdf" => "application/pdf",
         ".doc" => "application/msword",
@@ -2847,7 +2891,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     }
 
     private static void AddPostAttachmentPayload(
-        IDictionary<string, object> payload, PostAttachmentState attachments)
+        Dictionary<string, object> payload, PostAttachmentState attachments)
     {
         if (attachments.Files.Count > 0)
             payload["file-attachment"] = new Dictionary<string, object> { ["id"] = attachments.FileIds };
@@ -4853,7 +4897,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get,
-                "https://api.github.com/repos/tling0001/schoology-winui/releases/latest");
+                "https://api.github.com/repos/tling0001/classwire-winui-for-schoology/releases/latest");
             request.Headers.TryAddWithoutValidation("User-Agent", "ClassWire-WinUI-Updater");
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var response = await UpdateMetadataClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
@@ -5975,7 +6019,7 @@ try {{
         catch (Exception ex) { App.WriteStartupLog($"Could not save setting '{key}'.", ex); }
     }
 
-    private static UIElement GetOrCreateTemporaryView(IDictionary<string, UIElement> cache, string key, Func<UIElement> factory)
+    private static UIElement GetOrCreateTemporaryView(Dictionary<string, UIElement> cache, string key, Func<UIElement> factory)
     {
         if (cache.TryGetValue(key, out var cached)) return cached;
         var content = factory();
@@ -8536,7 +8580,7 @@ try {{
             await SaveOriginalMaterialAsync(originalUrl, name, mime);
     }
 
-    private string AttachmentGlyph(JsonElement attachment)
+    private static string AttachmentGlyph(JsonElement attachment)
     {
         var filename = ProfileValue(attachment, "filename", "fileName", "file_title", "fileTitle",
             "title", "name") ?? string.Empty;
@@ -8583,7 +8627,8 @@ try {{
                 embedContent.Children.Add(Text(name, 13, true));
                 embedButton.Content = embedContent;
                 AutomationProperties.SetName(embedButton, $"Open embedded content {name}");
-                var embeddedUrl = ExtractEmbeddedContentUrls(embedCode).FirstOrDefault();
+                var embeddedUrls = ExtractEmbeddedContentUrls(embedCode);
+                var embeddedUrl = embeddedUrls.Length > 0 ? embeddedUrls[0] : null;
                 if (embeddedUrl is null)
                 {
                     embedButton.IsEnabled = false;
@@ -8707,7 +8752,7 @@ try {{
         return "\uE8A5";
     }
 
-    private static IReadOnlyList<string> ExtractEmbeddedContentUrls(string? markup)
+    private static string[] ExtractEmbeddedContentUrls(string? markup)
     {
         if (string.IsNullOrWhiteSpace(markup)) return [];
         var decoded = System.Net.WebUtility.HtmlDecode(markup);
@@ -10515,7 +10560,7 @@ try {{
     {
         if (string.IsNullOrWhiteSpace(value)) return "—";
         var trimmed = value.Trim();
-        var suffix = trimmed.EndsWith("%", StringComparison.Ordinal) ? "%" : "";
+        var suffix = trimmed.EndsWith('%') ? "%" : "";
         var numericText = suffix.Length > 0 ? trimmed[..^1].Trim() : trimmed;
         if (decimal.TryParse(numericText, System.Globalization.NumberStyles.Number,
             System.Globalization.CultureInfo.InvariantCulture, out var number))
@@ -10824,7 +10869,7 @@ try {{
                     System.Globalization.CultureInfo.InvariantCulture))
                 .ToDictionary(group => group.Key,
                     group => ProfileValue(group.First().Data, "title", "name") ?? "Category");
-            IReadOnlyList<SchoologyApiRecord> assignments =
+            SchoologyApiRecord[] assignments =
                 SchoologyApiClient.ReadRecords(itemDocument.RootElement,
                     "assignment", "assignments", "grade_item", "grade_items")
                 .Select(record => new SchoologyApiRecord(record.Title, record.Subtitle, record.Data.Clone()))
@@ -10862,7 +10907,7 @@ try {{
                     }
                 }, initiallyExpanded: expandPeriods);
             }
-            if (assignments.Count == 0)
+            if (assignments.Length == 0)
                 rows.Children.Add(EmptyState("No graded items are available for this course."));
         }
         catch (Exception ex)
