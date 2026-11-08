@@ -744,18 +744,21 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
         if (Regex.IsMatch(path, @"^/people/?$", RegexOptions.IgnoreCase))
         {
-            ShowNativeSchoologyRoutePage("People", path);
+            await ShowPeopleDirectoryAsync();
             return true;
         }
 
-        var assignment = Regex.Match(path, @"^/(?:sections?|courses?)/(\d+)/assignments?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
-        var parentAssignment = Regex.Match(path, @"^/parents?/\d+/sections?/(\d+)/assignments?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        var assignment = Regex.Match(path, @"^/(?:sections?|courses?)/(\d+)/(assignments?|assessments?)/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        var parentAssignment = Regex.Match(path, @"^/parents?/\d+/sections?/(\d+)/(assignments?|assessments?)/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
         if (assignment.Success || parentAssignment.Success)
         {
             var match = assignment.Success ? assignment : parentAssignment;
             var sectionId = long.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-            var assignmentId = long.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
-            await ShowAssignmentDetailsAsync(sectionId, DeepLinkRecord("Assignment", assignmentId));
+            var isAssessment = match.Groups[2].Value.StartsWith("assessment", StringComparison.OrdinalIgnoreCase);
+            var itemId = long.Parse(match.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var item = DeepLinkRecord(isAssessment ? "Assessment" : "Assignment", itemId);
+            if (isAssessment) await ShowAssessmentDetailsAsync(sectionId, item);
+            else await ShowAssignmentDetailsAsync(sectionId, item);
             return true;
         }
         var discussion = Regex.Match(path, @"^/(sections?)/(\d+)/discussions?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
@@ -819,7 +822,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             ShowNativeExternalToolPage("Assessment", $"assignment/{assessment.Groups[2].Value}");
             return true;
         }
-        var globalAssignment = Regex.Match(path, @"^/(?:assignment|assignments)/(\d+)(?:/info)?$", RegexOptions.IgnoreCase);
+        var globalAssignment = Regex.Match(path, @"^/(?:assignment|assignments|assessment|assessments)/(\d+)(?:/info)?$", RegexOptions.IgnoreCase);
         if (globalAssignment.Success)
         {
             var assignmentId = long.Parse(globalAssignment.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
@@ -832,7 +835,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                         .FirstOrDefault(item => JsonLong(item.Data, "id", "assignment_id", "assignmentId") == assignmentId);
                     if (match is not null)
                     {
-                        await ShowAssignmentDetailsAsync(candidate.Id, match);
+                        var type = (ProfileValue(match.Data, "type", "template_type", "type_name") ?? string.Empty).ToLowerInvariant();
+                        if (path.Contains("assessment", StringComparison.OrdinalIgnoreCase) ||
+                            type.Contains("assessment") || type is "quiz" or "test")
+                            await ShowAssessmentDetailsAsync(candidate.Id, match);
+                        else
+                            await ShowAssignmentDetailsAsync(candidate.Id, match);
                         return true;
                     }
                 }
@@ -4186,9 +4194,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         { await ShowAssignmentDetailsAsync(sectionId, record); return; }
         if (type is "assessment" or "assessment_v2" or "managed_assessment" or "quiz" or "test")
         {
-            if (assignmentId > 0)
-            { await OpenSharedWebViewAsync($"https://app.schoology.com/assignment/{assignmentId}", record.Title,
-                allowLtiExternal: true, onBack: () => ShowHome(returnSection)); return; }
+            if (assignmentId > 0 && sectionId > 0)
+            { await ShowAssessmentDetailsAsync(sectionId, record); return; }
         }
         if ((type is "external_tool" or "lti" or "scorm") && sectionId > 0 && assignmentId > 0)
         {
@@ -4610,8 +4617,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             case "assessment" when realm == "sections" && realmId > 0:
             case "assessment_v2" when realm == "sections" && realmId > 0:
             case "managed_assessment" when realm == "sections" && realmId > 0:
-                await OpenSharedWebViewAsync(new Uri(new Uri(_auth.WebSessionUrl), $"assignment/{targetId}").AbsoluteUri,
-                    title, onBack: () => ShowHome("Notifications"));
+                await ShowAssessmentDetailsAsync(realmId, new SchoologyApiRecord(title, string.Empty, argument.Clone()));
                 return true;
             case "discussion" when realmId > 0 && (realm is "sections" or "groups" or "schools"):
                 await ShowDiscussionDetailsAsync(realm == "groups" ? "Groups" :
@@ -6676,7 +6682,10 @@ try {{
         return label;
     }
 
-    private async Task ShowAssignmentDetailsAsync(long sectionId, SchoologyApiRecord record)
+    private Task ShowAssessmentDetailsAsync(long sectionId, SchoologyApiRecord record) =>
+        ShowAssignmentDetailsAsync(sectionId, record, isAssessment: true);
+
+    private async Task ShowAssignmentDetailsAsync(long sectionId, SchoologyApiRecord record, bool isAssessment = false)
     {
         try
         {
@@ -6706,16 +6715,16 @@ try {{
                 else gradeItem = gradeItemRoot.Clone();
             }
             catch (Exception ex) { App.WriteStartupLog("Could not resolve the assignment grade-item metadata; using the assignment object.", ex); }
-            var submissionsEnabled = JsonBoolean(assignment,
+            var submissionsEnabled = !isAssessment && (JsonBoolean(assignment,
                 "allow_dropbox", "allowDropbox", "allow_submission", "allowSubmission") ||
-                JsonBoolean(gradeItem, "allow_dropbox", "allowDropbox", "allow_submission", "allowSubmission");
+                JsonBoolean(gradeItem, "allow_dropbox", "allowDropbox", "allow_submission", "allowSubmission"));
             var submissionLocked = JsonBoolean(assignment, "dropbox_locked", "dropboxLocked", "submission_locked", "submissionLocked") ||
                 JsonBoolean(gradeItem, "dropbox_locked", "dropboxLocked", "submission_locked", "submissionLocked");
             submissionsEnabled &= !submissionLocked;
             var gradeItemId = JsonLong(gradeItem, "id", "grade_item_id", "gradeItemId", "gradeitem_id");
             if (gradeItemId <= 0) gradeItemId = JsonLong(assignment, "grade_item_id", "gradeItemId");
             if (gradeItemId <= 0) gradeItemId = assignmentId;
-            var commentsEnabled = JsonBoolean(assignment,
+            var commentsEnabled = !isAssessment && JsonBoolean(assignment,
                 "allow_discussion", "allowDiscussion", "allow_comments", "allowComments",
                 "comments_enabled", "commentsEnabled");
             _activeAssignmentSectionId = sectionId;
@@ -6726,7 +6735,7 @@ try {{
             SetTitleBarCreateContext(string.Empty);
             var assignmentType = (ProfileValue(assignment, "assignment_type", "assignmentType", "type") ?? "").ToLowerInvariant();
             var launchUrl = ProfileValue(assignment, "web_url", "webUrl", "launch_url", "launchUrl", "url", "href", "location");
-            if ((assignmentType is "lti" or "lti_submission") && !string.IsNullOrWhiteSpace(launchUrl))
+            if (!isAssessment && (assignmentType is "lti" or "lti_submission") && !string.IsNullOrWhiteSpace(launchUrl))
             {
                 await OpenSharedWebViewAsync(launchUrl, title, allowLtiExternal: true,
                     onBack: () => ReturnFromAssignment(sectionId));
@@ -6739,6 +6748,41 @@ try {{
                 if (!string.IsNullOrWhiteSpace(due)) AddProfileField(info, "Due date", FormatAssignmentDueDate(due));
                 if (!string.IsNullOrWhiteSpace(description)) info.Children.Add(CreateRichContent(description, 14));
                 if (!string.IsNullOrWhiteSpace(points)) AddProfileField(info, "Points", points);
+                if (isAssessment)
+                {
+                    var timeLimit = ProfileValue(assignment, "time_limit", "timeLimit", "duration", "duration_minutes");
+                    var attempts = ProfileValue(assignment, "attempts_allowed", "attemptsAllowed", "max_attempts", "maxAttempts");
+                    var opens = ProfileValue(assignment, "available_from", "availableFrom", "start_date", "startDate");
+                    var closes = ProfileValue(assignment, "available_until", "availableUntil", "end_date", "endDate");
+                    if (!string.IsNullOrWhiteSpace(timeLimit)) AddProfileField(info, "Time limit", timeLimit);
+                    if (!string.IsNullOrWhiteSpace(attempts)) AddProfileField(info, "Attempts allowed", attempts);
+                    if (!string.IsNullOrWhiteSpace(opens)) AddProfileField(info, "Available from", FormatAssignmentDueDate(opens));
+                    if (!string.IsNullOrWhiteSpace(closes)) AddProfileField(info, "Available until", FormatAssignmentDueDate(closes));
+                    var start = new Button
+                    {
+                        Content = "Open assessment",
+                        Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        Padding = new Thickness(16, 9, 16, 9)
+                    };
+                    AutomationProperties.SetAutomationId(start, "AssessmentOpenButton");
+                    AutomationProperties.SetName(start, "Open assessment in the default browser");
+                    start.Click += async (_, _) =>
+                    {
+                        var candidate = !string.IsNullOrWhiteSpace(launchUrl) ? launchUrl :
+                            $"https://app.schoology.com/assignment/{assignmentId}";
+                        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var assessmentUri) ||
+                            assessmentUri.Scheme is not ("https" or "http") ||
+                            !string.IsNullOrEmpty(assessmentUri.UserInfo))
+                        {
+                            await ShowApiErrorAsync("Unable to open assessment", "Schoology returned an invalid assessment URL.");
+                            return;
+                        }
+                        if (!await Launcher.LaunchUriAsync(assessmentUri))
+                            await ShowApiErrorAsync("Unable to open assessment", "Windows could not open the assessment in your default browser.");
+                    };
+                    info.Children.Add(start);
+                }
                 if (info.Children.Count == 0) info.Children.Add(EmptyState("No additional assignment information was provided."));
                 return new ScrollViewer { Content = info, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             }
@@ -8350,9 +8394,7 @@ try {{
             {
                 if (materialId > 0)
                 {
-                    await OpenSharedWebViewAsync($"https://app.schoology.com/assignment/{materialId}", title,
-                        allowLtiExternal: true,
-                        onBack: () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
+                    await ShowAssessmentDetailsAsync(sectionId, record);
                     return;
                 }
             }
@@ -10105,6 +10147,7 @@ try {{
         messagesHeader.Children.Add(createMessageButton);
         left.Children.Add(messagesHeader);
 
+        var currentMode = "Inbox";
         var modes = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Stretch };
         foreach (var label in new[] { "Inbox", "Unread", "Sent" })
         {
@@ -10149,7 +10192,6 @@ try {{
 
         IReadOnlyList<SchoologyApiRecord> inboxRecords = [];
         IReadOnlyList<SchoologyApiRecord> sentRecords = [];
-        var currentMode = "Inbox";
         bool loading = false;
         bool messageSelected = false;
         bool mailboxLoadFailed = false;
@@ -11218,8 +11260,7 @@ try {{
             var type = (ProfileValue(assignment, "type", "template_type", "type_name") ?? "assignment").ToLowerInvariant();
             var record = new SchoologyApiRecord(title, "", assignment.Clone());
             if (type is "assessment" or "assessment_v2" or "managed_assessment" or "quiz" or "test")
-                await OpenSharedWebViewAsync($"https://app.schoology.com/assignment/{id}", title,
-                    allowLtiExternal: true, onBack: () => ShowHome("Grades"));
+                await ShowAssessmentDetailsAsync(sectionId, record);
             else
                 await ShowAssignmentDetailsAsync(sectionId, record);
         };
@@ -11957,6 +11998,104 @@ try {{
         {
             _sharedWebViewGate.Release();
         }
+    }
+
+    private async Task ShowPeopleDirectoryAsync()
+    {
+        var session = _session ?? throw new InvalidOperationException("Sign in to open the People directory.");
+        var root = new Grid { RowSpacing = 12, Margin = new Thickness(20) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var header = new Grid { ColumnSpacing = 12 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.Children.Add(Text("People", 23, true));
+        var refresh = new Button { Content = new SymbolIcon(Symbol.Refresh), Padding = new Thickness(9) };
+        AutomationProperties.SetName(refresh, "Refresh People directory");
+        refresh.Click += async (_, _) => await ShowPeopleDirectoryAsync();
+        Grid.SetColumn(refresh, 1);
+        header.Children.Add(refresh);
+        root.Children.Add(header);
+        var body = new StackPanel { Spacing = 10 };
+        body.Children.Add(LoadingStatus("Loading the school directory…"));
+        var scroll = new ScrollViewer { Content = body,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        Grid.SetRow(scroll, 1);
+        root.Children.Add(scroll);
+        if (_sectionFrame is not null) NavigateMainSection(root, "People");
+        else Reset(BuildApplicationShell("People", root));
+        try
+        {
+            var records = new List<SchoologyApiRecord>();
+            using (var first = await _api.GetPeopleAsync(session, 0, 200))
+            {
+                records.AddRange(SchoologyApiClient.ReadRecords(first.RootElement, "user", "users"));
+                var expected = Math.Clamp(JsonLong(first.RootElement, "total"), records.Count, 1000);
+                for (var start = records.Count; start < expected; start += 200)
+                {
+                    using var page = await _api.GetPeopleAsync(session, start, 200);
+                    var next = SchoologyApiClient.ReadRecords(page.RootElement, "user", "users");
+                    if (next.Count == 0) break;
+                    records.AddRange(next);
+                }
+            }
+            if (records.Count == 0) records = await LoadPeopleFromEnrollmentsAsync(session);
+            body.Children.Clear();
+            body.Children.Add(Text($"{records.Count:N0} people", 12));
+            body.Children.Add(BuildMembersList(records, "school directory"));
+        }
+        catch (Exception ex) when (ex.Message.Contains("403", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("forbidden", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var records = await LoadPeopleFromEnrollmentsAsync(session);
+                body.Children.Clear();
+                body.Children.Add(Text($"{records.Count:N0} people from your course enrollments", 12));
+                body.Children.Add(BuildMembersList(records, "school directory"));
+            }
+            catch (Exception fallbackError)
+            {
+                body.Children.Clear();
+                body.Children.Add(EmptyState("The People directory is unavailable for this account.", fallbackError.Message));
+            }
+        }
+        catch (Exception ex)
+        {
+            body.Children.Clear();
+            body.Children.Add(EmptyState("Unable to load the People directory.", ex.Message));
+        }
+    }
+
+    private async Task<List<SchoologyApiRecord>> LoadPeopleFromEnrollmentsAsync(
+        SchoologyAuthService.Session session)
+    {
+        var people = new Dictionary<long, SchoologyApiRecord>();
+        foreach (var course in _courses.Take(30))
+        {
+            try
+            {
+                using var document = await _api.GetSectionEnrollmentsAsync(session, course.Id);
+                foreach (var enrollment in SchoologyApiClient.ReadRecords(document.RootElement, "enrollment", "enrollments"))
+                {
+                    var user = enrollment.Data.ValueKind == JsonValueKind.Object &&
+                        enrollment.Data.TryGetProperty("user", out var nested) ? nested : enrollment.Data;
+                    var id = JsonLong(enrollment.Data, "uid", "user_id", "userId", "id");
+                    if (id <= 0) id = JsonLong(user, "id", "uid", "user_id");
+                    if (id <= 0 || people.ContainsKey(id)) continue;
+                    var name = ProfileValue(user, "name_display", "display_name", "name") ??
+                        string.Join(" ", new[] { ProfileValue(user, "name_first", "first_name"),
+                            ProfileValue(user, "name_last", "last_name") }
+                            .Where(value => !string.IsNullOrWhiteSpace(value)));
+                    people[id] = new SchoologyApiRecord(
+                        string.IsNullOrWhiteSpace(name) ? $"Person {id}" : name,
+                        string.Empty, enrollment.Data.Clone());
+                }
+            }
+            catch (Exception ex) { App.WriteStartupLog($"Could not load People directory enrollments for section {course.Id}.", ex); }
+        }
+        return people.Values.ToList();
     }
 
     private void ShowUserProfile(long userId)

@@ -24,6 +24,16 @@ internal sealed class SchoologyApiClient
         SchoologyAuthService.Session session, CancellationToken cancellationToken = default) =>
         GetEntitiesAsync(session, $"users/{session.UserId}/groups", ["group", "groups"], cancellationToken);
 
+    internal Task<JsonDocument> GetPeopleAsync(
+        SchoologyAuthService.Session session, int start = 0, int limit = 200,
+        CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, "users",
+            new Dictionary<string, string>
+            {
+                ["start"] = Math.Max(0, start).ToString(CultureInfo.InvariantCulture),
+                ["limit"] = Math.Clamp(limit, 1, 200).ToString(CultureInfo.InvariantCulture)
+            }, cancellationToken);
+
     internal Task<JsonDocument> GetProfileAsync(
         SchoologyAuthService.Session session, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, "users/me", null, cancellationToken);

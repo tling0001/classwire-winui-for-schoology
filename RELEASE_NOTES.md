@@ -1,3 +1,10 @@
+## [2026.10.0-port.109] - 2026-11-08
+
+- Fix the message deep-link mailbox initialization compiler error that failed both x64 and ARM64 publish jobs.
+- Implement the native People directory using Schoology's paginated users endpoint, with enrollment-based fallback when directory access is forbidden.
+- Route course and global assessment links to a native assessment details screen with available timing/attempt metadata and a validated external launch action; assessment links no longer open the authenticated WebView.
+- Update the Windows app icon artwork so the C mark sits on a white circle interior while the area outside the blue ring remains transparent.
+
 ## [2026.10.0-port.108] - 2026-11-08
 
 - Fix the duplicate Schoology-host helper that blocked both x64 and ARM64 publish jobs.
