@@ -1,3 +1,10 @@
+## [2026.10.0-port.108] - 2026-11-08
+
+- Fix the duplicate Schoology-host helper that blocked both x64 and ARM64 publish jobs.
+- Route incoming Schoology deep links to native WinUI course, group, school, profile, grades, messages, assignment, discussion, event, and page views.
+- Replace the course-page WebView with native rich-content rendering; external course apps and learning tools launch outside the authenticated WebView.
+- Keep unimplemented destinations on an explicit native ClassWire route screen rather than silently falling back to authenticated web content.
+
 ## [2026.10.0-port.107] - 2026-11-08
 
 - Add a reusable native WinUI rich-text composer to discussion and event descriptions, both update composers, and outgoing Messages; send serialized HTML while retaining plain-text validation and existing attachments.

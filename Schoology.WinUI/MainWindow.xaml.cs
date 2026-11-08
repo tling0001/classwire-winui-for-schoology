@@ -125,6 +125,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private readonly ConcurrentQueue<string> _pendingProtocolUrls = new();
     private bool _protocolDispatchReady;
     private bool _processingProtocolUrls;
+    private long _pendingProtocolMessageId;
+    private bool _pendingProtocolMessageSent;
+    private string? _pendingProtocolMailbox;
 
     private sealed record UpdateReleaseInfo(string Tag, string Version, string AssetName, Uri DownloadUri, long Size, string? Digest);
     private sealed record UpdateCheckState(long LastSuccessfulCheckUnixMilliseconds, string LastRemoteTag);
@@ -469,11 +472,6 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         return true;
     }
 
-    private static bool IsSchoologyWebHost(string host) =>
-        host.Equals("lms.lausd.net", StringComparison.OrdinalIgnoreCase) ||
-        host.Equals("schoology.com", StringComparison.OrdinalIgnoreCase) ||
-        host.EndsWith(".schoology.com", StringComparison.OrdinalIgnoreCase);
-
     private async Task ProcessPendingProtocolUrlsAsync()
     {
         if (!_protocolDispatchReady || _processingProtocolUrls) return;
@@ -513,21 +511,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (string.IsNullOrWhiteSpace(requestToken))
                 throw new InvalidOperationException("The Schoology sign-in callback did not include a request token.");
             _session = await _auth.CompleteSchoolBrowserSignInAsync(requestToken);
-            ShowHome();
             await LoadAccountCollectionsAsync();
+            ShowHome();
             return;
         }
         if (host == "lti-assignment")
         {
-            var dialog = new ContentDialog
-            {
-                Title = "Unable to open LTI assignment",
-                Content = query.Get("error-message") ?? "Schoology could not open this LTI assignment.",
-                CloseButtonText = "OK",
-                XamlRoot = _root.XamlRoot,
-                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
-            };
-            await dialog.ShowAsync();
+            await ShowApiErrorAsync("Unable to open LTI assignment",
+                query.Get("error-message") ?? "Schoology could not open this LTI assignment.");
             return;
         }
         if (host == "link")
@@ -535,7 +526,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (!TryGetSafeExternalUri(query.Get("url"), out var destination))
                 throw new InvalidOperationException("The link does not contain a valid HTTP or HTTPS destination.");
             if (IsSchoologyWebHost(destination!.Host) && _session is not null)
-                await OpenSharedWebViewAsync(destination.AbsoluteUri, "Schoology Link");
+            {
+                if (!await TryRouteNativeSchoologyWebUrlAsync(destination))
+                    ShowNativeSchoologyRoutePage("Schoology link", destination.AbsolutePath);
+            }
             else if (!await Launcher.LaunchUriAsync(destination!))
                 throw new InvalidOperationException("Windows could not open the requested link.");
             return;
@@ -547,30 +541,309 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     await Launcher.LaunchUriAsync(destination!)) return;
             throw new InvalidOperationException("Neither the document link nor its fallback could be opened.");
         }
-        if (host is "lti" or "scorm" or "external-tool")
-        {
-            var parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2 && long.TryParse(parts[0], out var sectionId) && sectionId > 0 &&
-                long.TryParse(parts[1], out var materialId) && materialId > 0)
-            {
-                var title = host switch { "lti" => "LTI Assignment", "scorm" => "SCORM", _ => "External Tool" };
-                await OpenSharedWebViewAsync(
-                    $"https://app.schoology.com/section/{sectionId}/{host}/{materialId}",
-                    title, allowLtiExternal: true);
-                return;
-            }
-            throw new InvalidOperationException($"The {host} link does not contain a valid section and material ID.");
-        }
 
-        var path = host + uri.AbsolutePath;
-        if (string.IsNullOrWhiteSpace(path))
-            throw new InvalidOperationException("The Schoology link does not contain a destination.");
-        var builder = new UriBuilder("https", "app.schoology.com")
+        var path = "/" + host + uri.AbsolutePath;
+        var target = new UriBuilder("https", "app.schoology.com")
         {
             Path = path,
             Query = uri.Query.TrimStart('?')
+        }.Uri;
+        if (!await TryRouteNativeSchoologyPathAsync(path, target))
+            ShowNativeSchoologyRoutePage("Schoology link", path);
+    }
+
+    private static SchoologyApiRecord DeepLinkRecord(string title, long id)
+    {
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new { id }));
+        return new SchoologyApiRecord(title, string.Empty, document.RootElement.Clone());
+    }
+
+    private static JsonElement UnwrapEntity(JsonElement root, string property)
+    {
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(property, out var nested) && nested.ValueKind == JsonValueKind.Object)
+            return nested;
+        return root;
+    }
+
+    private static SchoologyEntity CreateDeepLinkEntity(long id, JsonElement data, string fallbackName)
+    {
+        var name = ProfileValue(data, "title", "name", "section_title", "sectionTitle",
+            "course_title", "courseTitle", "group_title", "groupTitle") ?? fallbackName;
+        var subtitle = ProfileValue(data, "course_code", "courseCode", "section_code",
+            "sectionCode", "school_title", "schoolTitle", "description") ?? string.Empty;
+        var image = ProfileValue(data, "picture_url", "pictureUrl", "image_url", "imageUrl",
+            "course_image", "courseImage", "photo_url", "photoUrl");
+        return new SchoologyEntity(id, name, subtitle, image, data.Clone());
+    }
+
+    private async Task<SchoologyEntity> ResolveDeepLinkEntityAsync(string kind, long id)
+    {
+        if (id <= 0) throw new InvalidOperationException("The Schoology link contains an invalid destination ID.");
+        var existing = kind switch
+        {
+            "Courses" => _courses.FirstOrDefault(item => item.Id == id),
+            "Groups" => _groups.FirstOrDefault(item => item.Id == id),
+            _ => null
         };
-        await OpenSharedWebViewAsync(builder.Uri.AbsoluteUri, "Schoology Link", allowLtiExternal: true);
+        if (existing is not null) return existing;
+        var session = _session ?? throw new InvalidOperationException("Sign in to open this Schoology destination.");
+        if (kind == "Courses")
+        {
+            using var document = await _api.GetSectionDetailsAsync(session, id);
+            var section = UnwrapEntity(document.RootElement, "section");
+            return CreateDeepLinkEntity(id, section, $"Course {id}");
+        }
+        if (kind == "Groups")
+        {
+            var groups = await _api.GetGroupsAsync(session);
+            var group = groups.FirstOrDefault(item => item.Id == id);
+            if (group is not null) return group;
+            throw new InvalidOperationException("This group is not available to the signed-in account.");
+        }
+        if (kind == "School Profile")
+        {
+            using var document = await _api.GetEntityTabAsync(session, kind, id, "Info");
+            var school = UnwrapEntity(document.RootElement, "school");
+            return CreateDeepLinkEntity(id, school, $"School {id}");
+        }
+        throw new InvalidOperationException("This Schoology destination type is not supported.");
+    }
+
+    private void ShowNativeSchoologyRoutePage(string title, string path)
+    {
+        var panel = new StackPanel { Spacing = 10, Margin = new Thickness(24), MaxWidth = 760 };
+        panel.Children.Add(Text(title, 22, true));
+        panel.Children.Add(Text("This link was received and opened in ClassWire, but this destination does not have a native WinUI screen yet.", 14));
+        var route = Text(path, 12);
+        route.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+        route.TextWrapping = TextWrapping.Wrap;
+        panel.Children.Add(route);
+        panel.Children.Add(Action("Back to Home", (_, _) => ShowHome("Recent Activity")));
+        if (_sectionFrame is not null) NavigateMainSection(panel, title);
+        else Reset(BuildApplicationShell(title, panel));
+    }
+
+    private void ShowNativeExternalToolPage(string title, string route)
+    {
+        var panel = new StackPanel { Spacing = 12, Margin = new Thickness(24), MaxWidth = 720 };
+        panel.Children.Add(Text(title, 22, true));
+        panel.Children.Add(Text("This activity is provided by an external learning tool. ClassWire keeps the destination page native and opens the tool in your default browser when you continue.", 14));
+        var launchUri = new Uri("https://app.schoology.com/" + route.TrimStart('/'));
+        var launch = new Button { Content = "Open external activity", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+        AutomationProperties.SetName(launch, "Open external learning activity in browser");
+        launch.Click += async (_, _) =>
+        {
+            if (!await Launcher.LaunchUriAsync(launchUri))
+                await ShowApiErrorAsync("Unable to open external activity", "Windows could not open the external activity.");
+        };
+        panel.Children.Add(launch);
+        panel.Children.Add(Action("Back to Home", (_, _) => ShowHome("Recent Activity")));
+        if (_sectionFrame is not null) NavigateMainSection(panel, title);
+        else Reset(BuildApplicationShell(title, panel));
+    }
+
+    private async Task<bool> TryRouteNativeSchoologyWebUrlAsync(Uri destination)
+    {
+        if (!IsSchoologyWebHost(destination.Host)) return false;
+        return await TryRouteNativeSchoologyPathAsync(destination.AbsolutePath, destination);
+    }
+
+    private async Task<bool> TryRouteNativeSchoologyPathAsync(string path, Uri source)
+    {
+        path = "/" + path.Trim('/');
+        var session = _session;
+        if (session is null) return false;
+
+        var courseTab = Regex.Match(path, @"^/courses?/(\d+)/(student_grades|updates|members)/?$", RegexOptions.IgnoreCase);
+        if (courseTab.Success)
+        {
+            var id = long.Parse(courseTab.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var tab = courseTab.Groups[2].Value.ToLowerInvariant() switch
+            {
+                "student_grades" => "Grades",
+                "updates" => "Updates",
+                _ => "Members"
+            };
+            ShowThreePane("Courses", await ResolveDeepLinkEntityAsync("Courses", id), tab);
+            return true;
+        }
+
+        var course = Regex.Match(path, @"^/(?:course|courses|section|sections)/(\d+)(?:/materials(?:/gp/(\d+))?)?/?$", RegexOptions.IgnoreCase);
+        if (course.Success)
+        {
+            var id = long.Parse(course.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            ShowThreePane("Courses", await ResolveDeepLinkEntityAsync("Courses", id), "Materials");
+            return true;
+        }
+
+        var groupMembers = Regex.Match(path, @"^/groups?/(\d+)/members/?$", RegexOptions.IgnoreCase);
+        var group = Regex.Match(path, @"^/groups?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        if (groupMembers.Success || group.Success)
+        {
+            var id = long.Parse((groupMembers.Success ? groupMembers : group).Groups[1].Value,
+                System.Globalization.CultureInfo.InvariantCulture);
+            ShowThreePane("Groups", await ResolveDeepLinkEntityAsync("Groups", id),
+                groupMembers.Success ? "Members" : "Updates");
+            return true;
+        }
+
+        var school = Regex.Match(path, @"^/schools?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        if (school.Success)
+        {
+            var id = long.Parse(school.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            ShowThreePane("School Profile", await ResolveDeepLinkEntityAsync("School Profile", id), "Updates");
+            return true;
+        }
+
+        var profile = Regex.Match(path, @"^/(?:user|users|profile|profiles)/(?:view/)?(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        if (profile.Success)
+        {
+            ShowUserProfile(long.Parse(profile.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture));
+            return true;
+        }
+
+        if (Regex.IsMatch(path, @"^/messages(?:/sent)?/?$", RegexOptions.IgnoreCase))
+        {
+            _pendingProtocolMailbox = path.Contains("/sent", StringComparison.OrdinalIgnoreCase) ? "Sent" : "Inbox";
+            _pendingProtocolMessageId = 0;
+            ShowHome("Messages");
+            return true;
+        }
+        var message = Regex.Match(path, @"^/messages/view/(\d+)/?$", RegexOptions.IgnoreCase);
+        if (message.Success)
+        {
+            _pendingProtocolMessageId = long.Parse(message.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            _pendingProtocolMessageSent = false;
+            _pendingProtocolMailbox = "Inbox";
+            ShowHome("Messages");
+            return true;
+        }
+
+        if (Regex.IsMatch(path, @"^/home/course-dashboard(?:/.*)?$", RegexOptions.IgnoreCase) ||
+            Regex.IsMatch(path, @"^/home/recent-activity/?$", RegexOptions.IgnoreCase) ||
+            Regex.IsMatch(path, @"^/home/?$", RegexOptions.IgnoreCase))
+        {
+            ShowHome("Recent Activity");
+            return true;
+        }
+        if (Regex.IsMatch(path, @"^/grades/grades/?$", RegexOptions.IgnoreCase))
+        {
+            ShowHome("Grades");
+            return true;
+        }
+        if (Regex.IsMatch(path, @"^/resources(?:/.*)?$", RegexOptions.IgnoreCase))
+        {
+            ShowHome("Resources");
+            return true;
+        }
+        if (Regex.IsMatch(path, @"^/settings/account/?$", RegexOptions.IgnoreCase))
+        {
+            ShowHome("Settings");
+            return true;
+        }
+        if (Regex.IsMatch(path, @"^/people/?$", RegexOptions.IgnoreCase))
+        {
+            ShowNativeSchoologyRoutePage("People", path);
+            return true;
+        }
+
+        var assignment = Regex.Match(path, @"^/(?:sections?|courses?)/(\d+)/assignments?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        var parentAssignment = Regex.Match(path, @"^/parents?/\d+/sections?/(\d+)/assignments?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        if (assignment.Success || parentAssignment.Success)
+        {
+            var match = assignment.Success ? assignment : parentAssignment;
+            var sectionId = long.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var assignmentId = long.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            await ShowAssignmentDetailsAsync(sectionId, DeepLinkRecord("Assignment", assignmentId));
+            return true;
+        }
+        var discussion = Regex.Match(path, @"^/(sections?)/(\d+)/discussions?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        var groupDiscussion = Regex.Match(path, @"^/groups?/(\d+)/discussions?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        if (discussion.Success || groupDiscussion.Success)
+        {
+            var match = discussion.Success ? discussion : groupDiscussion;
+            var kind = discussion.Success ? "Courses" : "Groups";
+            var entityId = long.Parse(match.Groups[2 - (discussion.Success ? 0 : 1)].Value,
+                System.Globalization.CultureInfo.InvariantCulture);
+            var itemId = long.Parse(match.Groups[3 - (discussion.Success ? 0 : 1)].Value,
+                System.Globalization.CultureInfo.InvariantCulture);
+            await ShowDiscussionDetailsAsync(kind, entityId, DeepLinkRecord("Discussion", itemId));
+            return true;
+        }
+        var eventRoute = Regex.Match(path, @"^/(sections?)/(\d+)/events?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        var groupEvent = Regex.Match(path, @"^/groups?/(\d+)/events?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        if (eventRoute.Success || groupEvent.Success)
+        {
+            var match = eventRoute.Success ? eventRoute : groupEvent;
+            var kind = eventRoute.Success ? "Courses" : "Groups";
+            var entityId = long.Parse(match.Groups[2 - (eventRoute.Success ? 0 : 1)].Value,
+                System.Globalization.CultureInfo.InvariantCulture);
+            var itemId = long.Parse(match.Groups[3 - (eventRoute.Success ? 0 : 1)].Value,
+                System.Globalization.CultureInfo.InvariantCulture);
+            await ShowEventDetailsAsync(kind, entityId, DeepLinkRecord("Event", itemId));
+            return true;
+        }
+        var page = Regex.Match(path, @"^/(?:sections?|courses?)/(\d+)/pages?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        if (page.Success)
+        {
+            var sectionId = long.Parse(page.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var pageId = long.Parse(page.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            await ShowCoursePageAsync(sectionId, DeepLinkRecord("Page", pageId));
+            return true;
+        }
+        var courseApp = Regex.Match(path, @"^/(?:sections?|courses?)/(\d+)/(?:applications?|application)/(\d+)/?$", RegexOptions.IgnoreCase);
+        if (courseApp.Success)
+        {
+            var sectionId = long.Parse(courseApp.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var appId = long.Parse(courseApp.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var entity = await ResolveDeepLinkEntityAsync("Courses", sectionId);
+            await LaunchCourseAppAsync(sectionId, appId, "Course app", entity);
+            return true;
+        }
+        var tool = Regex.Match(path, @"^/(?:course|courses|section|sections)/(\d+)/(external-tool|lti|scorm)/(\d+)/?$", RegexOptions.IgnoreCase);
+        if (tool.Success)
+        {
+            var title = tool.Groups[2].Value.ToLowerInvariant() switch
+            {
+                "lti" => "LTI assignment",
+                "scorm" => "SCORM activity",
+                _ => "External tool"
+            };
+            ShowNativeExternalToolPage(title, $"section/{tool.Groups[1].Value}/{tool.Groups[2].Value}/{tool.Groups[3].Value}");
+            return true;
+        }
+        var assessment = Regex.Match(path, @"^/(?:course|courses)/(\d+)/assessments?/(\d+)(?:/.*)?$", RegexOptions.IgnoreCase);
+        if (assessment.Success)
+        {
+            ShowNativeExternalToolPage("Assessment", $"assignment/{assessment.Groups[2].Value}");
+            return true;
+        }
+        var globalAssignment = Regex.Match(path, @"^/(?:assignment|assignments)/(\d+)(?:/info)?$", RegexOptions.IgnoreCase);
+        if (globalAssignment.Success)
+        {
+            var assignmentId = long.Parse(globalAssignment.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            foreach (var candidate in _courses)
+            {
+                try
+                {
+                    using var assignments = await _api.GetAssignmentsAsync(session, candidate.Id);
+                    var match = SchoologyApiClient.ReadRecords(assignments.RootElement, "assignment", "assignments")
+                        .FirstOrDefault(item => JsonLong(item.Data, "id", "assignment_id", "assignmentId") == assignmentId);
+                    if (match is not null)
+                    {
+                        await ShowAssignmentDetailsAsync(candidate.Id, match);
+                        return true;
+                    }
+                }
+                catch (Exception ex) { App.WriteStartupLog($"Could not resolve assignment {assignmentId} in section {candidate.Id}.", ex); }
+            }
+            ShowNativeSchoologyRoutePage("Assignment", path);
+            return true;
+        }
+
+        ShowNativeSchoologyRoutePage("Schoology link", path);
+        return true;
     }
 
     internal void ShowFromBackgroundNotification()
@@ -5838,7 +6111,7 @@ try {{
         finally { _syncingNavigationSelection = false; }
     }
 
-    private void ShowThreePane(string kind, SchoologyEntity? initialEntity = null)
+    private void ShowThreePane(string kind, SchoologyEntity? initialEntity = null, string? initialTab = null)
     {
         var previousPage = _page;
         _page = kind;
@@ -5849,6 +6122,7 @@ try {{
             _selectedEntity = initialEntity.Name;
             _selectedEntityId = initialEntity.Id;
             SyncEntityNavigationSelection(kind, initialEntity);
+            if (!string.IsNullOrWhiteSpace(initialTab)) _selectedEntityTab = initialTab;
         }
         else { _selectedEntity = string.Empty; _selectedEntityId = 0; _selectedEntityTab = string.Empty; }
         UpdateTitleBarCreateButton(kind, _selectedEntityTab);
@@ -6275,8 +6549,11 @@ try {{
                 launchUrl = ProfileValue(data, "url", "launch_token_url", "launchTokenUrl", "launch_url", "launchUrl");
             if (string.IsNullOrWhiteSpace(launchUrl))
                 throw new InvalidOperationException("ClassWire did not return a course-app launch URL.");
-            await OpenSharedWebViewAsync(launchUrl, title, allowLtiExternal: true,
-                onBack: () => ShowThreePane("Courses", course), requiresBrowserSession: false);
+            if (!Uri.TryCreate(launchUrl, UriKind.Absolute, out var destination) ||
+                destination.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(destination.UserInfo))
+                throw new InvalidOperationException("ClassWire returned an invalid course-app launch URL.");
+            if (!await Launcher.LaunchUriAsync(destination))
+                throw new InvalidOperationException("Windows could not open the course app.");
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to open course app", ex.Message); }
     }
@@ -6747,123 +7024,33 @@ try {{
             Grid.SetColumn(heading, 1);
             header.Children.Add(heading);
 
-            // Android's InfoFragment renders the page body in SchoologyWebView rather
-            // than flattening it into native text. Keep the source HTML intact so
-            // iframes, embeds, scripts, styles, and media can render in WebView2 too.
-            var webView = new WebView2
-            {
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch,
-                MinWidth = 320,
-                MinHeight = 360
-            };
-
-            await _sharedWebViewGate.WaitAsync();
-            try
-            {
-                var dataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Schoology", "WebView2");
-                Directory.CreateDirectory(dataFolder);
-                _sharedWebViewEnvironment ??= await CoreWebView2Environment.CreateWithOptionsAsync(
-                    null, dataFolder, new CoreWebView2EnvironmentOptions());
-                await webView.EnsureCoreWebView2Async(_sharedWebViewEnvironment);
-                var core = webView.CoreWebView2 ?? throw new InvalidOperationException(
-                    "The Microsoft Edge WebView2 runtime did not initialize. Repair or install the WebView2 Runtime and retry.");
-
-                core.Settings.AreDevToolsEnabled = false;
-                core.Settings.IsWebMessageEnabled = false;
-                core.Settings.IsStatusBarEnabled = false;
-                core.Settings.IsScriptEnabled = true;
-                core.Settings.AreDefaultScriptDialogsEnabled = true;
-                core.Settings.IsZoomControlEnabled = true;
-                // The WinUI 1.8 WebView2 SDK has no equivalent to Android's
-                // setAcceptThirdPartyCookies API. Keep the explicit Schoology session-cookie
-                // forwarding below without assigning an unsupported WebView2 setting.
-
-                if (!_sharedWebViewInitialized || _sharedWebViewSessionUserId != session.UserId)
-                {
-                    core.CookieManager.DeleteAllCookies();
-                    _sharedWebViewInitialized = false;
-                    _sharedWebViewSessionUserId = session.UserId;
-                }
-
-                // Match the authenticated browser profile used by the shared Schoology
-                // WebView so embedded Schoology resources can use the signed-in session.
-                var cookies = await _auth.GetWebSessionCookiesAsync(session);
-                foreach (var item in cookies)
-                {
-                    var cookie = core.CookieManager.CreateCookie(item.Name, item.Value, item.Domain, item.Path);
-                    cookie.IsHttpOnly = item.HttpOnly;
-                    cookie.IsSecure = item.Secure;
-                    core.CookieManager.AddOrUpdateCookie(cookie);
-                }
-                var installedCookies = await core.CookieManager.GetCookiesAsync(_auth.WebSessionUrl);
-                if (!installedCookies.Any(cookie => cookie.Name.StartsWith("SESS", StringComparison.OrdinalIgnoreCase) &&
-                    !string.IsNullOrWhiteSpace(cookie.Value)))
-                    throw new InvalidOperationException("The page viewer did not receive a usable ClassWire SESS cookie. Sign in again and retry.");
-                _sharedWebViewInitialized = true;
-                _sharedWebViewSessionUserId = session.UserId;
-                _sharedWebView = webView;
-                UpdateSharedWebViewTheme();
-
-                core.NavigationStarting += (_, args) =>
-                {
-                    if (!Uri.TryCreate(args.Uri, UriKind.Absolute, out var destination))
-                    {
-                        args.Cancel = true;
-                        return;
-                    }
-                    // NavigateToString uses about:blank as its top-level document URL.
-                    if (destination.AbsoluteUri.Equals("about:blank", StringComparison.OrdinalIgnoreCase))
-                        return;
-                    if (destination.Scheme is not ("https" or "http"))
-                        args.Cancel = true;
-                };
-                core.NewWindowRequested += (_, args) =>
-                {
-                    args.Handled = true;
-                    if (Uri.TryCreate(args.Uri, UriKind.Absolute, out var popup) &&
-                        popup.Scheme is "https" or "http" && string.IsNullOrEmpty(popup.UserInfo))
-                        core.Navigate(popup.AbsoluteUri);
-                };
-
-                var pageMarkup = string.IsNullOrWhiteSpace(markup)
-                    ? "<p>This page has no content.</p>"
-                    : markup;
-                var html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
-                    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
-                    "<base href=\"https://app.schoology.com/\"></head>" +
-                    "<body width=\"100%\">" + pageMarkup + "</body></html>";
-                webView.Loaded += (_, _) => core.NavigateToString(html);
-            }
-            finally
-            {
-                _sharedWebViewGate.Release();
-            }
-
-            var page = new Grid { RowSpacing = 8, Margin = new Thickness(12) };
+            var page = new Grid { RowSpacing = 10, Margin = new Thickness(12) };
             page.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             page.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             page.Children.Add(header);
 
-            var content = new Grid { RowSpacing = 12 };
-            content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            var body = new StackPanel { Spacing = 12, Margin = new Thickness(8) };
+            if (string.IsNullOrWhiteSpace(markup))
+                body.Children.Add(EmptyState("This page has no content."));
+            else
+                body.Children.Add(CreateRichContent(markup, 14));
+
             var pageAttachments = BuildAttachmentControls(pageData,
                 () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
             if (pageAttachments.Children.Count > 0)
             {
-                var attachmentsSection = new StackPanel { Spacing = 8 };
-                attachmentsSection.Children.Add(Text("Attachments", 14, true));
-                attachmentsSection.Children.Add(pageAttachments);
-                content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                Grid.SetRow(attachmentsSection, 1);
-                content.Children.Add(attachmentsSection);
+                body.Children.Add(Text("Attachments", 14, true));
+                body.Children.Add(pageAttachments);
             }
-            content.Children.Insert(0, webView);
-            Grid.SetRow(webView, 0);
-            Grid.SetRow(content, 1);
-            page.Children.Add(content);
-
+            var viewport = new ScrollViewer
+            {
+                Content = body,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                ZoomMode = ZoomMode.Disabled
+            };
+            Grid.SetRow(viewport, 1);
+            page.Children.Add(viewport);
             if (_sectionFrame is not null) NavigateMainSection(page, title);
             else Reset(BuildApplicationShell(title, page));
         }
@@ -9926,7 +10113,12 @@ try {{
             modes.Items.Add(modeItem);
         }
         AutomationProperties.SetAutomationId(modes, "MessagesMailboxSelector");
-        modes.SelectedItem = modes.Items[0];
+        var initialMailbox = _pendingProtocolMailbox == "Sent" ? "Sent" : "Inbox";
+        _pendingProtocolMailbox = null;
+        currentMode = initialMailbox;
+        modes.SelectedItem = modes.Items.OfType<SelectorBarItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag as string, initialMailbox, StringComparison.Ordinal))
+            ?? modes.Items[0];
         Grid.SetRow(modes, 1); left.Children.Add(modes);
 
         var listHost = new Grid();
@@ -10166,6 +10358,16 @@ try {{
                 mailboxStatusContent = statusHost;
                 RenderMessages();
                 SetStatusText(status, recordsCountText(mode));
+                if (_pendingProtocolMessageId > 0 &&
+                    _pendingProtocolMessageSent == (mode == "Sent"))
+                {
+                    var targetId = _pendingProtocolMessageId;
+                    _pendingProtocolMessageId = 0;
+                    var targetRecord = recordsToResolve.FirstOrDefault(item =>
+                        JsonLong(item.Data, "id", "message_id", "messageId") == targetId)
+                        ?? DeepLinkRecord("Message", targetId);
+                    await OpenMessageAsync(targetRecord);
+                }
                 _ = ResolveAndRefreshMessagePeopleAsync(recordsToResolve, mode);
                 if (mode == "Unread" && !inboxRecords.Any(IsUnread))
                     ShowDetailPlaceholder("You're all caught up", "There are no unread messages.");
@@ -10446,7 +10648,7 @@ try {{
         // Sent-refresh callback has been initialized.
         createMessageButton.Click += async (_, _) => await ShowComposeMessageDialogAsync(RefreshSentAfterComposeAsync);
         ShowDetailPlaceholder("Select a message", "Choose a message from the list to read it.");
-        _ = LoadMailboxAsync("Inbox");
+        _ = LoadMailboxAsync(initialMailbox);
         return root;
     }
 
