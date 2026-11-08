@@ -61,7 +61,7 @@ jobs:
       - name: Verify published executable
         shell: pwsh
         run: |
-          $exe = "publish/${{ matrix.rid }}/Schoology.WinUI.exe"
+          $exe = "publish/${{ matrix.rid }}/ClassWire.exe"
           if (!(Test-Path -LiteralPath $exe)) { throw "Expected executable was not produced: $exe" }
           Write-Host "Verified executable: $exe"
 

@@ -1,3 +1,10 @@
+## [2026.10.0-port.104] - 2026-11-07
+
+- Add a rich-text editor to Create Text Submission with bold, italic, underline, hyperlinks, bulleted and numbered lists, and clear formatting.
+- Preserve the existing Submit, Save draft, and Cancel actions; submit sanitized HTML while keeping plain-text validation and the existing dialog scroll sizing.
+- Match the active light or dark theme, respect Windows high contrast, provide named keyboard-accessible toolbar controls, and block external navigation and rich HTML paste into the editor.
+- Fix the CI executable check to match the renamed ClassWire.exe output so packaging can continue after publish verification.
+
 ## [2026.10.0-port.103] - 2026-11-06
 
 - Rebrand the Windows desktop product as ClassWire across app titles, login and splash screens, tray, notifications, settings, dialogs, and user-facing error messages.

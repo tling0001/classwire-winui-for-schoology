@@ -2353,13 +2353,174 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var sectionId = _activeAssignmentSectionId;
         var gradeItemId = _activeAssignmentGradeItemId;
         if (session is null || !_activeAssignmentAllowsSubmission || sectionId <= 0 || gradeItemId <= 0) return;
-        var body = new TextBox { PlaceholderText = "Enter your submission…", AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap, MinHeight = 180 };
-        ScrollViewer.SetVerticalScrollBarVisibility(body, ScrollBarVisibility.Auto);
+        var editor = new WebView2
+        {
+            MinHeight = 180,
+            Height = 220,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            IsTabStop = true
+        };
+        AutomationProperties.SetName(editor, "Text submission editor");
+        AutomationProperties.SetAutomationId(editor, "TextSubmissionEditor");
+
+        var toolbarScroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollMode = ScrollMode.Enabled,
+            VerticalScrollMode = ScrollMode.Disabled,
+            ZoomMode = ZoomMode.Disabled,
+            Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 }
+        };
+        var toolbar = (StackPanel)toolbarScroll.Content;
+        async Task ApplyEditorCommandAsync(string command)
+        {
+            try
+            {
+                await editor.ExecuteScriptAsync($"document.execCommand({JsonSerializer.Serialize(command)}, false, null);");
+                await editor.ExecuteScriptAsync("document.getElementById('submissionEditor').focus();");
+            }
+            catch (Exception ex) { App.WriteStartupLog("Could not apply text-submission formatting.", ex); }
+        }
+        Button AddFormattingButton(string name, string glyph, string command)
+        {
+            var button = new Button
+            {
+                Width = 40,
+                Height = 40,
+                Padding = new Thickness(8),
+                Content = new FontIcon
+                {
+                    Glyph = glyph,
+                    FontFamily = new FontFamily("Segoe Fluent Icons"),
+                    FontSize = 16
+                }
+            };
+            AutomationProperties.SetName(button, name);
+            AutomationProperties.SetAutomationId(button, "TextSubmissionFormat" + name.Replace(" ", string.Empty));
+            ToolTipService.SetToolTip(button, name);
+            button.Click += async (_, _) => await ApplyEditorCommandAsync(command);
+            toolbar.Children.Add(button);
+            return button;
+        }
+
+        AddFormattingButton("Bold", "\uE8DD", "bold");
+        AddFormattingButton("Italic", "\uE8DB", "italic");
+        AddFormattingButton("Underline", "\uE8DC", "underline");
+        AddFormattingButton("Bulleted list", "\uE8FD", "insertUnorderedList");
+        AddFormattingButton("Numbered list", "\uE8F7", "insertOrderedList");
+        AddFormattingButton("Clear formatting", "\uE75C", "removeFormat");
+
+        var linkPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Visibility = Visibility.Collapsed
+        };
+        var linkAddress = new TextBox
+        {
+            Header = "Link address",
+            PlaceholderText = "https://example.com",
+            MinWidth = 220,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetAutomationId(linkAddress, "TextSubmissionLinkAddress");
+        var linkStatus = new TextBlock
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap
+        };
+        var insertLinkButton = new Button { Content = "Insert link", VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetName(insertLinkButton, "Insert hyperlink");
+        AutomationProperties.SetAutomationId(insertLinkButton, "TextSubmissionInsertLink");
+        insertLinkButton.Click += async (_, _) =>
+        {
+            if (!Uri.TryCreate(linkAddress.Text.Trim(), UriKind.Absolute, out var linkUri) ||
+                linkUri.Scheme is not ("http" or "https"))
+            {
+                linkStatus.Text = "Enter a valid http or https address.";
+                return;
+            }
+
+            try
+            {
+                var encodedUri = JsonSerializer.Serialize(linkUri.AbsoluteUri);
+                var script = """
+                (() => {
+                    const target = document.getElementById('submissionEditor');
+                    target.focus();
+                    const selection = window.getSelection();
+                    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+                        const range = selection && selection.rangeCount ? selection.getRangeAt(0) : document.createRange();
+                        if (!selection || selection.rangeCount === 0) { range.selectNodeContents(target); range.collapse(false); }
+                        const anchor = document.createElement('a');
+                        anchor.href = __LINK_URL__;
+                        anchor.textContent = __LINK_URL__;
+                        range.insertNode(anchor);
+                        range.setStartAfter(anchor);
+                        range.collapse(true);
+                        if (selection) { selection.removeAllRanges(); selection.addRange(range); }
+                    } else {
+                        document.execCommand('createLink', false, __LINK_URL__);
+                    }
+                })();
+                """;
+                script = script.Replace("__LINK_URL__", encodedUri, StringComparison.Ordinal);
+                await editor.ExecuteScriptAsync(script);
+                linkAddress.Text = string.Empty;
+                linkStatus.Text = string.Empty;
+                linkPanel.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                linkStatus.Text = "Unable to insert the link. Try again.";
+                App.WriteStartupLog("Could not insert a text-submission hyperlink.", ex);
+            }
+        };
+        var cancelLinkButton = new Button { Content = "Cancel", VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetName(cancelLinkButton, "Cancel hyperlink");
+        AutomationProperties.SetAutomationId(cancelLinkButton, "TextSubmissionCancelLink");
+        cancelLinkButton.Click += (_, _) =>
+        {
+            linkAddress.Text = string.Empty;
+            linkStatus.Text = string.Empty;
+            linkPanel.Visibility = Visibility.Collapsed;
+        };
+        linkPanel.Children.Add(linkAddress);
+        linkPanel.Children.Add(insertLinkButton);
+        linkPanel.Children.Add(cancelLinkButton);
+        var linkButton = new Button
+        {
+            Width = 40,
+            Height = 40,
+            Padding = new Thickness(8),
+            Content = new FontIcon
+            {
+                Glyph = "\uE71B",
+                FontFamily = new FontFamily("Segoe Fluent Icons"),
+                FontSize = 16
+            }
+        };
+        AutomationProperties.SetName(linkButton, "Insert hyperlink");
+        AutomationProperties.SetAutomationId(linkButton, "TextSubmissionLinkToolbarButton");
+        ToolTipService.SetToolTip(linkButton, "Insert hyperlink");
+        linkButton.Click += (_, _) =>
+        {
+            linkPanel.Visibility = linkPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            if (linkPanel.Visibility == Visibility.Visible) linkAddress.Focus(FocusState.Programmatic);
+        };
+        toolbar.Children.Insert(3, linkButton);
+
+        var content = new StackPanel { Spacing = 8, MinWidth = 360 };
+        content.Children.Add(toolbarScroll);
+        content.Children.Add(linkPanel);
+        content.Children.Add(linkStatus);
+        content.Children.Add(editor);
+
         var dialog = new ContentDialog
         {
             Title = "Create text submission",
-            Content = body,
+            Content = CreateDialogScrollViewport(content),
             PrimaryButtonText = "Submit",
             SecondaryButtonText = "Save draft",
             CloseButtonText = "Cancel",
@@ -2367,9 +2528,82 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             XamlRoot = _root.XamlRoot,
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
+        await editor.EnsureCoreWebView2Async();
+        editor.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+        editor.CoreWebView2.Settings.IsStatusBarEnabled = false;
+        editor.CoreWebView2.Settings.AreDevToolsEnabled = false;
+        editor.CoreWebView2.NavigationStarting += (_, args) =>
+        {
+            if (!string.Equals(args.Uri, "about:blank", StringComparison.OrdinalIgnoreCase)) args.Cancel = true;
+        };
+        editor.CoreWebView2.NavigationCompleted += async (_, _) =>
+        {
+            try { await editor.ExecuteScriptAsync("document.getElementById('submissionEditor').focus();"); }
+            catch (Exception ex) { App.WriteStartupLog("Could not focus the text-submission editor.", ex); }
+        };
+        editor.Loaded += async (_, _) =>
+        {
+            try { await editor.ExecuteScriptAsync("document.getElementById('submissionEditor').focus();"); }
+            catch (Exception ex) { App.WriteStartupLog("Could not focus the loaded text-submission editor.", ex); }
+        };
+        var darkTheme = _highContrastEnabled ? "high-contrast" : _root.ActualTheme == ElementTheme.Dark ? "dark" : "light";
+        var editorHtml = """
+        <!doctype html>
+        <html lang="en" data-theme="__EDITOR_THEME__"><head><meta charset="utf-8">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+        <style>
+        html,body { box-sizing:border-box; width:100%; min-height:100%; margin:0; }
+        body { padding:10px; background:Canvas; color:CanvasText; font:15px "Segoe UI",sans-serif; }
+        #submissionEditor { min-height:198px; outline:none; overflow-wrap:anywhere; }
+        #submissionEditor:empty::before { content:attr(data-placeholder); color:GrayText; pointer-events:none; }
+        html[data-theme="light"] body { color-scheme:light; }
+        html[data-theme="dark"] body { color-scheme:dark; }
+        html[data-theme="high-contrast"] body { color-scheme:light dark; forced-color-adjust:auto; }
+        a { color:LinkText; text-decoration:underline; }
+        </style></head><body><div id="submissionEditor" contenteditable="true" role="textbox" aria-label="Text submission" aria-multiline="true" data-placeholder="Enter your submission…"></div>
+        <script>
+        const editor=document.getElementById('submissionEditor');
+        editor.addEventListener('paste',event=>{
+          event.preventDefault();
+          const text=event.clipboardData?.getData('text/plain')||'';
+          if(text)document.execCommand('insertText',false,text);
+        });
+        editor.addEventListener('drop',event=>event.preventDefault());
+        window.getSubmission=()=>{
+          const escapeText=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          const serialize=node=>{
+            if(node.nodeType===Node.TEXT_NODE)return escapeText(node.nodeValue||'');
+            if(node.nodeType!==Node.ELEMENT_NODE)return '';
+            const children=Array.from(node.childNodes).map(serialize).join('');
+            const tag=node.tagName.toLowerCase();
+            if(tag==='br')return '<br>';
+            if(tag==='b'||tag==='strong')return '<strong>'+children+'</strong>';
+            if(tag==='i'||tag==='em')return '<em>'+children+'</em>';
+            if(tag==='u')return '<u>'+children+'</u>';
+            if(tag==='a'){
+              const href=node.getAttribute('href')||'';
+              try{const url=new URL(href);if(url.protocol==='http:'||url.protocol==='https:')return '<a href="'+escapeText(url.href)+'">'+children+'</a>';}catch{}
+              return children;
+            }
+            if(tag==='ul')return '<ul>'+children+'</ul>';
+            if(tag==='ol')return '<ol>'+children+'</ol>';
+            if(tag==='li')return '<li>'+children+'</li>';
+            if(tag==='p'||tag==='div')return '<p>'+children+'</p>';
+            return children;
+          };
+          return {html:Array.from(editor.childNodes).map(serialize).join(''),text:editor.innerText||editor.textContent||''};
+        };
+        </script></body></html>
+""";
+        editor.NavigateToString(editorHtml.Replace("__EDITOR_THEME__", darkTheme, StringComparison.Ordinal));
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.None) return;
-        if (string.IsNullOrWhiteSpace(body.Text))
+        var serialized = await editor.ExecuteScriptAsync("window.getSubmission()");
+        using var submissionDocument = JsonDocument.Parse(serialized);
+        var submission = submissionDocument.RootElement;
+        var body = submission.GetProperty("html").GetString() ?? string.Empty;
+        var plainText = submission.GetProperty("text").GetString() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(plainText))
         {
             await ShowApiErrorAsync("Unable to submit text", "Enter a submission before posting.");
             return;
@@ -2377,7 +2611,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         try
         {
             using var response = await _api.SubmitAssignmentTextAsync(session, sectionId, gradeItemId,
-                body.Text.Trim(), draft: result == ContentDialogResult.Secondary);
+                body, draft: result == ContentDialogResult.Secondary);
             await ShowAssignmentDetailsAsync(sectionId, new SchoologyApiRecord("Assignment", "",
                 JsonDocument.Parse("{\"id\":" + _activeAssignmentId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}").RootElement.Clone()));
         }
