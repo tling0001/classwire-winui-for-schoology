@@ -1,3 +1,9 @@
+## [2026.10.0-port.106] - 2026-11-07
+
+- Restore the native ClassWire lockup on the login screen and use transparent C-mark icon artwork so the Windows taskbar and tile icons have no white square backdrop.
+- Select only the current ClassWire classic x64 installer in migration updates while retaining Schoology compatibility installer aliases in classic releases.
+- Publish Schoology-named WinUI installer aliases alongside the ClassWire x64 and ARM64 release assets for existing clients.
+
 ## [2026.10.0-port.105] - 2026-11-07
 
 - Replace the missing WebView2 text submission input with a native WinUI rich editor and preserve submission, draft, and cancel behavior.

@@ -878,6 +878,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         // Native ClassWire lockup: circular C mark and light-weight wordmark.
         var logo = CreateClassWireBrandLockup(38, 34, 10);
         logo.Margin = new Thickness(0, 0, 0, 20);
+        stack.Children.Add(logo);
         stack.Children.Add(LoginActionButton("Sign in through my school", "ic_school.svg", ShowSchoolSignInPage));
         App.WriteStartupLog("Login school sign-in button created.");
         stack.Children.Add(LoginActionButton("Sign in with my account", "ic_person.svg", ShowAccountSignInPage));
@@ -5268,11 +5269,10 @@ try {{
             item.ValueKind == JsonValueKind.Object &&
             item.TryGetProperty("name", out var name) &&
             name.ValueKind == JsonValueKind.String &&
-            (name.GetString()!.EndsWith("_x64-setup.exe", StringComparison.OrdinalIgnoreCase) ||
-             name.GetString()!.EndsWith("-x64-setup.exe", StringComparison.OrdinalIgnoreCase) ||
-             name.GetString()!.EndsWith("Setup-x64.exe", StringComparison.OrdinalIgnoreCase)));
+            name.GetString()!.StartsWith("ClassWire_", StringComparison.OrdinalIgnoreCase) &&
+            name.GetString()!.EndsWith("_x64-setup.exe", StringComparison.OrdinalIgnoreCase));
         if (asset.ValueKind != JsonValueKind.Object)
-            throw new InvalidDataException("The latest classic Schoology release does not include an x64 Windows installer.");
+            throw new InvalidDataException("The latest classic release does not include the ClassWire x64 Windows installer.");
 
         var assetName = asset.GetProperty("name").GetString() ?? string.Empty;
         var download = asset.TryGetProperty("browser_download_url", out var downloadValue)
@@ -5293,7 +5293,7 @@ try {{
             throw new InvalidDataException("The classic installer must be downloaded from GitHub over HTTPS.");
         var directory = Path.Combine(Path.GetTempPath(), "Schoology", "ClassicMigration");
         Directory.CreateDirectory(directory);
-        var target = Path.Combine(directory, "Schoology-classic-x64-setup.exe");
+        var target = Path.Combine(directory, "ClassWire-classic-x64-setup.exe");
         var temporary = target + ".download";
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
         using var request = new HttpRequestMessage(HttpMethod.Get, downloadUri);

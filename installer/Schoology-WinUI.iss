@@ -2,7 +2,7 @@
   #define Architecture "x64"
 #endif
 #ifndef AppVersion
-  #define AppVersion "2026.10.0-port.105"
+  #define AppVersion "2026.10.0-port.106"
 #endif
 #ifndef SourceDir
   #define SourceDir "publish\win-x64"

@@ -165,4 +165,15 @@ jobs:
           else
             gh release create "$VERSION" --title "$VERSION" --notes-file release-notes.md --target main
           fi
-          gh release upload "$VERSION" "${installers[@]}" --clobber
+          schoology_installers=()
+          for installer in "${installers[@]}"; do
+            case "$installer" in
+              *-ARM64-Setup.exe) architecture="ARM64" ;;
+              *-x64-Setup.exe) architecture="x64" ;;
+              *) echo "Unexpected WinUI installer filename: $installer" >&2; exit 1 ;;
+            esac
+            alias="release-assets/Schoology-WinUI-${VERSION}-${architecture}-Setup.exe"
+            cp "$installer" "$alias"
+            schoology_installers+=("$alias")
+          done
+          gh release upload "$VERSION" "${installers[@]}" "${schoology_installers[@]}" --clobber
