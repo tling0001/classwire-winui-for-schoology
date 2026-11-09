@@ -1,6 +1,12 @@
+## [2026.10.0-port.114] - 2026-11-08
+
+- Fix the PDF.js publish failure by explicitly removing staged PDF.js files from WinUI Content/None defaults, then re-including them as ordinary runtime files with deterministic `PdfJs\\...` output and publish paths.
+- Keep HTML, ES modules, worker, CMaps, standard fonts, and license outside PRI resource processing and outside single-file bundling.
+- Retain CI checks that verify the PDF viewer and its runtime assets are present for both x64 and ARM64 before installer packaging.
+
 ## [2026.10.0-port.113] - 2026-11-08
 
-- Fix PDF.js runtime asset deployment by explicitly setting the publish-relative `PdfJs\...` target paths and copy-to-publish metadata.
+- Fix PDF.js runtime asset deployment by explicitly setting the publish-relative `PdfJs\\...` target paths and copy-to-publish metadata.
 - Verify the viewer page, PDF.js module/worker, CMaps, and standard fonts are present in both architecture publish outputs before packaging installers.
 - Keep PDF.js resources outside WinUI PRI resource processing.
 

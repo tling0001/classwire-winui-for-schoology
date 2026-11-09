@@ -17,20 +17,25 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.113</Version>
-    <AssemblyVersion>2026.10.0.113</AssemblyVersion>
-    <FileVersion>2026.10.0.113</FileVersion>
-    <InformationalVersion>2026.10.0-port.113</InformationalVersion>
+    <Version>2026.10.0-port.114</Version>
+    <AssemblyVersion>2026.10.0.114</AssemblyVersion>
+    <FileVersion>2026.10.0.114</FileVersion>
+    <InformationalVersion>2026.10.0-port.114</InformationalVersion>
     <Title>ClassWire</Title>
     <Product>ClassWire</Product>
     <AssemblyName>ClassWire</AssemblyName>
     <ApplicationIcon>Assets\\ClassWire.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <None Update="Assets\PdfJs\**\*"
+    <!-- PDF.js is staged by CI after checkout. WinUI's default item classification can
+         treat HTML/JS assets as Content (PRI input) or omit them from publish. Normalize
+         the entire tree to explicit None items and copy it beside the executable. -->
+    <Content Remove="Assets\\PdfJs\\**\\*" />
+    <None Remove="Assets\\PdfJs\\**\\*" />
+    <None Include="Assets\\PdfJs\\**\\*"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest"
-          TargetPath="PdfJs\%(RecursiveDir)%(Filename)%(Extension)"
+          TargetPath="PdfJs\\%(RecursiveDir)%(Filename)%(Extension)"
           ExcludeFromSingleFile="true" />
     <Using Include="Windows.UI.Text.FontWeight" Alias="FontWeight" />
     <Using Include="Windows.UI.Text.FontStyle" Alias="FontStyle" />
