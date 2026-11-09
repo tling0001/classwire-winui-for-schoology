@@ -8041,7 +8041,21 @@ try {{
                         using var message = JsonDocument.Parse(messageArgs.WebMessageAsJson);
                         var root = message.RootElement;
                         var type = root.TryGetProperty("type", out var typeValue) ? typeValue.GetString() : null;
-                        if (type == "page" && root.TryGetProperty("page", out var pageValue))
+                        if (type == "ready")
+                        {
+                            // This WinUI label sits outside the PDF.js DOM, so removing
+                            // PDF.js's own loading node does not hide the native label.
+                            status.Text = string.Empty;
+                            status.Visibility = Visibility.Collapsed;
+                        }
+                        else if (type == "error")
+                        {
+                            var errorText = root.TryGetProperty("message", out var errorValue)
+                                ? errorValue.GetString() : "Unable to display this PDF.";
+                            status.Text = errorText ?? "Unable to display this PDF.";
+                            status.Visibility = Visibility.Visible;
+                        }
+                        else if (type == "page" && root.TryGetProperty("page", out var pageValue))
                         {
                             currentPage = (uint)Math.Max(0, pageValue.GetInt32() - 1);
                             var count = root.TryGetProperty("count", out var countValue) ? countValue.GetInt32() : 0;
@@ -8432,7 +8446,11 @@ try {{
             {
                 if (materialId > 0)
                 {
-                    await ShowAssessmentDetailsAsync(sectionId, record);
+                    // Android's AssessmentWebView launches Schoology assessments at /assignment/{id}.
+                    // Use the shared authenticated WebView2 profile for the same launch flow.
+                    var assessmentUrl = new Uri(new Uri(_auth.WebSessionUrl), $"assignment/{materialId}").AbsoluteUri;
+                    await OpenSharedWebViewAsync(assessmentUrl, title, allowLtiExternal: true,
+                        onBack: () => ShowThreePane("Courses", _courses.FirstOrDefault(course => course.Id == sectionId)));
                     return;
                 }
             }

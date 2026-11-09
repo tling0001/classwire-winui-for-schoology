@@ -3,8 +3,8 @@
 <style>
 :root{font-family:"Segoe UI",sans-serif;background:transparent;color:#202124}*{box-sizing:border-box}
 html,body{margin:0;min-height:100%;background:transparent}body{padding:16px;overflow-y:auto}
-#pages{display:flex;flex-direction:column;align-items:center;gap:18px;min-height:100%}
-.page{position:relative;background:#fff;box-shadow:0 2px 12px #0003;overflow:hidden;max-width:100%}
+#pages{display:flex;flex-direction:column;align-items:center;gap:18px;min-height:100%;width:max-content;min-width:100%}
+.page{position:relative;flex:none;background:#fff;box-shadow:0 2px 12px #0003;overflow:hidden}
 .page canvas{display:block}.textLayer{position:absolute;inset:0;overflow:hidden;line-height:1;text-align:initial;transform-origin:0 0;opacity:1}
 .textLayer span,.textLayer br{position:absolute;color:transparent;white-space:pre;cursor:text;transform-origin:0 0}
 .textLayer ::selection{background:rgba(40,120,220,.28)}
@@ -16,17 +16,45 @@ html,body{margin:0;min-height:100%;background:transparent}body{padding:16px;over
 <script type="module">
 import * as pdfjsLib from './build/pdf.mjs';
 pdfjsLib.GlobalWorkerOptions.workerSrc='./build/pdf.worker.mjs';
-let pdf=null,pageNodes=[],current=1;
+let pdf=null,pageNodes=[],current=1,zoomFactor=1,pageObserver=null,zoomTask=null,zoomPending=false;
 const pages=document.getElementById('pages'),status=document.getElementById('status');
 const post=data=>{try{window.chrome.webview.postMessage(data)}catch{}};
 const scrollBehavior=()=>matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth';
 function announce(){post({type:'page',page:current,count:pdf?.numPages||0})}
 function goToPage(delta){if(!pdf)return;const next=Math.max(1,Math.min(pdf.numPages,current+delta));pageNodes[next-1]?.scrollIntoView({behavior:scrollBehavior(),block:'start'});current=next;announce()}
 window.goToPage=goToPage;
-window.setViewerZoom=factor=>{document.body.style.zoom=String(factor)};
-async function renderPage(number){
+window.setViewerZoom=factor=>{
+ const next=Math.max(.5,Math.min(3,Number(factor)||1));
+ if(Math.abs(next-zoomFactor)<.001)return zoomTask;
+ zoomFactor=next;zoomPending=true;
+ if(!zoomTask){
+  zoomTask=(async()=>{
+   while(zoomPending){
+    zoomPending=false;
+    const anchorPage=current,anchor=pageNodes[anchorPage-1],anchorTop=anchor?.getBoundingClientRect().top??16;
+    await renderPages(zoomFactor,anchorPage,anchorTop);
+   }
+  })().finally(()=>{zoomTask=null});
+ }
+ return zoomTask;
+};
+async function renderPages(factor,anchorPage,anchorTop){
+ pages.replaceChildren();pageNodes=[];
+ for(let number=1;number<=pdf.numPages;number++)pageNodes.push(await renderPage(number,factor));
+ current=Math.max(1,Math.min(pdf.numPages,anchorPage));
+ observePages();
+ const anchor=pageNodes[current-1];
+ if(anchor){const nextTop=anchor.getBoundingClientRect().top;window.scrollTo({top:window.scrollY+nextTop-anchorTop,behavior:'auto'});}
+ announce();
+}
+function observePages(){
+ if(pageObserver)pageObserver.disconnect();
+ pageObserver=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];if(visible){current=pageNodes.indexOf(visible.target)+1;announce()}},{threshold:[.2,.5,.8]});
+ pageNodes.forEach(node=>pageObserver.observe(node));
+}
+async function renderPage(number,factor=zoomFactor){
  const page=await pdf.getPage(number),natural=page.getViewport({scale:1});
- const available=Math.max(320,document.documentElement.clientWidth-32),scale=Math.min(2,available/natural.width),viewport=page.getViewport({scale});
+ const available=Math.max(320,document.documentElement.clientWidth-32),fitScale=Math.min(2,available/natural.width),scale=fitScale*factor,viewport=page.getViewport({scale});
  const holder=document.createElement('section');holder.className='page';holder.style.width=viewport.width+'px';holder.style.height=viewport.height+'px';holder.setAttribute('aria-label','Page '+number);
  const canvas=document.createElement('canvas'),dpr=Math.min(2,window.devicePixelRatio||1);
  canvas.width=Math.ceil(viewport.width*dpr);canvas.height=Math.ceil(viewport.height*dpr);canvas.style.width=viewport.width+'px';canvas.style.height=viewport.height+'px';
@@ -52,11 +80,12 @@ async function renderPage(number){
 window.loadPdfUrl=async function(url){
  try{
   pages.replaceChildren();status.textContent='Loading PDF…';
-  pdf=await pdfjsLib.getDocument({url,cMapUrl:'./cmaps/',cMapPacked:true,standardFontDataUrl:'./standard_fonts/'}).promise;
-  for(let number=1;number<=pdf.numPages;number++)pageNodes.push(await renderPage(number));
-  status.remove();current=1;announce();
-  const observer=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];if(visible){current=pageNodes.indexOf(visible.target)+1;announce()}},{threshold:[.2,.5,.8]});
-  pageNodes.forEach(node=>observer.observe(node));
+  pdf=await pdfjsLib.getDocument({url,cMapUrl:'./cmaps/',cMapPacked:true,useSystemFonts:true}).promise;
+  for(let number=1;number<=pdf.numPages;number++)pageNodes.push(await renderPage(number,zoomFactor));
+  status.remove();current=1;
+  observePages();
+  post({type:'ready',page:current,count:pdf.numPages});
+  announce();
  }catch(error){status.textContent='Unable to display this PDF: '+(error?.message||String(error));post({type:'error',message:status.textContent})}
 };
 const pdfFile=new URL(location.href).searchParams.get('file');

@@ -1,3 +1,11 @@
+## [2026.10.0-port.116] - 2026-11-09
+
+- Use installed Windows/browser system fonts for PDF.js font substitution; stop bundling PDF.js standard-font files with the app.
+- Fix the PDF viewer's persistent native “Opening PDF…” label by hiding the WinUI loading status when PDF.js reports that rendering is ready, and surface load errors in the native status area.
+- Replace document-wide CSS zoom with PDF.js page re-rendering at the selected scale so the canvas, selectable text layer, annotations, and page dimensions stay aligned; preserve the current page position while zooming.
+- Open course-material assessments in the authenticated shared WebView2 at Schoology's /assignment/{id} route, following the Android AssessmentWebView launch path.
+- Bump the WinUI release version to 2026.10.0-port.116.
+
 ## [2026.10.0-port.115] - 2026-11-08
 
 - Fix the x64 and ARM64 PDF.js verification failure: validate that the standard-font directory contains files instead of requiring a hard-coded `FoxitSans.pfb` filename that is not shipped under that name by the pinned PDF.js 4.10.38 package.

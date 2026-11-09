@@ -52,7 +52,7 @@ jobs:
           $source = Join-Path $env:GITHUB_WORKSPACE ".build/pdfjs/node_modules/pdfjs-dist"
           $destination = Join-Path $env:GITHUB_WORKSPACE "Schoology.WinUI/Assets/PdfJs"
           New-Item -ItemType Directory -Path $destination -Force | Out-Null
-          foreach ($folder in @("build", "cmaps", "standard_fonts")) {
+          foreach ($folder in @("build", "cmaps")) {
             Copy-Item -LiteralPath (Join-Path $source $folder) -Destination $destination -Recurse -Force
           }
           Copy-Item -LiteralPath (Join-Path $source "LICENSE") -Destination (Join-Path $destination "PDFJS-LICENSE.txt") -Force
@@ -106,17 +106,7 @@ jobs:
             if (!(Test-Path -LiteralPath $asset -PathType Leaf)) { throw "PDF.js runtime asset was not published: $asset" }
             Write-Host "Verified PDF.js asset: $asset"
           }
-          # PDF.js 4.10.38's standard-font filenames are package-version-specific.
-          # Validate the folder and its contents rather than assuming FoxitSans.pfb exists.
-          $standardFontsPath = Join-Path $pdfRoot "standard_fonts"
-          if (!(Test-Path -LiteralPath $standardFontsPath -PathType Container)) {
-            throw "PDF.js standard-font directory was not published: $standardFontsPath"
-          }
-          $standardFontFiles = @(Get-ChildItem -LiteralPath $standardFontsPath -Recurse -File)
-          if ($standardFontFiles.Count -eq 0) {
-            throw "PDF.js standard-font directory is empty: $standardFontsPath"
-          }
-          Write-Host "Verified $($standardFontFiles.Count) PDF.js standard-font files."
+          # PDF.js uses installed Windows/browser fonts for standard-font substitution.
           $cmapFiles = @(Get-ChildItem -LiteralPath (Join-Path $pdfRoot "cmaps") -Recurse -File)
           if ($cmapFiles.Count -eq 0) { throw "PDF.js CMap directory is empty." }
           $pdfAssetCount = @(Get-ChildItem -LiteralPath $pdfRoot -Recurse -File).Count
