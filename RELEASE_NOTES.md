@@ -1,3 +1,8 @@
+## [2026.10.0-port.115] - 2026-11-08
+
+- Fix the x64 and ARM64 PDF.js verification failure: validate that the standard-font directory contains files instead of requiring a hard-coded `FoxitSans.pfb` filename that is not shipped under that name by the pinned PDF.js 4.10.38 package.
+- Continue validating the viewer HTML, PDF.js module/worker, CMaps, standard-font contents, and total runtime asset count before installer packaging.
+
 ## [2026.10.0-port.114] - 2026-11-08
 
 - Fix the PDF.js publish failure by explicitly removing staged PDF.js files from WinUI Content/None defaults, then re-including them as ordinary runtime files with deterministic `PdfJs\\...` output and publish paths.

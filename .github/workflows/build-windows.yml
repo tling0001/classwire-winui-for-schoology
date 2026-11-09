@@ -100,13 +100,25 @@ jobs:
             "$pdfRoot/PdfViewer.html",
             "$pdfRoot/build/pdf.mjs",
             "$pdfRoot/build/pdf.worker.mjs",
-            "$pdfRoot/cmaps/Adobe-Japan1-UCS2.bcmap",
-            "$pdfRoot/standard_fonts/FoxitSans.pfb"
+            "$pdfRoot/cmaps/Adobe-Japan1-UCS2.bcmap"
           )
           foreach ($asset in $requiredPdfAssets) {
             if (!(Test-Path -LiteralPath $asset -PathType Leaf)) { throw "PDF.js runtime asset was not published: $asset" }
             Write-Host "Verified PDF.js asset: $asset"
           }
+          # PDF.js 4.10.38's standard-font filenames are package-version-specific.
+          # Validate the folder and its contents rather than assuming FoxitSans.pfb exists.
+          $standardFontsPath = Join-Path $pdfRoot "standard_fonts"
+          if (!(Test-Path -LiteralPath $standardFontsPath -PathType Container)) {
+            throw "PDF.js standard-font directory was not published: $standardFontsPath"
+          }
+          $standardFontFiles = @(Get-ChildItem -LiteralPath $standardFontsPath -Recurse -File)
+          if ($standardFontFiles.Count -eq 0) {
+            throw "PDF.js standard-font directory is empty: $standardFontsPath"
+          }
+          Write-Host "Verified $($standardFontFiles.Count) PDF.js standard-font files."
+          $cmapFiles = @(Get-ChildItem -LiteralPath (Join-Path $pdfRoot "cmaps") -Recurse -File)
+          if ($cmapFiles.Count -eq 0) { throw "PDF.js CMap directory is empty." }
           $pdfAssetCount = @(Get-ChildItem -LiteralPath $pdfRoot -Recurse -File).Count
           if ($pdfAssetCount -lt 10) { throw "PDF.js publish folder is incomplete ($pdfAssetCount files): $pdfRoot" }
           Write-Host "Verified $pdfAssetCount bundled PDF.js files."
