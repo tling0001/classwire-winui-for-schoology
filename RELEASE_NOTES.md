@@ -1,3 +1,8 @@
+## [2026.10.0-port.110] - 2026-11-08
+
+- Correct user-facing loading, download, attachment, message, resource, and API-response wording throughout the app so Schoology content and data are attributed to Schoology rather than the ClassWire desktop app.
+- Preserve ClassWire branding for the application itself, its sign-in experience, settings, notifications, and update workflow.
+
 ## [2026.10.0-port.109] - 2026-11-08
 
 - Fix the message deep-link mailbox initialization compiler error that failed both x64 and ARM64 publish jobs.

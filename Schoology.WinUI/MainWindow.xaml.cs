@@ -1629,7 +1629,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private void ShowAccountSignInPage()
     {
-        CreateLoginSubpage("Sign in with my account", "Use your ClassWire username or email and password.", out var content);
+        CreateLoginSubpage("Sign in with my account", "Use your Schoology username or email and password.", out var content);
         var username = new TextBox { Header = "Username or email", PlaceholderText = "Enter your username or email" };
         var password = new PasswordBox { Header = "Password", PlaceholderText = "Enter your password" };
         var status = Text("", 13);
@@ -1713,7 +1713,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 var requestToken = HttpUtility.ParseQueryString(callback.Query).Get("request_token");
                 if (string.IsNullOrWhiteSpace(requestToken))
                 {
-                    SetStatusText(status, "ClassWire returned an invalid sign-in callback. Please try again.");
+                    SetStatusText(status, "Schoology returned an invalid sign-in callback. Please try again.");
                     return;
                 }
 
@@ -2368,7 +2368,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         content.Children.Add(buttons);
         content.Children.Add(Text("Selected files and resources", 12, true));
         content.Children.Add(list);
-        content.Children.Add(EmptyState("Add one or more files or ClassWire resources. They will be submitted together as one revision."));
+        content.Children.Add(EmptyState("Add one or more files or Schoology resources. They will be submitted together as one revision."));
         content.Children.Add(comment);
         content.Children.Add(Text("The optional comment is posted to the assignment's comments, separately from the file revision.", 11));
 
@@ -2433,7 +2433,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (result != ContentDialogResult.Primary) return;
             if (pending.Count == 0)
             {
-                await ShowApiErrorAsync("No submission attachments", "Add at least one file or ClassWire resource before submitting.");
+                await ShowApiErrorAsync("No submission attachments", "Add at least one file or Schoology resource before submitting.");
                 continue;
             }
 
@@ -2625,7 +2625,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             launch.RootElement.TryGetProperty("data", out var data))
             launchUrl = ProfileValue(data, "url", "launchTokenUrl", "launch_token_url");
         if (string.IsNullOrWhiteSpace(launchUrl))
-            throw new InvalidOperationException("ClassWire did not return a resource-app launch URL.");
+            throw new InvalidOperationException("Schoology did not return a resource-app launch URL.");
         // Match the working SwiftUI implementation: navigate to Schoology's
         // launch URL unchanged. The launch token may not expose a RelayState
         // query parameter; the import callback itself receives mobile=1 when
@@ -2770,7 +2770,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
         if (fileInfo.Length > 60L * 1024 * 1024)
         {
-            await ShowApiErrorAsync("Unable to upload submission", "ClassWire attachments are limited to 60 MB in this app.");
+            await ShowApiErrorAsync("Unable to upload submission", "Attachments are limited to 60 MB in this app.");
             return;
         }
         var status = Text("Preparing upload…", 13);
@@ -3342,7 +3342,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 if (!info.Exists || info.Length <= 0)
                     throw new InvalidOperationException("The selected file is empty or no longer available.");
                 if (info.Length > 60L * 1024 * 1024)
-                    throw new InvalidOperationException("ClassWire attachments are limited to 60 MB.");
+                    throw new InvalidOperationException("Attachments are limited to 60 MB.");
                 attachFile.IsEnabled = false;
                 attachResource.IsEnabled = false;
                 status.Text = $"Uploading {file.Name}…";
@@ -3788,7 +3788,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private ScrollViewer BuildRecentActivityContent()
     {
         var panel = new StackPanel { Spacing = 10, Margin = new Thickness(4, 2, 10, 8) };
-        var statusHost = LoadingStatus("Loading recent ClassWire activity…", out var status);
+        var statusHost = LoadingStatus("Loading recent Schoology activity…", out var status);
         panel.Children.Add(statusHost);
         _ = LoadRecentActivityAsync(panel, status);
         return new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -3837,7 +3837,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 new Dictionary<string, string> { ["start"] = "0", ["limit"] = "30", ["with_attachments"] = "TRUE", ["richtext"] = "1" });
             var records = SchoologyApiClient.ReadRecords(document.RootElement, "update", "updates", "update_list");
             RemoveLoadingStatus(status);
-            if (records.Count == 0) { panel.Children.Add(EmptyState("No recent activity", "Your recent ClassWire activity will appear here.")); return; }
+            if (records.Count == 0) { panel.Children.Add(EmptyState("No recent activity", "Your recent Schoology activity will appear here.")); return; }
 
             // Render the feed immediately so post text and image requests do not
             // wait for one profile API lookup per distinct post author.
@@ -4027,7 +4027,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         {
             if (!ex.Message.Contains("401", StringComparison.OrdinalIgnoreCase) &&
                 !ex.Message.Contains("Not signed in", StringComparison.OrdinalIgnoreCase))
-                App.WriteStartupLog("Background ClassWire notification polling failed.", ex);
+                App.WriteStartupLog("Background Schoology notification polling failed.", ex);
         }
         finally { _notificationPollInProgress = false; }
     }
@@ -4043,7 +4043,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private static string NotificationBody(JsonElement item)
     {
-        var body = ProfileValue(item, "body", "message", "title") ?? "You have a new ClassWire notification";
+        var body = ProfileValue(item, "body", "message", "title") ?? "You have a new Schoology notification";
         JsonElement args = default;
         if (item.TryGetProperty("body_args", out args) || item.TryGetProperty("bodyArgs", out args) || item.TryGetProperty("body_arg", out args))
         {
@@ -5135,7 +5135,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             ? await _api.GetCollectionResourcesAsync(session, collectionId, folderId)
             : contextKind == "Groups" && contextId > 0
                 ? await _api.GetGroupResourcesAsync(session, contextId, folderId)
-                : throw new InvalidOperationException("ClassWire did not provide a resource collection for this folder.");
+                : throw new InvalidOperationException("Schoology did not provide a resource collection for this folder.");
         var records = SchoologyApiClient.ReadRecords(document.RootElement, "resource", "resources", "resource_list", "items");
         return records.Select(record =>
         {
@@ -5175,7 +5175,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     apps.AddRange(SchoologyApiClient.ReadRecords(appsDocument.RootElement,
                         "resource_apps", "resourceApps", "collection", "collections"));
                 }
-                catch (Exception ex) { App.WriteStartupLog("ClassWire resource apps could not be loaded; keeping resource collections available.", ex); }
+                catch (Exception ex) { App.WriteStartupLog("Schoology resource apps could not be loaded; keeping resource collections available.", ex); }
                 var all = SchoologyApiClient.ReadRecords(collectionsDocument.RootElement, "collection", "collections", "collection_list");
                 var mine = new List<ResourceTreeEntry>();
                 var shared = new List<ResourceTreeEntry>();
@@ -5235,7 +5235,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 apps.AddRange(SchoologyApiClient.ReadRecords(appsDocument.RootElement,
                     "resource_apps", "resourceApps", "collection", "collections"));
             }
-            catch (Exception ex) { App.WriteStartupLog("ClassWire resource apps could not be loaded; keeping resource collections available.", ex); }
+            catch (Exception ex) { App.WriteStartupLog("Schoology resource apps could not be loaded; keeping resource collections available.", ex); }
             var all = SchoologyApiClient.ReadRecords(collectionsDocument.RootElement, "collection", "collections", "collection_list");
             var uid = session.UserId;
             var mine = new List<SchoologyApiRecord>();
@@ -5344,7 +5344,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     launch.RootElement.TryGetProperty("data", out var data))
                     launchUrl = ProfileValue(data, "url", "launchTokenUrl", "launch_token_url");
                 if (string.IsNullOrWhiteSpace(launchUrl))
-                    throw new InvalidOperationException("ClassWire did not return a resource-app launch URL.");
+                    throw new InvalidOperationException("Schoology did not return a resource-app launch URL.");
                 await OpenSharedWebViewAsync(launchUrl, entry.Title, allowLtiExternal: true, onBack: onBack);
                 return;
             }
@@ -5379,7 +5379,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 details.Children.Add(Text(entry.Title, 18, true));
                 var description = ProfileValue(entry.Data, "description", "body", "text");
                 if (!string.IsNullOrWhiteSpace(description)) details.Children.Add(Text(StripMarkup(description), 13));
-                details.Children.Add(Text("ClassWire did not provide a destination for this resource.", 12));
+                details.Children.Add(Text("Schoology did not provide a destination for this resource.", 12));
                 await new ContentDialog { Title = "Resource details", Content = CreateDialogScrollViewport(details, 560),
                     CloseButtonText = "Close", XamlRoot = _root.XamlRoot,
                     RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
@@ -5388,7 +5388,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (!Uri.TryCreate(url, UriKind.Absolute, out var target))
                 target = new Uri("https://app.schoology.com/" + url.TrimStart('/'));
             if (target.Scheme is not ("https" or "http"))
-                throw new InvalidOperationException("ClassWire returned an unsupported resource URL.");
+                throw new InvalidOperationException("Schoology returned an unsupported resource URL.");
             if (type is "file" or "document" || url.Contains("download", StringComparison.OrdinalIgnoreCase))
                 if (await TryOpenDocumentAttachmentAsync(target.AbsoluteUri, onBack)) return;
 
@@ -6554,10 +6554,10 @@ try {{
                 root.TryGetProperty("data", out var data))
                 launchUrl = ProfileValue(data, "url", "launch_token_url", "launchTokenUrl", "launch_url", "launchUrl");
             if (string.IsNullOrWhiteSpace(launchUrl))
-                throw new InvalidOperationException("ClassWire did not return a course-app launch URL.");
+                throw new InvalidOperationException("Schoology did not return a course-app launch URL.");
             if (!Uri.TryCreate(launchUrl, UriKind.Absolute, out var destination) ||
                 destination.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(destination.UserInfo))
-                throw new InvalidOperationException("ClassWire returned an invalid course-app launch URL.");
+                throw new InvalidOperationException("Schoology returned an invalid course-app launch URL.");
             if (!await Launcher.LaunchUriAsync(destination))
                 throw new InvalidOperationException("Windows could not open the course app.");
         }
@@ -6645,7 +6645,7 @@ try {{
         if (tab == "Materials" && bodyContent is ScrollViewer materialsViewport)
             AutomationProperties.SetAutomationId(materialsViewport, "CourseMaterialsViewport");
         Grid.SetRow(bodyContent, 1); layout.Children.Add(bodyContent);
-        var statusHost = LoadingStatus("Loading from ClassWire…", out var status);
+        var statusHost = LoadingStatus("Loading from Schoology…", out var status);
         status.Foreground = ThemeBrush("SchoologyMutedTextBrush"); body.Children.Add(statusHost);
         _ = LoadEntityTabAsync(kind, entityId, tab, body, status);
         return layout;
@@ -6691,7 +6691,7 @@ try {{
         {
             var session = _session ?? throw new InvalidOperationException("Sign in to view this assignment.");
             var assignmentId = JsonLong(record.Data, "assignment_id", "assignmentId", "id");
-            if (assignmentId <= 0) throw new InvalidOperationException("ClassWire did not return a valid assignment ID.");
+            if (assignmentId <= 0) throw new InvalidOperationException("Schoology did not return a valid assignment ID.");
             using var document = await _api.GetAssignmentAsync(session, sectionId, assignmentId);
             var assignment = document.RootElement;
             if (assignment.ValueKind == JsonValueKind.Object && assignment.TryGetProperty("assignment", out var nested))
@@ -6855,7 +6855,7 @@ try {{
                     submissions.Children.Add(comment);
                 }
                 if (gradeItemId <= 0)
-                    submissions.Children.Add(EmptyState("ClassWire did not return a grade-item ID."));
+                    submissions.Children.Add(EmptyState("Schoology did not return a grade-item ID."));
                 else if (submissionLoadError is not null)
                     submissions.Children.Add(EmptyState("Unable to load your submission.", submissionLoadError));
                 else if (submissionRecords.Count == 0)
@@ -7049,7 +7049,7 @@ try {{
         {
             var session = _session ?? throw new InvalidOperationException("Sign in to view this page.");
             var pageId = JsonLong(record.Data, "page_id", "pageId", "id", "template_id", "templateID");
-            if (pageId <= 0) throw new InvalidOperationException("ClassWire did not return a valid page ID.");
+            if (pageId <= 0) throw new InvalidOperationException("Schoology did not return a valid page ID.");
             using var document = await _api.GetCoursePageAsync(session, sectionId, pageId);
             var pageData = document.RootElement;
             if (pageData.ValueKind == JsonValueKind.Object && pageData.TryGetProperty("page", out var nestedPage))
@@ -7098,7 +7098,7 @@ try {{
             if (_sectionFrame is not null) NavigateMainSection(page, title);
             else Reset(BuildApplicationShell(title, page));
         }
-        catch (Exception ex) { await ShowApiErrorAsync("Unable to load ClassWire page", ex.Message); }
+        catch (Exception ex) { await ShowApiErrorAsync("Unable to load Schoology page", ex.Message); }
     }
 
     private async Task ShowDiscussionDetailsAsync(string kind, long entityId, SchoologyApiRecord record, Action? onBack = null) =>
@@ -7137,7 +7137,7 @@ try {{
         {
             var session = _session ?? throw new InvalidOperationException("Sign in to view this item.");
             var itemId = JsonLong(record.Data, isEvent ? "event_id" : "discussion_id", isEvent ? "eventId" : "discussionId", "id");
-            if (itemId <= 0) throw new InvalidOperationException("ClassWire did not return a valid item ID.");
+            if (itemId <= 0) throw new InvalidOperationException("Schoology did not return a valid item ID.");
             using var detailDocument = isEvent ? await _api.GetEventAsync(session, kind, entityId, itemId)
                 : await _api.GetDiscussionAsync(session, kind, entityId, itemId);
             var data = detailDocument.RootElement.Clone();
@@ -7241,7 +7241,7 @@ try {{
         try
         {
             var session = _session;
-            if (session is null || entityId <= 0) throw new InvalidOperationException("Select a ClassWire item after signing in.");
+            if (session is null || entityId <= 0) throw new InvalidOperationException("Select a Schoology item after signing in.");
             using var document = tab == "Materials" && kind == "Courses"
                 ? await _api.GetCourseFolderAsync(session, entityId, 0)
                 : tab == "Resources" && kind == "Groups"
@@ -7451,7 +7451,7 @@ try {{
         return links.ValueKind == JsonValueKind.Object ? links : default;
     }
 
-    private static string SafeMaterialFileName(string? value, string fallback = "ClassWire file")
+    private static string SafeMaterialFileName(string? value, string fallback = "Schoology file")
     {
         var name = string.IsNullOrWhiteSpace(value) ? fallback : Path.GetFileName(value.Trim());
         foreach (var invalid in Path.GetInvalidFileNameChars()) name = name.Replace(invalid, '_');
@@ -7545,7 +7545,7 @@ try {{
         {
             using var cancellation = new CancellationTokenSource();
             var progressBar = new ProgressBar { IsIndeterminate = true, Minimum = 0, Maximum = 100 };
-            var status = Text("Connecting to ClassWire…", 12);
+            var status = Text("Connecting to Schoology…", 12);
             status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
             var content = new StackPanel { Spacing = 10, MinWidth = 320 };
             content.Children.Add(status);
@@ -7591,7 +7591,7 @@ try {{
                 }
             });
             var download = _auth.GetSchoologyFileBytesAsync(
-                _session ?? throw new InvalidOperationException("Sign in to download ClassWire files."),
+                _session ?? throw new InvalidOperationException("Sign in to download Schoology files."),
                 url, progress, cancellation.Token);
             var completed = await Task.WhenAny(download, cancelled.Task);
             if (completed == cancelled.Task)
@@ -7638,7 +7638,7 @@ try {{
             SuggestedStartLocation = PickerLocationId.Downloads,
             SuggestedFileName = Path.GetFileNameWithoutExtension(safeName)
         };
-        picker.FileTypeChoices.Add("ClassWire file", new List<string> { extension });
+        picker.FileTypeChoices.Add("Schoology file", new List<string> { extension });
         WinRT.Interop.InitializeWithWindow.Initialize(picker, Win32Interop.GetWindowFromWindowId(AppWindow.Id));
         var destination = await picker.PickSaveFileAsync();
         if (destination is null) return;
@@ -8480,7 +8480,7 @@ try {{
             details.Children.Add(Text(title, 18, true));
             var description = ProfileValue(record.Data, "description", "body", "due", "due_date", "type");
             if (!string.IsNullOrWhiteSpace(description)) details.Children.Add(Text(StripMarkup(description), 13));
-            details.Children.Add(Text("ClassWire did not provide an embeddable HTTPS link for this material.", 12));
+            details.Children.Add(Text("Schoology did not provide an embeddable HTTPS link for this material.", 12));
             await new ContentDialog { Title = "Material details", Content = CreateDialogScrollViewport(details, 560),
                 CloseButtonText = "Close", XamlRoot = _root.XamlRoot, RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme }.ShowAsync();
         }
@@ -8509,7 +8509,7 @@ try {{
             var admin = JsonBoolean(data, "admin", "is_admin", "isAdmin", "owner", "is_owner") ||
                 JsonBoolean(user, "admin", "is_admin", "isAdmin", "owner", "is_owner") ||
                 (!string.IsNullOrWhiteSpace(role) && System.Text.RegularExpressions.Regex.IsMatch(role, @"\b(admin|administrator|owner)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
-            return new { Id = id, First = first, Last = last, Name = string.IsNullOrWhiteSpace(name) ? "ClassWire member" : name, Picture = picture, Role = role, Admin = admin };
+            return new { Id = id, First = first, Last = last, Name = string.IsNullOrWhiteSpace(name) ? "Schoology member" : name, Picture = picture, Role = role, Admin = admin };
         }).Where(person => person.Id > 0).ToList();
         var root = new StackPanel { Spacing = 8 };
         var filters = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Left };
@@ -8538,7 +8538,7 @@ try {{
             if (visible.Count == 0)
             {
                 list.Items.Add(new ListViewItem { Content = Text(filters.SelectedItem == admins ? "No admins found." :
-                    filters.SelectedItem == members ? "No members found." : "No members were returned by ClassWire.", 13) });
+                    filters.SelectedItem == members ? "No members found." : "No members were returned by Schoology.", 13) });
                 return;
             }
             var lastHeader = "";
@@ -8756,7 +8756,7 @@ try {{
             ProfileValue(data, "user_name", "author_name", "name_display", "display_name") ??
             (authorId > 0 && _userProfileCache.TryGetValue(authorId, out var cachedAuthor)
                 ? ProfileValue(cachedAuthor, "name_display", "display_name", "name", "user_name") : null) ??
-            (authorId > 0 ? "ClassWire user" : "Unknown author");
+            (authorId > 0 ? "Schoology user" : "Unknown author");
 
         // Match the Tauri comment layout: avatar and author share a compact header,
         // while the comment body, timestamp, and actions use the full row width below.
@@ -8978,7 +8978,7 @@ try {{
         if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri) ||
             (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) ||
             !string.IsNullOrEmpty(uri.UserInfo))
-            throw new InvalidOperationException("ClassWire returned an invalid external link.");
+            throw new InvalidOperationException("Schoology returned an invalid external link.");
         var opened = await Windows.System.Launcher.LaunchUriAsync(uri);
         if (!opened) await ShowApiErrorAsync("Unable to open link", "Windows could not open this link in the default browser.");
     }
@@ -8990,7 +8990,7 @@ try {{
             var rawUrl = ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url",
                 "launch_url", "launchUrl");
             if (string.IsNullOrWhiteSpace(rawUrl))
-                throw new InvalidOperationException("ClassWire did not provide a URL for this link.");
+                throw new InvalidOperationException("Schoology did not provide a URL for this link.");
             await OpenExternalLinkAsync(rawUrl);
             return;
         }
@@ -9005,7 +9005,7 @@ try {{
                 return;
             }
             if (string.IsNullOrWhiteSpace(rawUrl))
-                throw new InvalidOperationException("ClassWire did not provide a URL for this video.");
+                throw new InvalidOperationException("Schoology did not provide a URL for this video.");
             await OpenExternalLinkAsync(rawUrl);
             return;
         }
@@ -9043,7 +9043,7 @@ try {{
     private async Task ShowAttachmentOptionsAsync(JsonElement attachment, Action onBack)
     {
         var name = SafeMaterialFileName(ProfileValue(attachment, "filename", "fileName", "file_title",
-            "fileTitle", "title", "name"), "ClassWire attachment");
+            "fileTitle", "title", "name"), "Schoology attachment");
         var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ??
             "application/octet-stream";
         var originalUrl = ProfileValue(attachment, "file_download_url", "fileDownloadURL", "download_path",
@@ -9069,7 +9069,7 @@ try {{
         {
             var link = ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url");
             if (!string.IsNullOrWhiteSpace(link)) { await OpenExternalLinkAsync(link); return; }
-            throw new InvalidOperationException("ClassWire did not provide a download link for this attachment.");
+            throw new InvalidOperationException("Schoology did not provide a download link for this attachment.");
         }
 
         var previewUrl = convertedReady ? convertedUrl! : originalUrl;
@@ -10292,7 +10292,7 @@ try {{
                     (currentMode == "Sent"
                         ? ProfileValue(data, "recipient_name", "recipient_display_name", "to_name")
                         : ProfileValue(data, "author_name", "user_name", "name_display", "sender_name")) ??
-                    (personId > 0 ? $"User {personId}" : currentMode == "Sent" ? "To recipient" : "ClassWire user");
+                    (personId > 0 ? $"User {personId}" : currentMode == "Sent" ? "To recipient" : "Schoology user");
                 var picture = personProfile.ValueKind == System.Text.Json.JsonValueKind.Object
                     ? ProfileValue(personProfile, "picture_url", "pictureUrl", "picture", "photo_url", "avatar_url") : null;
                 var subject = ProfileValue(data, "subject", "message_subject", "title") ?? record.Title;
@@ -10358,8 +10358,8 @@ try {{
             if (_session is null)
             {
                 loading = false;
-                ShowMailboxLoadError("Sign in to view your ClassWire messages.");
-                ShowDetailPlaceholder("Messages unavailable", "Sign in to load your ClassWire messages.");
+                ShowMailboxLoadError("Sign in to view your Schoology messages.");
+                ShowDetailPlaceholder("Messages unavailable", "Sign in to load your Schoology messages.");
                 if (ReferenceEquals(mailboxLoadCancellation, requestCancellation))
                     mailboxLoadCancellation = null;
                 requestCancellation.Dispose();
@@ -10493,7 +10493,7 @@ try {{
             var id = JsonLong(record.Data, "id", "message_id", "messageId");
             if (id <= 0)
             {
-                await ShowApiErrorAsync("Unable to open message", "ClassWire did not return a valid message ID.");
+                await ShowApiErrorAsync("Unable to open message", "Schoology did not return a valid message ID.");
                 return;
             }
             var viewGeneration = ++messageViewGeneration;
@@ -10534,7 +10534,7 @@ try {{
                 var subject = ProfileValue(rootMessage, "subject", "message_subject", "title") ??
                     threadMessages.Select(message => ProfileValue(message, "subject", "message_subject", "title")).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? record.Title;
                 var sender = ProfileValue(rootMessage, "author_name", "user_name", "sender_name", "name_display") ??
-                    ProfileValue(record.Data, "author_name", "user_name", "sender_name") ?? "ClassWire user";
+                    ProfileValue(record.Data, "author_name", "user_name", "sender_name") ?? "Schoology user";
                 var authorIds = threadMessages.Select(message => JsonLong(message, "author_id", "authorId", "uid", "user_id", "sender_id", "senderId"))
                     .Where(id => id > 0).Distinct().ToArray();
                 await Task.WhenAll(authorIds.Where(id => !_userProfileCache.ContainsKey(id)).Select(async id =>
@@ -10700,7 +10700,7 @@ try {{
         var session = _session;
         if (session is null)
         {
-            await ShowApiErrorAsync("Messages unavailable", "Sign in to create a ClassWire message.");
+            await ShowApiErrorAsync("Messages unavailable", "Sign in to create a Schoology message.");
             return;
         }
 
@@ -11310,7 +11310,7 @@ try {{
             using var enrollmentsDocument = responses[5];
             using var sectionDocument = responses[6];
             if (itemDocument is null)
-                throw new InvalidOperationException("ClassWire did not return this course's grade items.");
+                throw new InvalidOperationException("Schoology did not return this course's grade items.");
 
             rows.Children.Clear();
             var finalGradeRecords = SchoologyApiClient.ReadRecords(finalGradesDocument?.RootElement ?? default,
@@ -11776,8 +11776,8 @@ try {{
                     if (assignments.Count == 0)
                         gradeRows.Children.Add(EmptyState("Assignment grade details are unavailable.",
                             itemDocument is null
-                                ? "ClassWire denied access to this course's grade-item list (HTTP 403). The overall grade above is still shown."
-                                : "ClassWire did not return any graded items for this course."));
+                                ? "Schoology denied access to this course's grade-item list (HTTP 403). The overall grade above is still shown."
+                                : "Schoology did not return any graded items for this course."));
                     loaded = true;
                 }
                 catch (Exception ex)
@@ -11866,10 +11866,10 @@ try {{
         await _sharedWebViewGate.WaitAsync();
         try
         {
-            if (_session is null) throw new InvalidOperationException("Sign in to open ClassWire web content.");
+            if (_session is null) throw new InvalidOperationException("Sign in to open Schoology web content.");
             if (!Uri.TryCreate(NormalizeSchoologyWebUrl(rawUrl), UriKind.Absolute, out var uri) ||
                 uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo))
-                throw new InvalidOperationException("Only secure HTTPS links can be opened in the shared ClassWire view.");
+                throw new InvalidOperationException("Only secure HTTPS links can be opened in the shared Schoology view.");
             if (!IsSchoologyWebHost(uri.Host) && !allowLtiExternal)
             {
                 await Windows.System.Launcher.LaunchUriAsync(uri);
@@ -11920,7 +11920,7 @@ try {{
                 var installedCookies = await core.CookieManager.GetCookiesAsync(_auth.WebSessionUrl);
                 if (!installedCookies.Any(cookie => cookie.Name.StartsWith("SESS", StringComparison.OrdinalIgnoreCase) &&
                     !string.IsNullOrWhiteSpace(cookie.Value)))
-                    throw new InvalidOperationException("The shared ClassWire WebView did not receive a usable SESS cookie. Sign in again and retry.");
+                    throw new InvalidOperationException("The shared Schoology WebView did not receive a usable SESS cookie. Sign in again and retry.");
                 _sharedWebViewInitialized = true;
             }
             else
@@ -11992,7 +11992,7 @@ try {{
         }
         catch (Exception ex)
         {
-            await ShowApiErrorAsync("Unable to open ClassWire web content", ex.Message);
+            await ShowApiErrorAsync("Unable to open Schoology web content", ex.Message);
         }
         finally
         {
@@ -12336,7 +12336,7 @@ try {{
                 userData = profileRoot.ValueKind == JsonValueKind.Object &&
                     profileRoot.TryGetProperty("user", out var nestedUser) ? nestedUser.Clone() : profileRoot.Clone();
 
-                var displayName = ProfileValue(userData, "name_display", "display_name", "name", "username") ?? "ClassWire user";
+                var displayName = ProfileValue(userData, "name_display", "display_name", "name", "username") ?? "Schoology user";
                 nameText.Text = displayName;
                 avatarFallback.Text = displayName.Length > 0 ? displayName[..1].ToUpperInvariant() : "U";
                 schoolText.Text = ProfileValue(userData, "school_name", "school_title") ??
@@ -12430,7 +12430,7 @@ try {{
         _page = "Search";
         UpdateTitleBarCreateButton("Search", null);
         var panel = new StackPanel { Spacing = 12, Margin = new Thickness(24) };
-        panel.Children.Add(Text("Search ClassWire", 22, true));
+        panel.Children.Add(Text("Search Schoology", 22, true));
         var searchBox = new AutoSuggestBox { PlaceholderText = "Search courses, groups, people, and updates" };
         panel.Children.Add(searchBox);
         panel.Children.Add(Action("Back", (_, _) => ShowHome()));
