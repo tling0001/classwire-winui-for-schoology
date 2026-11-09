@@ -95,6 +95,21 @@ jobs:
           $exe = "publish/${{ matrix.rid }}/ClassWire.exe"
           if (!(Test-Path -LiteralPath $exe)) { throw "Expected executable was not produced: $exe" }
           Write-Host "Verified executable: $exe"
+          $pdfRoot = "publish/${{ matrix.rid }}/PdfJs"
+          $requiredPdfAssets = @(
+            "$pdfRoot/PdfViewer.html",
+            "$pdfRoot/build/pdf.mjs",
+            "$pdfRoot/build/pdf.worker.mjs",
+            "$pdfRoot/cmaps/Adobe-Japan1-UCS2.bcmap",
+            "$pdfRoot/standard_fonts/FoxitSans.pfb"
+          )
+          foreach ($asset in $requiredPdfAssets) {
+            if (!(Test-Path -LiteralPath $asset -PathType Leaf)) { throw "PDF.js runtime asset was not published: $asset" }
+            Write-Host "Verified PDF.js asset: $asset"
+          }
+          $pdfAssetCount = @(Get-ChildItem -LiteralPath $pdfRoot -Recurse -File).Count
+          if ($pdfAssetCount -lt 10) { throw "PDF.js publish folder is incomplete ($pdfAssetCount files): $pdfRoot" }
+          Write-Host "Verified $pdfAssetCount bundled PDF.js files."
 
       - name: Install Inno Setup
         shell: pwsh

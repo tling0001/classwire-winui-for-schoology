@@ -1,4 +1,8 @@
-## [2026.10.0-port.112] - 2026-11-08
+## [2026.10.0-port.113] - 2026-11-08
+
+- Fix PDF.js runtime asset deployment by explicitly setting the publish-relative `PdfJs\...` target paths and copy-to-publish metadata.
+- Verify the viewer page, PDF.js module/worker, CMaps, and standard fonts are present in both architecture publish outputs before packaging installers.
+- Keep PDF.js resources outside WinUI PRI resource processing.
 
 - Fix x64 and ARM64 publish failures in WinUI PRI generation by treating bundled PDF.js files as ordinary copied runtime assets rather than WinUI content resources.
 - Preserve the PDF.js viewer, selectable text, PDF hyperlinks, page navigation, zoom, and the shared ClassWire icon.
