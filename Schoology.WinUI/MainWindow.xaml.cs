@@ -1238,10 +1238,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         {
             StartPoint = MarkPoint(15.7, 4.6), IsClosed = true
         };
-        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(13.5, 2.9), Point2 = MarkPoint(11.8, 2), Point3 = MarkPoint(9.8, 2) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(14.1, 2.9), Point2 = MarkPoint(12.1, 2), Point3 = MarkPoint(9.8, 2) });
         glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(5, 2), Point2 = MarkPoint(2, 5.3), Point3 = MarkPoint(2, 10) });
         glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(2, 14.7), Point2 = MarkPoint(5, 18), Point3 = MarkPoint(9.8, 18) });
-        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(11.8, 18), Point2 = MarkPoint(13.5, 17.1), Point3 = MarkPoint(15.7, 15.4) });
+        glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(12.1, 18), Point2 = MarkPoint(14.1, 17.1), Point3 = MarkPoint(15.7, 15.4) });
         glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.LineSegment { Point = MarkPoint(13.5, 13.2) });
         glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(12.5, 14.5), Point2 = MarkPoint(11.2, 14.8), Point3 = MarkPoint(9.8, 14.8) });
         glyphFigure.Segments.Add(new Microsoft.UI.Xaml.Media.BezierSegment { Point1 = MarkPoint(6.8, 14.8), Point2 = MarkPoint(5.1, 12.8), Point3 = MarkPoint(5.1, 10) });
@@ -7866,6 +7866,9 @@ try {{
         InMemoryRandomAccessStream? pdfStream = null;
         uint currentPage = 0;
         var renderGate = new SemaphoreSlim(1, 1);
+        WebView2? pdfWebView = null;
+        double pdfZoom = 1.0;
+        string? pdfDataDirectory = null;
         var viewerClosing = false;
         viewerScroll.SizeChanged += (_, args) =>
         {
@@ -7891,6 +7894,8 @@ try {{
             try
             {
                 pdf = null;
+                if (pdfWebView?.CoreWebView2 is not null) pdfWebView.CoreWebView2.Navigate("about:blank");
+                pdfWebView = null;
                 image.Source = null;
                 foreach (var pageImage in pdfPageImages) pageImage.Source = null;
                 pdfPageImages.Clear();
@@ -7901,6 +7906,7 @@ try {{
             }
             finally { renderGate.Release(); }
             try { File.Delete(previewPath); } catch { }
+            if (pdfDataDirectory is not null) { try { Directory.Delete(pdfDataDirectory, true); } catch { } }
             await Task.Yield();
             onBack();
         });
@@ -7939,18 +7945,30 @@ try {{
         };
         previous = Action("‹", (_, _) =>
         {
-            if (viewerClosing || pdf is null || currentPage == 0) return;
+            if (viewerClosing) return;
+            if (pdfWebView?.CoreWebView2 is not null) { _ = pdfWebView.CoreWebView2.ExecuteScriptAsync("window.goToPage(-1)"); return; }
+            if (pdf is null || currentPage == 0) return;
             currentPage--;
             ScrollToCurrentPdfPage();
         });
         next = Action("›", (_, _) =>
         {
-            if (viewerClosing || pdf is null || currentPage + 1 >= pdf.PageCount) return;
+            if (viewerClosing) return;
+            if (pdfWebView?.CoreWebView2 is not null) { _ = pdfWebView.CoreWebView2.ExecuteScriptAsync("window.goToPage(1)"); return; }
+            if (pdf is null || currentPage + 1 >= pdf.PageCount) return;
             currentPage++;
             ScrollToCurrentPdfPage();
         });
-        var zoomOut = Action("−", (_, _) => viewerScroll.ChangeView(null, null, Math.Max(0.5f, viewerScroll.ZoomFactor - 0.2f)));
-        var zoomIn = Action("+", (_, _) => viewerScroll.ChangeView(null, null, Math.Min(4f, viewerScroll.ZoomFactor + 0.2f)));
+        var zoomOut = Action("−", (_, _) =>
+        {
+            if (pdfWebView?.CoreWebView2 is not null) { pdfZoom = Math.Max(0.5, pdfZoom - 0.2); _ = pdfWebView.CoreWebView2.ExecuteScriptAsync($"window.setViewerZoom({pdfZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)})"); }
+            else viewerScroll.ChangeView(null, null, Math.Max(0.5f, viewerScroll.ZoomFactor - 0.2f));
+        });
+        var zoomIn = Action("+", (_, _) =>
+        {
+            if (pdfWebView?.CoreWebView2 is not null) { pdfZoom = Math.Min(3.0, pdfZoom + 0.2); _ = pdfWebView.CoreWebView2.ExecuteScriptAsync($"window.setViewerZoom({pdfZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)})"); }
+            else viewerScroll.ChangeView(null, null, Math.Min(4f, viewerScroll.ZoomFactor + 0.2f));
+        });
         var download = Action(string.Empty, async (_, _) =>
             await SaveOriginalMaterialAsync(originalUrl, originalFilename, originalMime));
         download.Content = new FontIcon
@@ -7981,59 +7999,76 @@ try {{
 
         if (isPdf)
         {
+            // Attach the host grid first so WinUI can create WebView2's controller on the UI thread.
+            if (_sectionFrame is not null) NavigateMainSection(viewer, title);
+            else Reset(BuildApplicationShell(title, viewer));
             try
             {
-                var pdfBytes = await File.ReadAllBytesAsync(previewPath);
-                pdfStream = new InMemoryRandomAccessStream();
-                using (var writer = new DataWriter(pdfStream.GetOutputStreamAt(0)))
+                var pdfRoot = Path.Combine(AppContext.BaseDirectory, "PdfJs");
+                pdfDataDirectory = Path.Combine(Path.GetTempPath(), "Schoology", "PdfViewer", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(pdfDataDirectory);
+                var pdfDataPath = Path.Combine(pdfDataDirectory, Path.GetFileName(previewPath));
+                File.Copy(previewPath, pdfDataPath, true);
+                var viewerPage = Path.Combine(pdfRoot, "PdfViewer.html");
+                if (!File.Exists(viewerPage) || !File.Exists(Path.Combine(pdfRoot, "build", "pdf.mjs")))
+                    throw new FileNotFoundException("The PDF viewer resources are missing from this installation.");
+
+                pdfWebView = new WebView2
                 {
-                    writer.WriteBytes(pdfBytes);
-                    await writer.StoreAsync();
-                    await writer.FlushAsync();
-                    writer.DetachStream();
-                }
-                pdfStream.Seek(0);
-                pdf = await PdfDocument.LoadFromStreamAsync(pdfStream);
-                if (pdf.PageCount == 0) throw new InvalidOperationException("The PDF does not contain any pages.");
-                viewerScroll.Content = pdfPagesStack;
-                var pageWidth = Math.Max(240, viewerScroll.ActualWidth - 48);
-                pdfPagesStack.Width = Math.Max(240, viewerScroll.ActualWidth);
-                for (uint pageIndex = 0; pageIndex < pdf.PageCount; pageIndex++)
-                {
-                    var pageImage = new Image
-                    {
-                        Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        Width = pageWidth,
-                        MaxWidth = 1500
-                    };
-                    pdfPageImages.Add(pageImage);
-                    pdfPagesStack.Children.Add(new Border
-                    {
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        Background = new SolidColorBrush(Colors.Transparent),
-                        BorderBrush = ThemeBrush("SchoologyDividerBrush"),
-                        BorderThickness = new Thickness(1),
-                        Padding = new Thickness(8),
-                        Child = pageImage
-                    });
-                    await renderGate.WaitAsync();
-                    try { await RenderPdfPageAsync(pdf, pageIndex, pageImage, pageLabel, status); }
-                    finally { renderGate.Release(); }
-                }
-                currentPage = 0;
-                pageLabel.Text = "1 / " + pdf.PageCount;
-                SetStatusText(status, "");
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch
+                };
+                viewer.Children.Remove(viewerScroll);
+                Grid.SetRow(pdfWebView, 1);
+                viewer.Children.Add(pdfWebView);
+
+                await pdfWebView.EnsureCoreWebView2Async();
+                var core = pdfWebView.CoreWebView2;
                 previous.IsEnabled = false;
-                next.IsEnabled = pdf.PageCount > 1;
-                viewerScroll.ChangeView(null, 0, 1f, true);
+                next.IsEnabled = false;
+                core.Settings.AreDefaultContextMenusEnabled = true;
+                core.Settings.AreDevToolsEnabled = false;
+                core.Settings.IsStatusBarEnabled = false;
+                core.Settings.IsZoomControlEnabled = false;
+                core.SetVirtualHostNameToFolderMapping(
+                    "classwire-pdf.local", pdfRoot, CoreWebView2HostResourceAccessKind.Allow);
+                core.SetVirtualHostNameToFolderMapping(
+                    "classwire-pdf-file.local", pdfDataDirectory, CoreWebView2HostResourceAccessKind.Allow);
+                core.WebMessageReceived += async (_, messageArgs) =>
+                {
+                    try
+                    {
+                        using var message = JsonDocument.Parse(messageArgs.WebMessageAsJson);
+                        var root = message.RootElement;
+                        var type = root.TryGetProperty("type", out var typeValue) ? typeValue.GetString() : null;
+                        if (type == "page" && root.TryGetProperty("page", out var pageValue))
+                        {
+                            currentPage = (uint)Math.Max(0, pageValue.GetInt32() - 1);
+                            var count = root.TryGetProperty("count", out var countValue) ? countValue.GetInt32() : 0;
+                            pageLabel.Text = count > 0 ? $"{currentPage + 1} / {count}" : "PDF";
+                            previous.IsEnabled = currentPage > 0;
+                            next.IsEnabled = count > 0 && currentPage + 1 < count;
+                        }
+                        else if (type == "openLink" && root.TryGetProperty("url", out var urlValue))
+                        {
+                            var target = urlValue.GetString();
+                            if (Uri.TryCreate(target, UriKind.Absolute, out var targetUri) &&
+                                (targetUri.Scheme == Uri.UriSchemeHttps || targetUri.Scheme == Uri.UriSchemeHttp))
+                                await Windows.System.Launcher.LaunchUriAsync(targetUri);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        App.WriteStartupLog("Could not handle a PDF viewer message.", ex);
+                    }
+                };
+                var pdfFileName = Uri.EscapeDataString(Path.GetFileName(pdfDataPath));
+                pdfWebView.Source = new Uri($"https://classwire-pdf.local/PdfViewer.html?file={pdfFileName}");
+                SetStatusText(status, "Opening PDF…");
             }
             catch (Exception ex)
             {
-                pdf = null;
-                pdfStream?.Dispose();
-                pdfStream = null;
-                SetStatusText(status, $"Unable to render this PDF: {ex.Message}");
+                SetStatusText(status, $"Unable to open this PDF: {ex.Message}");
                 pageLabel.Text = "Preview unavailable";
             }
         }
@@ -8061,8 +8096,11 @@ try {{
             status.Foreground = ThemeBrush("SchoologyMutedTextBrush");
             pageLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         };
-        if (_sectionFrame is not null) NavigateMainSection(viewer, title);
-        else Reset(BuildApplicationShell(title, viewer));
+        if (!isPdf)
+        {
+            if (_sectionFrame is not null) NavigateMainSection(viewer, title);
+            else Reset(BuildApplicationShell(title, viewer));
+        }
     }
 
     private static async Task RenderPdfPageAsync(

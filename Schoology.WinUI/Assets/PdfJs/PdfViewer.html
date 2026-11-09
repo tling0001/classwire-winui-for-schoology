@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ClassWire PDF viewer</title>
+<style>
+:root{font-family:"Segoe UI",sans-serif;background:transparent;color:#202124}*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:transparent}body{padding:16px;overflow-y:auto}
+#pages{display:flex;flex-direction:column;align-items:center;gap:18px;min-height:100%}
+.page{position:relative;background:#fff;box-shadow:0 2px 12px #0003;overflow:hidden;max-width:100%}
+.page canvas{display:block}.textLayer{position:absolute;inset:0;overflow:hidden;line-height:1;text-align:initial;transform-origin:0 0;opacity:1}
+.textLayer span,.textLayer br{position:absolute;color:transparent;white-space:pre;cursor:text;transform-origin:0 0}
+.textLayer ::selection{background:rgba(40,120,220,.28)}
+.annotationLayer{position:absolute;inset:0;pointer-events:none}
+.annotationLayer a{position:absolute;display:block;pointer-events:auto;cursor:pointer;background:transparent}
+.annotationLayer a:focus-visible{outline:2px solid #1684d8;outline-offset:-2px}
+#status{padding:24px;color:#666;text-align:center}
+</style></head><body><div id="status">Loading PDF…</div><main id="pages" aria-label="PDF pages"></main>
+<script type="module">
+import * as pdfjsLib from './build/pdf.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc='./build/pdf.worker.mjs';
+let pdf=null,pageNodes=[],current=1;
+const pages=document.getElementById('pages'),status=document.getElementById('status');
+const post=data=>{try{window.chrome.webview.postMessage(data)}catch{}};
+const scrollBehavior=()=>matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth';
+function announce(){post({type:'page',page:current,count:pdf?.numPages||0})}
+function goToPage(delta){if(!pdf)return;const next=Math.max(1,Math.min(pdf.numPages,current+delta));pageNodes[next-1]?.scrollIntoView({behavior:scrollBehavior(),block:'start'});current=next;announce()}
+window.goToPage=goToPage;
+window.setViewerZoom=factor=>{document.body.style.zoom=String(factor)};
+async function renderPage(number){
+ const page=await pdf.getPage(number),natural=page.getViewport({scale:1});
+ const available=Math.max(320,document.documentElement.clientWidth-32),scale=Math.min(2,available/natural.width),viewport=page.getViewport({scale});
+ const holder=document.createElement('section');holder.className='page';holder.style.width=viewport.width+'px';holder.style.height=viewport.height+'px';holder.setAttribute('aria-label','Page '+number);
+ const canvas=document.createElement('canvas'),dpr=Math.min(2,window.devicePixelRatio||1);
+ canvas.width=Math.ceil(viewport.width*dpr);canvas.height=Math.ceil(viewport.height*dpr);canvas.style.width=viewport.width+'px';canvas.style.height=viewport.height+'px';
+ holder.append(canvas);
+ const textLayerDiv=document.createElement('div');textLayerDiv.className='textLayer';textLayerDiv.style.setProperty('--scale-factor',String(scale));holder.append(textLayerDiv);
+ const annotationLayer=document.createElement('div');annotationLayer.className='annotationLayer';holder.append(annotationLayer);pages.append(holder);
+ await page.render({canvasContext:canvas.getContext('2d',{alpha:false}),viewport,transform:dpr!==1?[dpr,0,0,dpr,0,0]:null}).promise;
+ const textContent=await page.getTextContent();
+ const textLayer=new pdfjsLib.TextLayer({textContentSource:textContent,container:textLayerDiv,viewport});await textLayer.render();
+ const annotations=await page.getAnnotations({intent:'display'});
+ for(const annotation of annotations){
+  if(annotation.subtype!=='Link')continue;
+  const rect=viewport.convertToViewportRectangle(annotation.rect),left=Math.min(rect[0],rect[2]),top=Math.min(rect[1],rect[3]);
+  const link=document.createElement('a');link.style.left=left+'px';link.style.top=top+'px';link.style.width=Math.abs(rect[2]-rect[0])+'px';link.style.height=Math.abs(rect[3]-rect[1])+'px';
+  link.setAttribute('aria-label',annotation.title||annotation.url||'PDF link');
+  if(annotation.url||annotation.unsafeUrl){const url=annotation.url||annotation.unsafeUrl;link.href='#';link.addEventListener('click',event=>{event.preventDefault();post({type:'openLink',url})})}
+  else if(annotation.dest){link.href='#';link.addEventListener('click',async event=>{event.preventDefault();try{const dest=typeof annotation.dest==='string'?await pdf.getDestination(annotation.dest):annotation.dest;const index=await pdf.getPageIndex(dest[0]),target=index+1;pageNodes[target-1]?.scrollIntoView({behavior:scrollBehavior(),block:'start'});current=target;announce()}catch{}})}
+  else continue;
+  annotationLayer.append(link);
+ }
+ return holder;
+}
+window.loadPdfUrl=async function(url){
+ try{
+  pages.replaceChildren();status.textContent='Loading PDF…';
+  pdf=await pdfjsLib.getDocument({url,cMapUrl:'./cmaps/',cMapPacked:true,standardFontDataUrl:'./standard_fonts/'}).promise;
+  for(let number=1;number<=pdf.numPages;number++)pageNodes.push(await renderPage(number));
+  status.remove();current=1;announce();
+  const observer=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];if(visible){current=pageNodes.indexOf(visible.target)+1;announce()}},{threshold:[.2,.5,.8]});
+  pageNodes.forEach(node=>observer.observe(node));
+ }catch(error){status.textContent='Unable to display this PDF: '+(error?.message||String(error));post({type:'error',message:status.textContent})}
+};
+const pdfFile=new URL(location.href).searchParams.get('file');
+if(pdfFile) window.loadPdfUrl('https://classwire-pdf-file.local/'+encodeURIComponent(pdfFile));
+</script></body></html>

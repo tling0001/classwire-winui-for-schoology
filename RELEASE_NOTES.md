@@ -1,3 +1,9 @@
+## [2026.10.0-port.111] - 2026-11-08
+
+- Replace the raster-only PDF preview with a bundled PDF.js viewer hosted inside a dedicated WebView2 surface, with selectable/copyable text, clickable external and internal PDF links, page navigation, and zoom.
+- Keep the native ClassWire viewer toolbar and original-file download action; do not expose the built-in Chromium PDF viewer or its download controls.
+- Regenerate the Windows app icon from the exact ClassWire vector mark used by the SwiftUI app, keeping the white canvas, blue ring, and original C proportions consistent across platforms.
+
 ## [2026.10.0-port.110] - 2026-11-08
 
 - Correct user-facing loading, download, attachment, message, resource, and API-response wording throughout the app so Schoology content and data are attributed to Schoology rather than the ClassWire desktop app.

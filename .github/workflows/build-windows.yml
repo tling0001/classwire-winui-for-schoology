@@ -30,6 +30,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Setup Node.js for PDF.js and icon assets
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Generate shared ClassWire app icon
+        shell: pwsh
+        run: |
+          npm install --prefix .build/icon --no-save sharp@0.33.5
+          if ($LASTEXITCODE -ne 0) { throw "Icon image tooling installation failed." }
+          node Scripts/build-classwire-icon.mjs
+          if ($LASTEXITCODE -ne 0) { throw "ClassWire icon generation failed." }
+
+      - name: Stage PDF.js viewer assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm install --prefix .build/pdfjs --no-save pdfjs-dist@4.10.38
+          if ($LASTEXITCODE -ne 0) { throw "PDF.js installation failed." }
+          $source = Join-Path $env:GITHUB_WORKSPACE ".build/pdfjs/node_modules/pdfjs-dist"
+          $destination = Join-Path $env:GITHUB_WORKSPACE "Schoology.WinUI/Assets/PdfJs"
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+          foreach ($folder in @("build", "cmaps", "standard_fonts")) {
+            Copy-Item -LiteralPath (Join-Path $source $folder) -Destination $destination -Recurse -Force
+          }
+          Copy-Item -LiteralPath (Join-Path $source "LICENSE") -Destination (Join-Path $destination "PDFJS-LICENSE.txt") -Force
+
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v5
         with:

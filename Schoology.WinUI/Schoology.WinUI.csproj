@@ -17,16 +17,17 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.110</Version>
-    <AssemblyVersion>2026.10.0.110</AssemblyVersion>
-    <FileVersion>2026.10.0.110</FileVersion>
-    <InformationalVersion>2026.10.0-port.110</InformationalVersion>
+    <Version>2026.10.0-port.111</Version>
+    <AssemblyVersion>2026.10.0.111</AssemblyVersion>
+    <FileVersion>2026.10.0.111</FileVersion>
+    <InformationalVersion>2026.10.0-port.111</InformationalVersion>
     <Title>ClassWire</Title>
     <Product>ClassWire</Product>
     <AssemblyName>ClassWire</AssemblyName>
     <ApplicationIcon>Assets\\ClassWire.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="Assets\\PdfJs\\**\\*" CopyToOutputDirectory="PreserveNewest" Link="PdfJs\\%(RecursiveDir)%(Filename)%(Extension)" />
     <Using Include="Windows.UI.Text.FontWeight" Alias="FontWeight" />
     <Using Include="Windows.UI.Text.FontStyle" Alias="FontStyle" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260804001" />
