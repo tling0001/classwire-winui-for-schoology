@@ -56,6 +56,10 @@ jobs:
             Copy-Item -LiteralPath (Join-Path $source $folder) -Destination $destination -Recurse -Force
           }
           Copy-Item -LiteralPath (Join-Path $source "LICENSE") -Destination (Join-Path $destination "PDFJS-LICENSE.txt") -Force
+          foreach ($required in @("build/pdf.mjs", "build/pdf.worker.mjs")) {
+            if (!(Test-Path -LiteralPath (Join-Path $destination $required))) { throw "Required PDF.js runtime asset is missing: $required" }
+          }
+          Write-Host "Staged $((Get-ChildItem -LiteralPath $destination -Recurse -File).Count) PDF.js runtime files."
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v5

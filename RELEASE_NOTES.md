@@ -1,4 +1,7 @@
-## [2026.10.0-port.111] - 2026-11-08
+## [2026.10.0-port.112] - 2026-11-08
+
+- Fix x64 and ARM64 publish failures in WinUI PRI generation by treating bundled PDF.js files as ordinary copied runtime assets rather than WinUI content resources.
+- Preserve the PDF.js viewer, selectable text, PDF hyperlinks, page navigation, zoom, and the shared ClassWire icon.
 
 - Replace the raster-only PDF preview with a bundled PDF.js viewer hosted inside a dedicated WebView2 surface, with selectable/copyable text, clickable external and internal PDF links, page navigation, and zoom.
 - Keep the native ClassWire viewer toolbar and original-file download action; do not expose the built-in Chromium PDF viewer or its download controls.
