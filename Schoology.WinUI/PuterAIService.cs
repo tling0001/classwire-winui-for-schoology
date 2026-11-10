@@ -88,8 +88,9 @@ internal sealed class PuterAIService
             if (_initialized) return;
             var dataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClassWire", "PuterWebView2");
             Directory.CreateDirectory(dataPath);
-            _webView.CreationProperties = new() { UserDataFolder = dataPath };
-            await _webView.EnsureCoreWebView2Async();
+            var environment = await CoreWebView2Environment.CreateWithOptionsAsync(
+                null, dataPath, new CoreWebView2EnvironmentOptions());
+            await _webView.EnsureCoreWebView2Async(environment);
             _webView.CoreWebView2.WebMessageReceived += (_, args) =>
             {
                 try

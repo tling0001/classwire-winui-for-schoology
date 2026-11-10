@@ -1,3 +1,9 @@
+## [2026.10.0-port.122] - 2026-11-10
+
+- Fix the x64 and ARM64 publish error by creating the dedicated persistent Puter WebView2 environment with the same `CoreWebView2Environment.CreateWithOptionsAsync` API already used by the shared Schoology WebView.
+- Initialize the Puter control with that environment through `EnsureCoreWebView2Async(environment)`; do not use the unavailable `WebView2.CreationProperties` or `CoreWebView2Environment.CreateAsync` APIs.
+- Keep the Puter sign-in profile isolated under the ClassWire application data folder. Leave the existing shared WebView, PDF viewer, and Schoology cookie/session handling unchanged.
+
 ## [2026.10.0-port.121] - 2026-11-10
 
 - Fix the remaining x64 and ARM64 publish error by configuring the Puter WebView2 user-data folder through the WinUI control's `CreationProperties` before initialization, rather than calling an unavailable `CoreWebView2Environment.CreateAsync` overload.
