@@ -1,6 +1,11 @@
+## [2026.10.0-port.121] - 2026-11-10
+
+- Fix the remaining x64 and ARM64 publish error by configuring the Puter WebView2 user-data folder through the WinUI control's `CreationProperties` before initialization, rather than calling an unavailable `CoreWebView2Environment.CreateAsync` overload.
+- Preserve the dedicated persistent Puter sign-in profile and leave the existing PDF viewer unchanged.
+
 ## [2026.10.0-port.120] - 2026-11-10
 
-- Fix the x64 and ARM64 publish failures in the new AI assistant: use the supported three-argument WebView2 environment factory overload, declare the Puter overlay field, and rely on child insertion order instead of the unavailable `Panel.SetZIndex` API.
+- Fix the first x64 and ARM64 AI publish errors by declaring the Puter overlay field and relying on child insertion order instead of the unavailable `Panel.SetZIndex` API. (The WebView2 initialization correction is included in 2026.10.0-port.121.)
 - Keep the AI popout and Puter sign-in overlay above their respective content without changing the PDF viewer or existing Schoology navigation.
 
 ## [2026.10.0-port.119] - 2026-11-10
