@@ -70,6 +70,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private Action? _renderClassWireAIHistory;
     private Action? _renderClassWireAIMessages;
     private Border? _classWireAIPopout;
+    private Border? _classWireAIPuterOverlay;
     private Button? _titleBarAIButton;
     private bool _classWireAIPopoutOpen;
     private WebView2? _classWireAIPuterWebView;
@@ -2194,7 +2195,6 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Child = BuildClassWireAIAssistantPage()
         };
         Grid.SetRowSpan(aiPanel, 2);
-        Panel.SetZIndex(aiPanel, 20);
         _classWireAIPopout = aiPanel;
         shell.Children.Add(aiPanel);
 
@@ -13151,7 +13151,6 @@ try {{
         puterOverlayLayout.Children.Add(puterWebView);
         puterOverlay.Child = puterOverlayLayout;
         Grid.SetRowSpan(puterOverlay, 3);
-        Panel.SetZIndex(puterOverlay, 30);
         root.Children.Add(puterOverlay);
 
         void RenderHistory()

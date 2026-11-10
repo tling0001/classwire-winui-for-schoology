@@ -1,3 +1,8 @@
+## [2026.10.0-port.120] - 2026-11-10
+
+- Fix the x64 and ARM64 publish failures in the new AI assistant: use the supported three-argument WebView2 environment factory overload, declare the Puter overlay field, and rely on child insertion order instead of the unavailable `Panel.SetZIndex` API.
+- Keep the AI popout and Puter sign-in overlay above their respective content without changing the PDF viewer or existing Schoology navigation.
+
 ## [2026.10.0-port.119] - 2026-11-10
 
 - Move ClassWire AI out of the NavigationView and into a right-side acrylic assistant popout controlled by a permanent title-bar button.
