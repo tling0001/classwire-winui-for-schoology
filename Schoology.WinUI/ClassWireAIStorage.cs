@@ -57,6 +57,29 @@ internal static class ClassWireAIStorage
         catch { return null; }
     }
 
+    internal static string? LoadGoogleRefreshToken()
+    {
+        try
+        {
+            var credential = new PasswordVault().Retrieve("ClassWire Google OAuth", "refresh-token");
+            credential.RetrievePassword();
+            return credential.Password;
+        }
+        catch { return null; }
+    }
+
+    internal static void SaveGoogleRefreshToken(string refreshToken)
+    {
+        try
+        {
+            var vault = new PasswordVault();
+            try { vault.Remove(vault.Retrieve("ClassWire Google OAuth", "refresh-token")); } catch { }
+            if (!string.IsNullOrWhiteSpace(refreshToken))
+                vault.Add(new PasswordCredential("ClassWire Google OAuth", "refresh-token", refreshToken.Trim()));
+        }
+        catch (Exception ex) { throw new InvalidOperationException("Could not save the Google OAuth refresh token securely in Windows Credential Manager.", ex); }
+    }
+
     internal static void SaveKey(ClassWireAIProvider provider, string key)
     {
         try

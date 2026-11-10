@@ -17,10 +17,10 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.118</Version>
-    <AssemblyVersion>2026.10.0.118</AssemblyVersion>
-    <FileVersion>2026.10.0.118</FileVersion>
-    <InformationalVersion>2026.10.0-port.118</InformationalVersion>
+    <Version>2026.10.0-port.119</Version>
+    <AssemblyVersion>2026.10.0.119</AssemblyVersion>
+    <FileVersion>2026.10.0.119</FileVersion>
+    <InformationalVersion>2026.10.0-port.119</InformationalVersion>
     <Title>ClassWire</Title>
     <Product>ClassWire</Product>
     <AssemblyName>ClassWire</AssemblyName>

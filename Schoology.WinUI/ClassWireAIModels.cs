@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Schoology.WinUI;
 
-internal enum ClassWireAIProvider { Gemini, OpenAI, Anthropic, Ollama }
+internal enum ClassWireAIProvider { Gemini, OpenAI, Anthropic, Ollama, Puter }
 
 internal static class ClassWireAIProviderDefaults
 {
@@ -12,6 +12,7 @@ internal static class ClassWireAIProviderDefaults
         ClassWireAIProvider.OpenAI => "gpt-4.1-mini",
         ClassWireAIProvider.Anthropic => "claude-sonnet-4-20250514",
         ClassWireAIProvider.Ollama => "qwen3:8b",
+        ClassWireAIProvider.Puter => "gpt-4.1-mini",
         _ => "gemini-3.8-flash"
     };
 }

@@ -69,6 +69,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private bool _classWireAISending;
     private Action? _renderClassWireAIHistory;
     private Action? _renderClassWireAIMessages;
+    private Border? _classWireAIPopout;
+    private Button? _titleBarAIButton;
+    private bool _classWireAIPopoutOpen;
+    private WebView2? _classWireAIPuterWebView;
+    private PuterAIService? _classWireAIPuterService;
     private readonly Dictionary<long, JsonElement> _userProfileCache = new();
     // Share authenticated post/profile image downloads and decoded bitmaps across the UI.
     private readonly ConcurrentDictionary<string, Lazy<Task<BitmapImage>>> _postImageCache = new();
@@ -2026,6 +2031,21 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Spacing = 8,
             VerticalAlignment = VerticalAlignment.Center
         };
+        var aiButton = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE99A", FontSize = 18 },
+            VerticalAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(10, 6, 10, 6),
+            MinWidth = 40,
+            Height = 36
+        };
+        AutomationProperties.SetName(aiButton, "Open ClassWire AI");
+        AutomationProperties.SetAutomationId(aiButton, "TitleBarAIAssistantButton");
+        ToolTipService.SetToolTip(aiButton, "ClassWire AI");
+        aiButton.Click += (_, _) => ToggleClassWireAIPopout();
+        _titleBarAIButton = aiButton;
+        commands.Children.Add(aiButton);
+
         var createButton = new Button
         {
             Content = "＋ Create",
@@ -2105,7 +2125,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             ("Messages", Symbol.Mail), ("Notifications", Symbol.Mail), ("Requests", Symbol.Message),
             ("Home", Symbol.Home), ("Courses", Symbol.Library), ("Groups", Symbol.People),
             ("Resources", Symbol.Folder), ("Grades", Symbol.Page), ("Upcoming", Symbol.Calendar),
-            ("ClassWire AI", Symbol.Message), ("Settings", Symbol.Setting)
+            ("Settings", Symbol.Setting)
         };
         foreach (var entry in items)
         {
@@ -2159,8 +2179,39 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         Grid.SetRow(nav, 1);
         shell.Children.Add(titleBar);
         shell.Children.Add(nav);
+
+        var aiPanel = new Border
+        {
+            Width = 480,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Margin = new Thickness(0, 52, 12, 12),
+            Background = InAppAcrylicBrush(),
+            BorderBrush = ThemeBrush("SchoologySubtleBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(14),
+            Visibility = _classWireAIPopoutOpen ? Visibility.Visible : Visibility.Collapsed,
+            Child = BuildClassWireAIAssistantPage()
+        };
+        Grid.SetRowSpan(aiPanel, 2);
+        Panel.SetZIndex(aiPanel, 20);
+        _classWireAIPopout = aiPanel;
+        shell.Children.Add(aiPanel);
+
         SetTitleBar(titleBar);
         return shell;
+    }
+
+    private void ToggleClassWireAIPopout()
+    {
+        _classWireAIPopoutOpen = !_classWireAIPopoutOpen;
+        if (_classWireAIPopout is not null)
+            _classWireAIPopout.Visibility = _classWireAIPopoutOpen ? Visibility.Visible : Visibility.Collapsed;
+        if (_titleBarAIButton is not null)
+        {
+            AutomationProperties.SetName(_titleBarAIButton, _classWireAIPopoutOpen ? "Close ClassWire AI" : "Open ClassWire AI");
+            ToolTipService.SetToolTip(_titleBarAIButton, _classWireAIPopoutOpen ? "Close ClassWire AI" : "ClassWire AI");
+        }
     }
 
     private void HandleTitleBarCreateClick()
@@ -3637,8 +3688,6 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             page = BuildCalendarPage();
         else if (section == "Settings")
             page = BuildSettingsPage();
-        else if (section == "ClassWire AI")
-            page = BuildClassWireAIAssistantPage();
         else if (section == "Messages")
             page = BuildMessagesPage();
         else if (section == "Grades")
@@ -12757,15 +12806,119 @@ try {{
 
     private void SaveClassWireAIConversations() => ClassWireAIStorage.SaveConversations(_classWireAIConversations);
 
+    private async Task ShowGoogleGeminiSetupAsync(PasswordBox keyBox, TextBlock status)
+    {
+        var content = new StackPanel { Spacing = 10, MinWidth = 360 };
+        content.Children.Add(Text("Connect your Google account and create a Gemini API key in a Google Cloud project you control.", 14));
+        content.Children.Add(Text("Google will request Cloud Platform access so ClassWire can list your projects, enable the required APIs, create or reuse a dedicated service account, and create a key restricted to the Gemini API. Your selected project owns Gemini usage, quota, and billing.", 12));
+        var accountLabel = Text("Not connected to Google.", 13, true);
+        content.Children.Add(accountLabel);
+
+        var connectButton = new Button { Content = "Connect Google account", HorizontalAlignment = HorizontalAlignment.Left };
+        var projects = new ComboBox { PlaceholderText = "Select a Google Cloud project", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var manualProject = new TextBox { PlaceholderText = "Or enter a Google Cloud project ID" };
+        AutomationProperties.SetName(manualProject, "Google Cloud project ID");
+        var statusLabel = Text("Connect Google to load your projects.", 12);
+        statusLabel.TextWrapping = TextWrapping.Wrap;
+        var projectActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var refreshButton = new Button { Content = "Refresh projects" };
+        var createProjectButton = new HyperlinkButton { Content = "Create a Cloud project", NavigateUri = new Uri("https://console.cloud.google.com/projectcreate") };
+        projectActions.Children.Add(refreshButton);
+        projectActions.Children.Add(createProjectButton);
+        content.Children.Add(connectButton);
+        content.Children.Add(projects);
+        content.Children.Add(manualProject);
+        content.Children.Add(projectActions);
+        content.Children.Add(statusLabel);
+
+        async Task LoadProjectsAsync()
+        {
+            var result = await GoogleGeminiSetupService.ListProjectsAsync();
+            projects.Items.Clear();
+            foreach (var project in result)
+                projects.Items.Add(new ComboBoxItem { Content = project.DisplayName + " · " + project.ProjectId, Tag = project.ProjectId });
+            projects.SelectedIndex = projects.Items.Count > 0 ? 0 : -1;
+            statusLabel.Text = projects.Items.Count > 0
+                ? "Choose the project where ClassWire should create your Gemini key."
+                : "No active projects were found. Enter a project ID or create a project in Google Cloud.";
+        }
+
+        connectButton.Click += async (_, _) =>
+        {
+            connectButton.IsEnabled = false;
+            connectButton.Content = "Waiting for Google sign-in…";
+            statusLabel.Text = "Your browser will open. Complete Google sign-in and return to ClassWire.";
+            try
+            {
+                var result = await GoogleGeminiSetupService.ConnectAsync();
+                accountLabel.Text = "Connected: " + result.Email;
+                projects.Items.Clear();
+                foreach (var project in result.Projects)
+                    projects.Items.Add(new ComboBoxItem { Content = project.DisplayName + " · " + project.ProjectId, Tag = project.ProjectId });
+                projects.SelectedIndex = projects.Items.Count > 0 ? 0 : -1;
+                statusLabel.Text = result.ProjectListError ?? (projects.Items.Count > 0
+                    ? "Choose the project where ClassWire should create your Gemini key."
+                    : "No active projects were found. Enter a project ID or create a project in Google Cloud.");
+            }
+            catch (Exception ex) { statusLabel.Text = "Google sign-in failed: " + ex.Message; }
+            finally { connectButton.IsEnabled = true; connectButton.Content = "Connect Google account"; }
+        };
+        refreshButton.Click += async (_, _) =>
+        {
+            refreshButton.IsEnabled = false;
+            try { await LoadProjectsAsync(); }
+            catch (Exception ex) { statusLabel.Text = "Could not refresh projects: " + ex.Message; }
+            finally { refreshButton.IsEnabled = true; }
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = "Set up Google Gemini",
+            Content = content,
+            PrimaryButtonText = "Create Gemini key",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+        };
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            var deferral = args.GetDeferral();
+            args.Cancel = true;
+            try
+            {
+                var projectId = manualProject.Text.Trim();
+                if (string.IsNullOrWhiteSpace(projectId) && projects.SelectedItem is ComboBoxItem selected)
+                    projectId = selected.Tag as string ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(projectId))
+                {
+                    statusLabel.Text = "Select a Google Cloud project or enter its project ID.";
+                    return;
+                }
+                statusLabel.Text = "Creating and securing your Gemini key in " + projectId + "…";
+                await GoogleGeminiSetupService.CreateGeminiKeyAsync(projectId);
+                keyBox.Password = ClassWireAIStorage.LoadKey(ClassWireAIProvider.Gemini) ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(keyBox.Password))
+                    throw new InvalidOperationException("Google created the key, but it could not be loaded from Windows Credential Manager.");
+                status.Text = "Gemini key created and saved securely for your Windows account.";
+                args.Cancel = false;
+            }
+            catch (Exception ex) { statusLabel.Text = "Could not create the Gemini key: " + ex.Message; }
+            finally { deferral.Complete(); }
+        };
+        await dialog.ShowAsync();
+    }
+
     private UIElement BuildClassWireAIAssistantPage()
     {
-        var root = new Grid { Margin = new Thickness(20, 16, 20, 20), RowSpacing = 12 };
+        var root = new Grid { Margin = new Thickness(14, 12, 14, 12), RowSpacing = 10 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var header = new Grid { ColumnSpacing = 10 };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var heading = new StackPanel { Spacing = 3 };
         heading.Children.Add(Text("ClassWire AI", 23, true));
@@ -12781,10 +12934,16 @@ try {{
         AutomationProperties.SetAutomationId(newChat, "ClassWireAINewChatButton");
         Grid.SetColumn(newChat, 1);
         header.Children.Add(newChat);
+        var closeAI = Action("×", (_, _) => ToggleClassWireAIPopout());
+        AutomationProperties.SetName(closeAI, "Close ClassWire AI");
+        AutomationProperties.SetAutomationId(closeAI, "ClassWireAICloseButton");
+        ToolTipService.SetToolTip(closeAI, "Close assistant");
+        Grid.SetColumn(closeAI, 2);
+        header.Children.Add(closeAI);
         root.Children.Add(header);
 
         var conversationArea = new Grid { ColumnSpacing = 12 };
-        conversationArea.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        conversationArea.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(128) });
         conversationArea.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var historyPanel = new StackPanel { Spacing = 8 };
         historyPanel.Children.Add(Text("Recent conversations", 13, true));
@@ -12841,7 +13000,7 @@ try {{
         Grid.SetRow(conversationArea, 1);
         root.Children.Add(conversationArea);
 
-        var providerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var providerRow = new StackPanel { Orientation = Orientation.Vertical, Spacing = 6 };
         providerRow.Children.Add(Text("Provider", 12, true));
         var providerPicker = new ComboBox { Width = 170, SelectedIndex = (int)_classWireAIProvider };
         AutomationProperties.SetName(providerPicker, "AI provider");
@@ -12850,6 +13009,7 @@ try {{
         providerPicker.Items.Add(new ComboBoxItem { Content = "OpenAI" });
         providerPicker.Items.Add(new ComboBoxItem { Content = "Anthropic" });
         providerPicker.Items.Add(new ComboBoxItem { Content = "Ollama (local)" });
+        providerPicker.Items.Add(new ComboBoxItem { Content = "Puter" });
         providerRow.Children.Add(providerPicker);
         var modelLabel = Text("Model", 12, true);
         modelLabel.VerticalAlignment = VerticalAlignment.Center;
@@ -12874,7 +13034,41 @@ try {{
         AutomationProperties.SetAutomationId(keyBox, "ClassWireAIProviderKey");
         keyBox.Password = ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty;
         keyBox.PasswordChanged += (_, _) => ClassWireAIStorage.SaveKey(_classWireAIProvider, keyBox.Password);
+        keyBox.Width = 280;
         providerRow.Children.Add(keyBox);
+
+        var providerStatus = Text("", 12);
+        providerStatus.TextWrapping = TextWrapping.Wrap;
+        var googleConnectButton = new Button { Content = "Connect Google and create a Gemini key", HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetAutomationId(googleConnectButton, "ClassWireAIGoogleConnectButton");
+        googleConnectButton.Visibility = _classWireAIProvider == ClassWireAIProvider.Gemini ? Visibility.Visible : Visibility.Collapsed;
+        googleConnectButton.Click += async (_, _) => await ShowGoogleGeminiSetupAsync(keyBox, providerStatus);
+        providerRow.Children.Add(googleConnectButton);
+
+        var puterConnectButton = new Button { Content = "Connect Puter account", HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetAutomationId(puterConnectButton, "ClassWireAIPuterConnectButton");
+        puterConnectButton.Visibility = _classWireAIProvider == ClassWireAIProvider.Puter ? Visibility.Visible : Visibility.Collapsed;
+        puterConnectButton.Click += async (_, _) =>
+        {
+            if (_classWireAIPuterService is null || _classWireAIPuterOverlay is null) return;
+            _classWireAIPuterOverlay.Visibility = Visibility.Visible;
+            puterConnectButton.IsEnabled = false;
+            providerStatus.Text = "Opening Puter sign-in…";
+            try
+            {
+                var account = await _classWireAIPuterService.ConnectAsync();
+                providerStatus.Text = "Connected to " + account + ". No API key is stored by ClassWire.";
+            }
+            catch (Exception ex) { providerStatus.Text = "Puter sign-in failed: " + ex.Message; }
+            finally
+            {
+                _classWireAIPuterOverlay.Visibility = Visibility.Collapsed;
+                puterConnectButton.IsEnabled = true;
+            }
+        };
+        providerRow.Children.Add(puterConnectButton);
+        providerRow.Children.Add(providerStatus);
+
         var ollamaLabel = Text("Ollama URL", 12, true);
         ollamaLabel.VerticalAlignment = VerticalAlignment.Center;
         providerRow.Children.Add(ollamaLabel);
@@ -12882,16 +13076,30 @@ try {{
         AutomationProperties.SetName(ollamaBox, "Ollama server URL");
         AutomationProperties.SetAutomationId(ollamaBox, "ClassWireAIOllamaEndpoint");
         ollamaBox.Visibility = _classWireAIProvider == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
+        ollamaLabel.Visibility = ollamaBox.Visibility;
         providerRow.Children.Add(ollamaBox);
+
+        void UpdateProviderVisibility()
+        {
+            var isOllama = _classWireAIProvider == ClassWireAIProvider.Ollama;
+            var isPuter = _classWireAIProvider == ClassWireAIProvider.Puter;
+            var isGemini = _classWireAIProvider == ClassWireAIProvider.Gemini;
+            keyLabel.Visibility = isOllama || isPuter ? Visibility.Collapsed : Visibility.Visible;
+            keyBox.Visibility = isOllama || isPuter ? Visibility.Collapsed : Visibility.Visible;
+            googleConnectButton.Visibility = isGemini ? Visibility.Visible : Visibility.Collapsed;
+            puterConnectButton.Visibility = isPuter ? Visibility.Visible : Visibility.Collapsed;
+            ollamaLabel.Visibility = isOllama ? Visibility.Visible : Visibility.Collapsed;
+            ollamaBox.Visibility = isOllama ? Visibility.Visible : Visibility.Collapsed;
+        }
+        UpdateProviderVisibility();
         providerPicker.SelectionChanged += (_, _) =>
         {
             if (providerPicker.SelectedIndex < 0) return;
             _classWireAIProvider = (ClassWireAIProvider)providerPicker.SelectedIndex;
             _classWireAIModel = ClassWireAIProviderDefaults.Model(_classWireAIProvider);
             modelBox.Text = _classWireAIModel;
-            keyBox.Visibility = _classWireAIProvider == ClassWireAIProvider.Ollama ? Visibility.Collapsed : Visibility.Visible;
-            ollamaBox.Visibility = _classWireAIProvider == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
             keyBox.Password = ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty;
+            UpdateProviderVisibility();
             SaveClassWireAISettings();
         };
         ollamaBox.LostFocus += (_, _) =>
@@ -12904,6 +13112,47 @@ try {{
         };
         Grid.SetRow(providerRow, 2);
         root.Children.Add(providerRow);
+
+        var puterWebView = new WebView2
+        {
+            Width = 420,
+            Height = 340,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        _classWireAIPuterWebView = puterWebView;
+        _classWireAIPuterService = new PuterAIService(puterWebView);
+        var puterOverlay = new Border
+        {
+            Background = InAppAcrylicBrush(),
+            BorderBrush = ThemeBrush("SchoologySubtleBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Width = 440,
+            Height = 420,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed
+        };
+        _classWireAIPuterOverlay = puterOverlay;
+        var puterOverlayLayout = new Grid { RowSpacing = 8 };
+        puterOverlayLayout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        puterOverlayLayout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var puterOverlayHeader = new Grid();
+        puterOverlayHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        puterOverlayHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        puterOverlayHeader.Children.Add(Text("Connect your Puter account", 15, true));
+        var closePuter = Action("×", (_, _) => puterOverlay.Visibility = Visibility.Collapsed);
+        AutomationProperties.SetName(closePuter, "Close Puter sign-in");
+        Grid.SetColumn(closePuter, 1);
+        puterOverlayHeader.Children.Add(closePuter);
+        puterOverlayLayout.Children.Add(puterOverlayHeader);
+        Grid.SetRow(puterWebView, 1);
+        puterOverlayLayout.Children.Add(puterWebView);
+        puterOverlay.Child = puterOverlayLayout;
+        Grid.SetRowSpan(puterOverlay, 3);
+        Panel.SetZIndex(puterOverlay, 30);
+        root.Children.Add(puterOverlay);
 
         void RenderHistory()
         {
@@ -13330,10 +13579,13 @@ try {{
 
             for (var iteration = 0; iteration < 6; iteration++)
             {
-                var completion = await ClassWireAIProviderClient.CompleteWithToolsAsync(
-                    _classWireAIProvider, _classWireAIModel,
-                    ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty,
-                    _classWireAIOllamaEndpoint, history, ClassWireAISchoologyTools.Definitions);
+                var completion = _classWireAIProvider == ClassWireAIProvider.Puter
+                    ? await (_classWireAIPuterService ?? throw new InvalidOperationException("Open the AI assistant and connect your Puter account first."))
+                        .CompleteWithToolsAsync(_classWireAIModel, history, ClassWireAISchoologyTools.Definitions)
+                    : await ClassWireAIProviderClient.CompleteWithToolsAsync(
+                        _classWireAIProvider, _classWireAIModel,
+                        ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty,
+                        _classWireAIOllamaEndpoint, history, ClassWireAISchoologyTools.Definitions);
                 if (completion.ToolCalls.Count == 0)
                 {
                     answer = completion.Text;

@@ -1,4 +1,11 @@
-## [2026.10.0-port.118] - 2026-11-10
+## [2026.10.0-port.119] - 2026-11-10
+
+- Move ClassWire AI out of the NavigationView and into a right-side acrylic assistant popout controlled by a permanent title-bar button.
+- Add Puter as an AI provider using the Puter.js account sign-in flow in a dedicated persistent WebView2 profile; no Puter API key is requested or stored.
+- Add Google OAuth authorization-code flow with PKCE, secure refresh-token storage in Windows Credential Manager, Google Cloud project discovery, API enablement, and automatic Gemini-only API-key provisioning.
+- Keep manual Gemini API-key entry available as a fallback and inject the configured Google OAuth client settings during GitHub Actions builds.
+- Preserve the authenticated Schoology AI tools and confirmation-first write proposals across all supported providers.
+- Keep the native PDF viewer implementation unchanged.
 
 - Keep the native PDF WebView2 visible to the compositor at near-zero opacity while the acrylic loading surface covers it, allowing PDF.js to load and render behind the cover.
 - Reveal the PDF viewer only after PDF.js sends its document-ready message. Replace the premature 12-second reveal with a 45-second loading error state; the fallback no longer exposes an unready viewer.
