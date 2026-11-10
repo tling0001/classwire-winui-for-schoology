@@ -7867,6 +7867,11 @@ try {{
         uint currentPage = 0;
         var renderGate = new SemaphoreSlim(1, 1);
         WebView2? pdfWebView = null;
+        Grid? pdfLoadingOverlay = null;
+        ProgressRing? pdfLoadingRing = null;
+        FontIcon? pdfLoadingIcon = null;
+        TextBlock? pdfLoadingTitle = null;
+        TextBlock? pdfLoadingDetail = null;
         double pdfZoom = 1.0;
         string? pdfDataDirectory = null;
         var viewerClosing = false;
@@ -7913,7 +7918,7 @@ try {{
         var heading = Text(title, 16, true);
         heading.TextTrimming = TextTrimming.CharacterEllipsis;
         heading.VerticalAlignment = VerticalAlignment.Center;
-        var pageLabel = Text(isPdf ? "Loading PDF…" : "Image", 12);
+        var pageLabel = Text(isPdf ? "PDF" : "Image", 12);
         pageLabel.Foreground = ThemeBrush("SchoologyMutedTextBrush");
         pageLabel.VerticalAlignment = VerticalAlignment.Center;
         void ScrollToCurrentPdfPage()
@@ -7997,6 +8002,29 @@ try {{
         Grid.SetRow(viewerScroll, 1); viewer.Children.Add(viewerScroll);
         Grid.SetRow(status, 2); viewer.Children.Add(status);
 
+        void ShowPdfLoadingError(string message)
+        {
+            if (pdfWebView is not null) pdfWebView.Visibility = Visibility.Collapsed;
+            if (pdfLoadingRing is not null)
+            {
+                pdfLoadingRing.IsActive = false;
+                pdfLoadingRing.Visibility = Visibility.Collapsed;
+            }
+            if (pdfLoadingIcon is not null)
+            {
+                pdfLoadingIcon.Glyph = "\uE783";
+                pdfLoadingIcon.Visibility = Visibility.Visible;
+            }
+            if (pdfLoadingTitle is not null) pdfLoadingTitle.Text = "Couldn't open PDF";
+            if (pdfLoadingDetail is not null)
+            {
+                pdfLoadingDetail.Text = message;
+                pdfLoadingDetail.TextWrapping = TextWrapping.Wrap;
+            }
+            if (pdfLoadingOverlay is not null) pdfLoadingOverlay.Visibility = Visibility.Visible;
+            status.Visibility = Visibility.Collapsed;
+        }
+
         if (isPdf)
         {
             // Attach the host grid first so WinUI can create WebView2's controller on the UI thread.
@@ -8016,11 +8044,76 @@ try {{
                 pdfWebView = new WebView2
                 {
                     HorizontalAlignment = HorizontalAlignment.Stretch,
-                    VerticalAlignment = VerticalAlignment.Stretch
+                    VerticalAlignment = VerticalAlignment.Stretch,
+                    Visibility = Visibility.Collapsed
                 };
                 viewer.Children.Remove(viewerScroll);
                 Grid.SetRow(pdfWebView, 1);
                 viewer.Children.Add(pdfWebView);
+
+                // Keep the PDF WebView hidden until PDF.js has loaded the document and
+                // rendered its first page. This is a native WinUI overlay, not HTML.
+                var loadingOverlay = new Grid
+                {
+                    Background = new SolidColorBrush(Colors.Transparent),
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    VerticalAlignment = VerticalAlignment.Stretch
+                };
+                var loadingCard = new Border
+                {
+                    Background = InAppAcrylicBrush(),
+                    BorderBrush = ThemeBrush("SchoologyDividerBrush"),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(16),
+                    Padding = new Thickness(28, 24, 28, 24),
+                    MaxWidth = 380,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                var loadingContent = new StackPanel
+                {
+                    Spacing = 12,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    MaxWidth = 320
+                };
+                var loadingRing = new ProgressRing
+                {
+                    Width = 44,
+                    Height = 44,
+                    IsActive = AnimationsEnabled,
+                    Visibility = AnimationsEnabled ? Visibility.Visible : Visibility.Collapsed,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                };
+                var loadingIcon = new FontIcon
+                {
+                    Glyph = "\uE8A7",
+                    FontFamily = new FontFamily("Segoe Fluent Icons"),
+                    FontSize = 32,
+                    Foreground = ThemeBrush("SchoologyBlueBrush"),
+                    Visibility = AnimationsEnabled ? Visibility.Collapsed : Visibility.Visible,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                };
+                var loadingTitle = Text("Loading file", 17, true);
+                loadingTitle.TextAlignment = TextAlignment.Center;
+                var loadingDetail = Text(Path.GetFileName(previewPath), 13);
+                loadingDetail.Foreground = ThemeBrush("SchoologyMutedTextBrush");
+                loadingDetail.TextAlignment = TextAlignment.Center;
+                loadingDetail.TextTrimming = TextTrimming.CharacterEllipsis;
+                loadingDetail.MaxWidth = 320;
+                pdfLoadingOverlay = loadingOverlay;
+                pdfLoadingRing = loadingRing;
+                pdfLoadingIcon = loadingIcon;
+                pdfLoadingTitle = loadingTitle;
+                pdfLoadingDetail = loadingDetail;
+                loadingContent.Children.Add(loadingRing);
+                loadingContent.Children.Add(loadingIcon);
+                loadingContent.Children.Add(loadingTitle);
+                loadingContent.Children.Add(loadingDetail);
+                loadingCard.Child = loadingContent;
+                loadingOverlay.Children.Add(loadingCard);
+                Grid.SetRow(loadingOverlay, 1);
+                viewer.Children.Add(loadingOverlay);
+                status.Visibility = Visibility.Collapsed;
 
                 await pdfWebView.EnsureCoreWebView2Async();
                 var core = pdfWebView.CoreWebView2;
@@ -8043,8 +8136,8 @@ try {{
                         var type = root.TryGetProperty("type", out var typeValue) ? typeValue.GetString() : null;
                         if (type == "ready")
                         {
-                            // This WinUI label sits outside the PDF.js DOM, so removing
-                            // PDF.js's own loading node does not hide the native label.
+                            pdfWebView.Visibility = Visibility.Visible;
+                            loadingOverlay.Visibility = Visibility.Collapsed;
                             status.Text = string.Empty;
                             status.Visibility = Visibility.Collapsed;
                         }
@@ -8052,8 +8145,7 @@ try {{
                         {
                             var errorText = root.TryGetProperty("message", out var errorValue)
                                 ? errorValue.GetString() : "Unable to display this PDF.";
-                            status.Text = errorText ?? "Unable to display this PDF.";
-                            status.Visibility = Visibility.Visible;
+                            ShowPdfLoadingError(errorText ?? "Unable to display this PDF.");
                         }
                         else if (type == "page" && root.TryGetProperty("page", out var pageValue))
                         {
@@ -8076,13 +8168,24 @@ try {{
                         App.WriteStartupLog("Could not handle a PDF viewer message.", ex);
                     }
                 };
+                pdfWebView.CoreWebView2.NavigationCompleted += (_, navigationArgs) =>
+                {
+                    if (!navigationArgs.IsSuccess)
+                        ShowPdfLoadingError("The PDF viewer page could not be loaded. Check that the PDF viewer files are installed correctly.");
+                };
                 var pdfFileName = Uri.EscapeDataString(Path.GetFileName(pdfDataPath));
                 pdfWebView.Source = new Uri($"https://classwire-pdf.local/PdfViewer.html?file={pdfFileName}");
-                SetStatusText(status, "Opening PDF…");
             }
             catch (Exception ex)
             {
-                SetStatusText(status, $"Unable to open this PDF: {ex.Message}");
+                if (pdfLoadingOverlay is not null)
+                    ShowPdfLoadingError(ex.Message);
+                else
+                {
+                    status.Visibility = Visibility.Visible;
+                    SetStatusText(status, $"Unable to open this PDF: {ex.Message}");
+                }
+                App.WriteStartupLog("Unable to initialize the native PDF viewer.", ex);
                 pageLabel.Text = "Preview unavailable";
             }
         }
