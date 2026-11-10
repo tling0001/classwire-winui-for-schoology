@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Schoology.WinUI;
 
 internal enum ClassWireAIProvider { Gemini, OpenAI, Anthropic, Ollama }
@@ -36,3 +38,10 @@ internal sealed class ClassWireAISettings
     public string Model { get; set; } = ClassWireAIProviderDefaults.Model(ClassWireAIProvider.Gemini);
     public string OllamaEndpoint { get; set; } = "http://127.0.0.1:11434";
 }
+
+
+internal sealed record ClassWireAIToolDefinition(string Name, string Description, JsonElement Parameters);
+internal sealed record ClassWireAIToolCall(string Id, string Name, JsonElement Arguments);
+internal sealed record ClassWireAICompletion(string Text, IReadOnlyList<ClassWireAIToolCall> ToolCalls);
+internal sealed record ClassWireAIPageContext(string Page, string SelectedEntityKind, long SelectedEntityId,
+    string SelectedEntityName, long AssignmentSectionId, long AssignmentId, long GradeItemId, bool AllowsSubmission);

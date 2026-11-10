@@ -1,11 +1,13 @@
-## [2026.10.0-port.117] - 2026-11-10
+## [2026.10.0-port.118] - 2026-11-10
 
-- Fix the native PDF loading overlay getting stuck when PDF.js does not send its ready handshake: after a successful viewer navigation, reveal the embedded viewer after a bounded fallback period while preserving the normal first-render handshake.
-- Put the PDF loading spinner and “Loading file” text directly on the acrylic surface; remove the card and filename detail.
-- Add the first native ClassWire AI foundation to WinUI: persistent conversations, conversation history, a native chat composer, and provider/model settings.
-- Add Gemini, OpenAI, Anthropic, and Ollama text-completion clients. Provider credentials are stored using Windows Credential Manager; conversations and non-secret settings remain in the user's local app data.
-- Keep the assistant explicit that Schoology-connected tools are not yet available in this first stage; no Schoology write operations are exposed until the authenticated tool layer and confirmation flow are ported.
-- Bump the WinUI release version to 2026.10.0-port.117.
+- Keep the native PDF WebView2 visible to the compositor at near-zero opacity while the acrylic loading surface covers it, allowing PDF.js to load and render behind the cover.
+- Reveal the PDF viewer only after PDF.js sends its document-ready message. Replace the premature 12-second reveal with a 45-second loading error state; the fallback no longer exposes an unready viewer.
+- Port the authenticated ClassWire AI Schoology tool layer to WinUI using the existing OAuth session and typed API client.
+- Add AI tools for courses, groups, upcoming events, assignment search/details/submissions, course grades, materials, updates, inbox/sent message search and message details, plus in-app navigation.
+- Add provider-native function calling for Gemini, OpenAI, Anthropic, and Ollama, with bounded multi-step tool execution and untrusted-tool-result handling.
+- Add confirmation-first proposals for text assignment submission, exact-recipient message sending, course/group update posting, and teacher grade changes. No write request is sent until the user confirms; Schoology remains the final permission authority.
+- Add the Android-aligned grade update payload shape through the section grades endpoint.
+- Bump the WinUI release version to 2026.10.0-port.118.
 
 ## [2026.10.0-port.115] - 2026-11-08
 

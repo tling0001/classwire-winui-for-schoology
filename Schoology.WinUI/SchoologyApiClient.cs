@@ -157,13 +157,23 @@ internal sealed class SchoologyApiClient
 
     internal Task<JsonDocument> GetMessagesAsync(
         SchoologyAuthService.Session session, bool sent, CancellationToken cancellationToken = default) =>
+        GetMessagesAsync(session, sent, 100, cancellationToken);
+
+    internal Task<JsonDocument> GetMessagesAsync(
+        SchoologyAuthService.Session session, bool sent, int limit, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, sent ? "messages/sent" : "messages/inbox",
-            new Dictionary<string, string> { ["limit"] = "50", ["richtext"] = "1" }, cancellationToken);
+            new Dictionary<string, string>
+            {
+                ["start"] = "0",
+                ["limit"] = Math.Clamp(limit, 1, 200).ToString(CultureInfo.InvariantCulture),
+                ["richtext"] = "1",
+                ["with_attachments"] = "TRUE"
+            }, cancellationToken);
 
     internal Task<JsonDocument> GetMessageRecipientsAsync(
         SchoologyAuthService.Session session, string query, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAsync(session, "messages/recipients",
-            new Dictionary<string, string> { ["name"] = query.Trim(), ["limit"] = "10" }, cancellationToken);
+            new Dictionary<string, string> { ["name"] = query.Trim(), ["limit"] = "20" }, cancellationToken);
 
     internal Task<string> UploadMessageFileAsync(
         SchoologyAuthService.Session session, string filename, string mime, byte[] bytes,
@@ -446,6 +456,23 @@ internal sealed class SchoologyApiClient
             new { comment, parent_id = 0 }, ct);
 
     // Official Android uses the section realm, grade-item ID, and current user ID.
+    // Mirrors Android putGrades(sectionId, GradesHolder): grades.grade[] carries assignment_id and enrollment_id.
+    internal Task<JsonDocument> UpdateAssignmentGradeAsync(
+        SchoologyAuthService.Session session, long sectionId, long gradeItemId, long enrollmentId,
+        string grade, string comment, bool commentStatus, CancellationToken cancellationToken = default)
+    {
+        if (sectionId <= 0 || gradeItemId <= 0 || enrollmentId <= 0 || string.IsNullOrWhiteSpace(grade))
+            throw new InvalidOperationException("A section, grade item, enrollment, and grade are required.");
+        var payload = new
+        {
+            grades = new { grade = new[] { new {
+                assignment_id = gradeItemId, enrollment_id = enrollmentId, grade = grade.Trim(),
+                comment = comment ?? "", comment_status = commentStatus
+            } } }
+        };
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Put, $"sections/{sectionId}/grades", payload, cancellationToken);
+    }
+
     internal Task<JsonDocument> GetAssignmentGradesAsync(
         SchoologyAuthService.Session session, long sectionId, long gradeItemId,
         CancellationToken cancellationToken = default) =>
