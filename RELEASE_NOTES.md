@@ -1,10 +1,11 @@
-## [2026.10.0-port.116] - 2026-11-09
+## [2026.10.0-port.117] - 2026-11-10
 
-- Use installed Windows/browser system fonts for PDF.js font substitution; stop bundling PDF.js standard-font files with the app.
-- Fix the PDF viewer's persistent native “Opening PDF…” label by hiding the WinUI loading status when PDF.js reports that rendering is ready, and surface load errors in the native status area.
-- Replace document-wide CSS zoom with PDF.js page re-rendering at the selected scale so the canvas, selectable text layer, annotations, and page dimensions stay aligned; preserve the current page position while zooming.
-- Open course-material assessments in the authenticated shared WebView2 at Schoology's /assignment/{id} route, following the Android AssessmentWebView launch path.
-- Bump the WinUI release version to 2026.10.0-port.116.
+- Fix the native PDF loading overlay getting stuck when PDF.js does not send its ready handshake: after a successful viewer navigation, reveal the embedded viewer after a bounded fallback period while preserving the normal first-render handshake.
+- Put the PDF loading spinner and “Loading file” text directly on the acrylic surface; remove the card and filename detail.
+- Add the first native ClassWire AI foundation to WinUI: persistent conversations, conversation history, a native chat composer, and provider/model settings.
+- Add Gemini, OpenAI, Anthropic, and Ollama text-completion clients. Provider credentials are stored using Windows Credential Manager; conversations and non-secret settings remain in the user's local app data.
+- Keep the assistant explicit that Schoology-connected tools are not yet available in this first stage; no Schoology write operations are exposed until the authenticated tool layer and confirmation flow are ported.
+- Bump the WinUI release version to 2026.10.0-port.117.
 
 ## [2026.10.0-port.115] - 2026-11-08
 

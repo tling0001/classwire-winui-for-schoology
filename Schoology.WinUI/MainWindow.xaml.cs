@@ -60,6 +60,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private readonly SchoologyApiClient _api;
     private readonly ObservableCollection<SchoologyEntity> _courses = new();
     private readonly ObservableCollection<SchoologyEntity> _groups = new();
+    private readonly List<ClassWireAIConversation> _classWireAIConversations = ClassWireAIStorage.LoadConversations();
+    private ClassWireAIConversation? _classWireAIConversation;
+    private ClassWireAIProvider _classWireAIProvider = ClassWireAIStorage.LoadSettings().Provider;
+    private string _classWireAIModel = ClassWireAIStorage.LoadSettings().Model;
+    private string _classWireAIOllamaEndpoint = ClassWireAIStorage.LoadSettings().OllamaEndpoint;
+    private bool _classWireAISending;
+    private Action? _renderClassWireAIHistory;
+    private Action? _renderClassWireAIMessages;
     private readonly Dictionary<long, JsonElement> _userProfileCache = new();
     // Share authenticated post/profile image downloads and decoded bitmaps across the UI.
     private readonly ConcurrentDictionary<string, Lazy<Task<BitmapImage>>> _postImageCache = new();
@@ -2094,7 +2102,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             ("Messages", Symbol.Mail), ("Notifications", Symbol.Mail), ("Requests", Symbol.Message),
             ("Home", Symbol.Home), ("Courses", Symbol.Library), ("Groups", Symbol.People),
             ("Resources", Symbol.Folder), ("Grades", Symbol.Page), ("Upcoming", Symbol.Calendar),
-            ("Settings", Symbol.Setting)
+            ("ClassWire AI", Symbol.Message), ("Settings", Symbol.Setting)
         };
         foreach (var entry in items)
         {
@@ -3616,6 +3624,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             page = BuildCalendarPage();
         else if (section == "Settings")
             page = BuildSettingsPage();
+        else if (section == "ClassWire AI")
+            page = BuildClassWireAIAssistantPage();
         else if (section == "Messages")
             page = BuildMessagesPage();
         else if (section == "Grades")
@@ -8020,6 +8030,7 @@ try {{
             {
                 pdfLoadingDetail.Text = message;
                 pdfLoadingDetail.TextWrapping = TextWrapping.Wrap;
+                pdfLoadingDetail.Visibility = Visibility.Visible;
             }
             if (pdfLoadingOverlay is not null) pdfLoadingOverlay.Visibility = Visibility.Visible;
             status.Visibility = Visibility.Collapsed;
@@ -8055,25 +8066,15 @@ try {{
                 // rendered its first page. This is a native WinUI overlay, not HTML.
                 var loadingOverlay = new Grid
                 {
-                    Background = new SolidColorBrush(Colors.Transparent),
+                    Background = InAppAcrylicBrush(),
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     VerticalAlignment = VerticalAlignment.Stretch
-                };
-                var loadingCard = new Border
-                {
-                    Background = InAppAcrylicBrush(),
-                    BorderBrush = ThemeBrush("SchoologyDividerBrush"),
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(16),
-                    Padding = new Thickness(28, 24, 28, 24),
-                    MaxWidth = 380,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
                 };
                 var loadingContent = new StackPanel
                 {
                     Spacing = 12,
                     HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
                     MaxWidth = 320
                 };
                 var loadingRing = new ProgressRing
@@ -8095,11 +8096,12 @@ try {{
                 };
                 var loadingTitle = Text("Loading file", 17, true);
                 loadingTitle.TextAlignment = TextAlignment.Center;
-                var loadingDetail = Text(Path.GetFileName(previewPath), 13);
+                var loadingDetail = Text("", 13);
                 loadingDetail.Foreground = ThemeBrush("SchoologyMutedTextBrush");
                 loadingDetail.TextAlignment = TextAlignment.Center;
-                loadingDetail.TextTrimming = TextTrimming.CharacterEllipsis;
+                loadingDetail.TextWrapping = TextWrapping.Wrap;
                 loadingDetail.MaxWidth = 320;
+                loadingDetail.Visibility = Visibility.Collapsed;
                 pdfLoadingOverlay = loadingOverlay;
                 pdfLoadingRing = loadingRing;
                 pdfLoadingIcon = loadingIcon;
@@ -8109,8 +8111,7 @@ try {{
                 loadingContent.Children.Add(loadingIcon);
                 loadingContent.Children.Add(loadingTitle);
                 loadingContent.Children.Add(loadingDetail);
-                loadingCard.Child = loadingContent;
-                loadingOverlay.Children.Add(loadingCard);
+                loadingOverlay.Children.Add(loadingContent);
                 Grid.SetRow(loadingOverlay, 1);
                 viewer.Children.Add(loadingOverlay);
                 status.Visibility = Visibility.Collapsed;
@@ -8168,10 +8169,26 @@ try {{
                         App.WriteStartupLog("Could not handle a PDF viewer message.", ex);
                     }
                 };
-                pdfWebView.CoreWebView2.NavigationCompleted += (_, navigationArgs) =>
+                pdfWebView.CoreWebView2.NavigationCompleted += async (_, navigationArgs) =>
                 {
                     if (!navigationArgs.IsSuccess)
+                    {
                         ShowPdfLoadingError("The PDF viewer page could not be loaded. Check that the PDF viewer files are installed correctly.");
+                        return;
+                    }
+
+                    // Keep the acrylic loading surface visible while PDF.js renders.
+                    // If its ready message is lost, reveal WebView2 after a bounded wait
+                    // so a handshake failure can never leave the viewer permanently hidden.
+                    await Task.Delay(TimeSpan.FromSeconds(12));
+                    if (!viewerClosing && pdfLoadingOverlay?.Visibility == Visibility.Visible &&
+                        pdfWebView is not null)
+                    {
+                        pdfWebView.Visibility = Visibility.Visible;
+                        pdfLoadingOverlay.Visibility = Visibility.Collapsed;
+                        status.Visibility = Visibility.Collapsed;
+                        App.WriteStartupLog("PDF.js did not send its ready message within 12 seconds; revealing the embedded viewer as a fallback.");
+                    }
                 };
                 var pdfFileName = Uri.EscapeDataString(Path.GetFileName(pdfDataPath));
                 pdfWebView.Source = new Uri($"https://classwire-pdf.local/PdfViewer.html?file={pdfFileName}");
@@ -12710,5 +12727,248 @@ try {{
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to post update", ex.Message); }
     }
+
+    private void SaveClassWireAISettings() => ClassWireAIStorage.SaveSettings(new ClassWireAISettings
+    {
+        Provider = _classWireAIProvider,
+        Model = _classWireAIModel,
+        OllamaEndpoint = _classWireAIOllamaEndpoint
+    });
+
+    private void SaveClassWireAIConversations() => ClassWireAIStorage.SaveConversations(_classWireAIConversations);
+
+    private UIElement BuildClassWireAIAssistantPage()
+    {
+        var root = new Grid { Margin = new Thickness(20, 16, 20, 20), RowSpacing = 12 };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var header = new Grid { ColumnSpacing = 10 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var heading = new StackPanel { Spacing = 3 };
+        heading.Children.Add(Text("ClassWire AI", 23, true));
+        heading.Children.Add(Text("Your Schoology learning assistant", 13));
+        header.Children.Add(heading);
+        var newChat = Action("＋ New chat", (_, _) =>
+        {
+            _classWireAIConversation = ClassWireAIConversation.Create();
+            _classWireAIConversations.Insert(0, _classWireAIConversation);
+            SaveClassWireAIConversations();
+            _renderClassWireAIMessages?.Invoke();
+        });
+        AutomationProperties.SetAutomationId(newChat, "ClassWireAINewChatButton");
+        Grid.SetColumn(newChat, 1);
+        header.Children.Add(newChat);
+        root.Children.Add(header);
+
+        var conversationArea = new Grid { ColumnSpacing = 12 };
+        conversationArea.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        conversationArea.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var historyPanel = new StackPanel { Spacing = 8 };
+        historyPanel.Children.Add(Text("Recent conversations", 13, true));
+        var historyScroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var historyItems = new StackPanel { Spacing = 4 };
+        historyScroll.Content = historyItems;
+        historyPanel.Children.Add(historyScroll);
+        conversationArea.Children.Add(historyPanel);
+
+        var chatSurface = new Grid { RowSpacing = 10 };
+        chatSurface.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        chatSurface.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var messageScroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Background = new SolidColorBrush(Colors.Transparent)
+        };
+        var messageStack = new StackPanel { Spacing = 12, Padding = new Thickness(4, 4, 12, 12) };
+        messageScroll.Content = messageStack;
+        chatSurface.Children.Add(messageScroll);
+
+        var composer = new Grid { ColumnSpacing = 8 };
+        composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        composer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var promptBox = new TextBox
+        {
+            PlaceholderText = "Ask ClassWire AI…",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 44,
+            MaxHeight = 120,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+        AutomationProperties.SetName(promptBox, "Message ClassWire AI");
+        AutomationProperties.SetAutomationId(promptBox, "ClassWireAIPrompt");
+        composer.Children.Add(promptBox);
+        Button? sendButton = null;
+        sendButton = Action("Send", async (_, _) =>
+        {
+            var prompt = promptBox.Text.Trim();
+            if (prompt.Length == 0 || _classWireAISending || sendButton is null) return;
+            promptBox.Text = string.Empty;
+            await SendClassWireAIMessageAsync(prompt, messageStack, messageScroll, sendButton);
+        });
+        sendButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+        AutomationProperties.SetAutomationId(sendButton, "ClassWireAISendButton");
+        Grid.SetColumn(sendButton, 1);
+        composer.Children.Add(sendButton);
+        Grid.SetRow(composer, 1);
+        chatSurface.Children.Add(composer);
+        Grid.SetColumn(chatSurface, 1);
+        conversationArea.Children.Add(chatSurface);
+        Grid.SetRow(conversationArea, 1);
+        root.Children.Add(conversationArea);
+
+        var providerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        providerRow.Children.Add(Text("Provider", 12, true));
+        var providerPicker = new ComboBox { Width = 170, SelectedIndex = (int)_classWireAIProvider };
+        providerPicker.Items.Add(new ComboBoxItem { Content = "Google Gemini" });
+        providerPicker.Items.Add(new ComboBoxItem { Content = "OpenAI" });
+        providerPicker.Items.Add(new ComboBoxItem { Content = "Anthropic" });
+        providerPicker.Items.Add(new ComboBoxItem { Content = "Ollama (local)" });
+        providerRow.Children.Add(providerPicker);
+        var modelLabel = Text("Model", 12, true);
+        modelLabel.VerticalAlignment = VerticalAlignment.Center;
+        providerRow.Children.Add(modelLabel);
+        var modelBox = new TextBox { Width = 190, Text = _classWireAIModel, PlaceholderText = "Model name" };
+        modelBox.LostFocus += (_, _) =>
+        {
+            if (!string.IsNullOrWhiteSpace(modelBox.Text))
+            {
+                _classWireAIModel = modelBox.Text.Trim();
+                SaveClassWireAISettings();
+            }
+        };
+        providerRow.Children.Add(modelBox);
+        var keyBox = new PasswordBox { Width = 190, PlaceholderText = "Provider API key" };
+        keyBox.Password = ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty;
+        keyBox.PasswordChanged += (_, _) => ClassWireAIStorage.SaveKey(_classWireAIProvider, keyBox.Password);
+        providerRow.Children.Add(keyBox);
+        var ollamaBox = new TextBox { Width = 190, Text = _classWireAIOllamaEndpoint, PlaceholderText = "Ollama URL" };
+        ollamaBox.Visibility = _classWireAIProvider == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
+        providerRow.Children.Add(ollamaBox);
+        providerPicker.SelectionChanged += (_, _) =>
+        {
+            if (providerPicker.SelectedIndex < 0) return;
+            _classWireAIProvider = (ClassWireAIProvider)providerPicker.SelectedIndex;
+            _classWireAIModel = ClassWireAIProviderDefaults.Model(_classWireAIProvider);
+            modelBox.Text = _classWireAIModel;
+            keyBox.Visibility = _classWireAIProvider == ClassWireAIProvider.Ollama ? Visibility.Collapsed : Visibility.Visible;
+            ollamaBox.Visibility = _classWireAIProvider == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
+            keyBox.Password = ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty;
+            SaveClassWireAISettings();
+        };
+        ollamaBox.LostFocus += (_, _) =>
+        {
+            if (!string.IsNullOrWhiteSpace(ollamaBox.Text))
+            {
+                _classWireAIOllamaEndpoint = ollamaBox.Text.Trim();
+                SaveClassWireAISettings();
+            }
+        };
+        Grid.SetRow(providerRow, 2);
+        root.Children.Add(providerRow);
+
+        void RenderHistory()
+        {
+            historyItems.Children.Clear();
+            foreach (var conversation in _classWireAIConversations.OrderByDescending(item => item.UpdatedAt).Take(30))
+            {
+                var itemButton = new Button
+                {
+                    Content = conversation.Title,
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Padding = new Thickness(10, 8, 10, 8)
+                };
+                itemButton.Click += (_, _) =>
+                {
+                    _classWireAIConversation = conversation;
+                    _renderClassWireAIMessages?.Invoke();
+                };
+                historyItems.Children.Add(itemButton);
+            }
+        }
+        _renderClassWireAIHistory = RenderHistory;
+        _renderClassWireAIMessages = () =>
+        {
+            messageStack.Children.Clear();
+            if (_classWireAIConversation is null || _classWireAIConversation.Messages.Count == 0)
+            {
+                var welcome = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 560 };
+                welcome.Children.Add(new FontIcon { Glyph = "\uE99A", FontSize = 32, Foreground = ThemeBrush("SchoologyBlueBrush"), HorizontalAlignment = HorizontalAlignment.Center });
+                welcome.Children.Add(Text("What can I help you with?", 20, true));
+                welcome.Children.Add(Text("Ask questions, brainstorm, or get help understanding your coursework. Schoology-connected tools are coming in the next integration stage.", 14));
+                messageStack.Children.Add(welcome);
+            }
+            else
+            {
+                foreach (var message in _classWireAIConversation.Messages)
+                {
+                    var bubble = new Border
+                    {
+                        Background = message.Role == "user" ? ThemeBrush("SchoologySubtleBrush") : InAppAcrylicBrush(),
+                        CornerRadius = new CornerRadius(12),
+                        Padding = new Thickness(14, 10, 14, 10),
+                        MaxWidth = 820,
+                        HorizontalAlignment = message.Role == "user" ? HorizontalAlignment.Right : HorizontalAlignment.Left
+                    };
+                    var textBlock = Text(message.Content, 14);
+                    textBlock.TextWrapping = TextWrapping.Wrap;
+                    bubble.Child = textBlock;
+                    messageStack.Children.Add(bubble);
+                }
+            }
+            RenderHistory();
+            messageScroll.ChangeView(null, messageScroll.ScrollableHeight, null);
+        };
+        if (_classWireAIConversation is null)
+        {
+            _classWireAIConversation = _classWireAIConversations.FirstOrDefault() ?? ClassWireAIConversation.Create();
+            if (!_classWireAIConversations.Contains(_classWireAIConversation))
+                _classWireAIConversations.Insert(0, _classWireAIConversation);
+        }
+        _renderClassWireAIMessages();
+        return root;
+    }
+
+    private async Task SendClassWireAIMessageAsync(string prompt, StackPanel messageStack, ScrollViewer messageScroll, Button sendButton)
+    {
+        if (_classWireAISending || _classWireAIConversation is null) return;
+        _classWireAISending = true;
+        sendButton.IsEnabled = false;
+        try
+        {
+            _classWireAIConversation.Messages.Add(new ClassWireAIMessage("user", prompt));
+            _classWireAIConversation.UpdatedAt = DateTimeOffset.UtcNow;
+            if (_classWireAIConversation.Messages.Count == 1)
+                _classWireAIConversation.Title = prompt.Length > 48 ? prompt[..48] : prompt;
+            SaveClassWireAIConversations();
+            _renderClassWireAIMessages?.Invoke();
+            var answer = await ClassWireAIProviderClient.CompleteAsync(
+                _classWireAIProvider, _classWireAIModel,
+                ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty,
+                _classWireAIOllamaEndpoint, _classWireAIConversation.Messages);
+            _classWireAIConversation.Messages.Add(new ClassWireAIMessage("assistant", answer));
+            _classWireAIConversation.UpdatedAt = DateTimeOffset.UtcNow;
+            SaveClassWireAIConversations();
+            _renderClassWireAIMessages?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            _classWireAIConversation.Messages.Add(new ClassWireAIMessage("assistant", "I couldn't complete that request: " + ex.Message));
+            SaveClassWireAIConversations();
+            _renderClassWireAIMessages?.Invoke();
+        }
+        finally
+        {
+            _classWireAISending = false;
+            sendButton.IsEnabled = true;
+            messageScroll.ChangeView(null, messageScroll.ScrollableHeight, null);
+        }
+    }
+
 }
 
