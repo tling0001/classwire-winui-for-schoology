@@ -1,3 +1,10 @@
+## [2026.10.0-port.126] - 2026-11-11
+
+### Build repair
+- Fix the CS0136 publish failure in the parent request-response AI tool by renaming its local request label so it no longer shadows the `ExecuteAsync` method parameter.
+- Keep request identity validation and confirmation-gated accept/decline behavior unchanged.
+- Bump the WinUI version to `2026.10.0-port.126`.
+
 ## [2026.10.0-port.123] - 2026-11-10
 
 ### Teacher grading

@@ -104,11 +104,11 @@ internal sealed class ClassWireAISchoologyTools
                     .Where(item => ReadLongAny(item.Data, "id", "request_id", "requestId", "invite_id", "inviteId") == id).ToArray();
                 if (matches.Length != 1)
                     throw new InvalidOperationException("That request is no longer pending or its ID is ambiguous. Refresh requests and try again.");
-                var name = type == "friend"
+                var requestName = type == "friend"
                     ? ReadString(matches[0].Data, "requester_name", "requesterName", "name", "display_name") ?? "Friend request"
                     : ReadString(matches[0].Data, "name", "title", type == "group" ? "group_name" : "section_title") ?? "Invitation";
                 return Json(new { pendingAction = new { type = "respond_to_request", requestType = type,
-                    requestId = id, accept, requestName = name } });
+                    requestId = id, accept, requestName } });
             }
 
             case "get_upcoming_events":
