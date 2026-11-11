@@ -74,6 +74,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private Action? _renderClassWireAIHistory;
     private Action? _renderClassWireAIMessages;
     private Border? _classWireAIPopout;
+    private Grid? _classWireAIShellHost;
+    private ColumnDefinition? _classWireAISidebarColumn;
     private Border? _classWireAIPuterOverlay;
     private Button? _titleBarAIButton;
     private bool _classWireAIPopoutOpen;
@@ -2211,16 +2213,25 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         _appNavigation = nav;
         Grid.SetRow(titleBar, 0);
-        Grid.SetRow(nav, 1);
         shell.Children.Add(titleBar);
-        shell.Children.Add(nav);
+
+        var contentHost = new Grid { ColumnSpacing = 0 };
+        contentHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var sidebarColumn = new ColumnDefinition { Width = new GridLength(0) };
+        contentHost.ColumnDefinitions.Add(sidebarColumn);
+        Grid.SetRow(contentHost, 1);
+        Grid.SetColumn(nav, 0);
+        contentHost.Children.Add(nav);
+        _classWireAIShellHost = contentHost;
+        _classWireAISidebarColumn = sidebarColumn;
+        shell.Children.Add(contentHost);
 
         var aiPanel = new Border
         {
             Width = 480,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Stretch,
-            Margin = new Thickness(0, 52, 12, 12),
+            Margin = new Thickness(0, 4, 12, 12),
             Background = InAppAcrylicBrush(),
             BorderBrush = ThemeBrush("SchoologySubtleBrush"),
             BorderThickness = new Thickness(1),
@@ -2236,10 +2247,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 new Microsoft.UI.Xaml.Media.Animation.RepositionThemeTransition()
             };
         }
-        Grid.SetRowSpan(aiPanel, 2);
+        Grid.SetRow(aiPanel, 0);
+        Grid.SetColumn(aiPanel, 0);
+        Grid.SetColumnSpan(aiPanel, 2);
         _classWireAIPopout = aiPanel;
+        contentHost.Children.Add(aiPanel);
         ApplyClassWireAIPresentationMode();
-        shell.Children.Add(aiPanel);
 
         SetTitleBar(titleBar);
         return shell;
@@ -2248,29 +2261,23 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private void ApplyClassWireAIPresentationMode()
     {
         if (_classWireAIPopout is null) return;
-        if (_classWireAISidebarMode)
+        var docked = _classWireAISidebarMode && _classWireAIPopoutOpen;
+        if (_classWireAISidebarColumn is not null)
+            _classWireAISidebarColumn.Width = docked ? new GridLength(420) : new GridLength(0);
+        _classWireAIPopout.Width = docked ? double.NaN : 480;
+        _classWireAIPopout.HorizontalAlignment = docked ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+        _classWireAIPopout.VerticalAlignment = VerticalAlignment.Stretch;
+        _classWireAIPopout.Margin = docked ? new Thickness(0) : new Thickness(0, 4, 12, 12);
+        _classWireAIPopout.CornerRadius = docked ? new CornerRadius(0) : new CornerRadius(14);
+        _classWireAIPopout.BorderThickness = docked ? new Thickness(1, 0, 0, 0) : new Thickness(1);
+        Grid.SetColumn(_classWireAIPopout, docked ? 1 : 0);
+        Grid.SetColumnSpan(_classWireAIPopout, docked ? 1 : 2);
+        _classWireAIPopout.Visibility = _classWireAIPopoutOpen ? Visibility.Visible : Visibility.Collapsed;
+        if (_classWireAIPresentationButton is not null)
         {
-            _classWireAIPopout.Width = 420;
-            _classWireAIPopout.Margin = new Thickness(0, 52, 0, 0);
-            _classWireAIPopout.CornerRadius = new CornerRadius(12, 0, 0, 0);
-            _classWireAIPopout.BorderThickness = new Thickness(1, 1, 0, 0);
-            if (_classWireAIPresentationButton is not null)
-            {
-                _classWireAIPresentationButton.Content = "Popup";
-                ToolTipService.SetToolTip(_classWireAIPresentationButton, "Switch to floating AI popup");
-            }
-        }
-        else
-        {
-            _classWireAIPopout.Width = 480;
-            _classWireAIPopout.Margin = new Thickness(0, 52, 12, 12);
-            _classWireAIPopout.CornerRadius = new CornerRadius(14);
-            _classWireAIPopout.BorderThickness = new Thickness(1);
-            if (_classWireAIPresentationButton is not null)
-            {
-                _classWireAIPresentationButton.Content = "Sidebar";
-                ToolTipService.SetToolTip(_classWireAIPresentationButton, "Switch to docked AI sidebar");
-            }
+            _classWireAIPresentationButton.Content = _classWireAISidebarMode ? "Popup" : "Sidebar";
+            ToolTipService.SetToolTip(_classWireAIPresentationButton,
+                _classWireAISidebarMode ? "Switch to floating AI popup" : "Switch to docked AI sidebar");
         }
     }
 
@@ -13292,9 +13299,14 @@ try {{
                         HorizontalAlignment = message.Role == "user" ? HorizontalAlignment.Right : HorizontalAlignment.Left
                     };
                     var content = new StackPanel { Spacing = 8 };
-                    var textBlock = Text(message.Content, 14);
-                    textBlock.TextWrapping = TextWrapping.Wrap;
-                    content.Children.Add(textBlock);
+                    if (message.Role == "assistant")
+                        content.Children.Add(BuildClassWireAIMarkdownContent(message.Content));
+                    else
+                    {
+                        var textBlock = Text(message.Content, 14);
+                        textBlock.TextWrapping = TextWrapping.Wrap;
+                        content.Children.Add(textBlock);
+                    }
                     foreach (var attachment in message.Attachments)
                     {
                         if (attachment.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(attachment.DataBase64))
@@ -13694,9 +13706,27 @@ try {{
         };
         advanced.Children.Add(new TextBlock { Text = "Privacy: provider API keys and Google refresh tokens are stored in Windows Credential Manager. Puter authentication remains in the WebView website session. Prompts and relevant Schoology context are sent to the selected AI provider. Conversation history is stored locally on this device.", TextWrapping = TextWrapping.Wrap });
         advanced.Children.Add(new TextBlock { Text = "Schoology writes are proposal-only. Assignment submissions, messages, updates, and grade changes require explicit confirmation.", TextWrapping = TextWrapping.Wrap });
-        var tabs = new TabView { IsAddTabButtonVisible = false };
-        tabs.TabItems.Add(new TabViewItem { Header = "Normal", Content = normal });
-        tabs.TabItems.Add(new TabViewItem { Header = "Advanced", Content = advanced });
+        var normalViewport = new ScrollViewer
+        {
+            Content = normal,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollMode = ScrollMode.Enabled,
+            MaxHeight = 560,
+            MinHeight = 320
+        };
+        var advancedViewport = new ScrollViewer
+        {
+            Content = advanced,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollMode = ScrollMode.Enabled,
+            MaxHeight = 560,
+            MinHeight = 320
+        };
+        var tabs = new TabView { IsAddTabButtonVisible = false, Height = 560, MinHeight = 320, MaxHeight = 600 };
+        tabs.TabItems.Add(new TabViewItem { Header = "Normal", Content = normalViewport });
+        tabs.TabItems.Add(new TabViewItem { Header = "Advanced", Content = advancedViewport });
         dialog = new ContentDialog { Title = "ClassWire AI settings", Content = tabs, PrimaryButtonText = "Save settings",
             CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot,
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
@@ -14057,6 +14087,183 @@ try {{
         proposal.TryGetProperty(key, out var value) && long.TryParse(value.ToString(), NumberStyles.Integer,
             CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
 
+    private UIElement BuildClassWireAIMarkdownContent(string markdown)
+    {
+        var root = new StackPanel { Spacing = 8 };
+        var paragraphLines = new List<string>();
+        var codeLines = new List<string>();
+        var inCode = false;
+        var lines = (markdown ?? string.Empty).Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n').Split('\n');
+
+        void AddInline(Paragraph paragraph, string source)
+        {
+            const string tokenPattern = @"(?<link>\[(?<label>[^\]]+)\]\((?<url>https?://[^\s)]+)\))|(?<code>\x60(?<codeText>[^\x60]+)\x60)|(?<bold>\*\*(?<boldText>.+?)\*\*)|(?<strike>~~(?<strikeText>.+?)~~)|(?<italic>(?<!\*)\*(?<italicText>[^*]+)\*(?!\*))";
+            var cursor = 0;
+            foreach (Match match in Regex.Matches(source, tokenPattern, RegexOptions.CultureInvariant))
+            {
+                if (match.Index > cursor) paragraph.Inlines.Add(new Run { Text = source[cursor..match.Index] });
+                if (match.Groups["link"].Success && Uri.TryCreate(match.Groups["url"].Value, UriKind.Absolute, out var uri))
+                {
+                    var link = new Hyperlink { NavigateUri = uri };
+                    link.Inlines.Add(new Run { Text = match.Groups["label"].Value });
+                    paragraph.Inlines.Add(link);
+                }
+                else if (match.Groups["code"].Success)
+                    paragraph.Inlines.Add(new Run { Text = match.Groups["codeText"].Value, FontFamily = new FontFamily("Cascadia Code"), FontSize = 12 });
+                else if (match.Groups["bold"].Success)
+                    paragraph.Inlines.Add(new Run { Text = match.Groups["boldText"].Value, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+                else if (match.Groups["strike"].Success)
+                    paragraph.Inlines.Add(new Run { Text = match.Groups["strikeText"].Value, TextDecorations = Windows.UI.Text.TextDecorations.Strikethrough });
+                else if (match.Groups["italic"].Success)
+                    paragraph.Inlines.Add(new Run { Text = match.Groups["italicText"].Value, FontStyle = Windows.UI.Text.FontStyle.Italic });
+                cursor = match.Index + match.Length;
+            }
+            if (cursor < source.Length) paragraph.Inlines.Add(new Run { Text = source[cursor..] });
+        }
+
+        void FlushParagraph()
+        {
+            if (paragraphLines.Count == 0) return;
+            var rich = new RichTextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+            var paragraph = new Paragraph();
+            foreach (var line in paragraphLines)
+            {
+                AddInline(paragraph, line);
+                paragraph.Inlines.Add(new LineBreak());
+            }
+            if (paragraph.Inlines.Count > 0 && paragraph.Inlines.Last() is LineBreak)
+                paragraph.Inlines.RemoveAt(paragraph.Inlines.Count - 1);
+            rich.Blocks.Add(paragraph);
+            root.Children.Add(rich);
+            paragraphLines.Clear();
+        }
+
+        void FlushCode()
+        {
+            var code = new TextBlock
+            {
+                Text = string.Join("\n", codeLines),
+                FontFamily = new FontFamily("Cascadia Code"),
+                FontSize = 12,
+                TextWrapping = TextWrapping.NoWrap,
+                IsTextSelectionEnabled = true
+            };
+            root.Children.Add(new Border
+            {
+                Background = ThemeBrush("SchoologySubtleBrush"),
+                BorderBrush = ThemeBrush("SchoologySubtleBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12),
+                Child = new ScrollViewer
+                {
+                    Content = code,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
+                }
+            });
+            codeLines.Clear();
+        }
+
+        bool IsTableRow(string value) => value.Trim().StartsWith("|", StringComparison.Ordinal) &&
+            value.Trim().EndsWith("|", StringComparison.Ordinal) && value.Count(ch => ch == '|') >= 2;
+        bool IsTableSeparator(string value) => IsTableRow(value) &&
+            value.Trim().Trim('|').Split('|').All(cell => Regex.IsMatch(cell.Trim(), "^:?-{3,}:?$"));
+
+        void AddTable(int start, int end)
+        {
+            var rows = lines[start..end].Where(line => !IsTableSeparator(line))
+                .Select(line => line.Trim().Trim('|').Split('|').Select(cell => cell.Trim()).ToArray()).ToArray();
+            if (rows.Length == 0) return;
+            var columns = Math.Max(1, rows.Max(row => row.Length));
+            var table = new Grid { ColumnSpacing = 0, RowSpacing = 0, MinWidth = columns * 132 };
+            for (var c = 0; c < columns; c++) table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var r = 0; r < rows.Length; r++)
+            {
+                table.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                for (var c = 0; c < columns; c++)
+                {
+                    var value = c < rows[r].Length ? rows[r][c] : string.Empty;
+                    var cellText = new TextBlock { Text = value, TextWrapping = TextWrapping.Wrap,
+                        FontWeight = r == 0 ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal };
+                    var cell = new Border
+                    {
+                        Padding = new Thickness(8),
+                        BorderBrush = ThemeBrush("SchoologySubtleBrush"),
+                        BorderThickness = new Thickness(0, 0, 1, 1),
+                        Background = r == 0 ? ThemeBrush("SchoologySubtleBrush") : new SolidColorBrush(Colors.Transparent),
+                        Child = cellText
+                    };
+                    Grid.SetRow(cell, r);
+                    Grid.SetColumn(cell, c);
+                    table.Children.Add(cell);
+                }
+            }
+            root.Children.Add(new ScrollViewer
+            {
+                Content = table,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
+            });
+        }
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var raw = lines[i];
+            var trimmed = raw.Trim();
+            if (trimmed.StartsWith("```", StringComparison.Ordinal) || trimmed.StartsWith("~~~", StringComparison.Ordinal))
+            {
+                FlushParagraph();
+                if (inCode) FlushCode();
+                inCode = !inCode;
+                continue;
+            }
+            if (inCode) { codeLines.Add(raw); continue; }
+            if (trimmed.Length == 0) { FlushParagraph(); continue; }
+
+            if (IsTableRow(trimmed) && i + 1 < lines.Length && IsTableSeparator(lines[i + 1]))
+            {
+                FlushParagraph();
+                var end = i + 2;
+                while (end < lines.Length && IsTableRow(lines[end].Trim())) end++;
+                AddTable(i, end);
+                i = end - 1;
+                continue;
+            }
+
+            var heading = Regex.Match(trimmed, "^#{1,6}\\s+(.+)$");
+            if (heading.Success)
+            {
+                FlushParagraph();
+                var rich = new RichTextBlock { TextWrapping = TextWrapping.Wrap };
+                var paragraph = new Paragraph { FontSize = 16 };
+                AddInline(paragraph, heading.Groups[1].Value);
+                rich.Blocks.Add(paragraph);
+                root.Children.Add(rich);
+                continue;
+            }
+
+            var bullet = Regex.Match(trimmed, @"^[-*+]\\s+(.+)$");
+            var numbered = Regex.Match(trimmed, @"^\\d+[.)]\\s+(.+)$");
+            if (bullet.Success || numbered.Success)
+            {
+                FlushParagraph();
+                var paragraph = new Paragraph();
+                paragraph.Inlines.Add(new Run { Text = bullet.Success ? "• " : Regex.Match(trimmed, @"^\\d+[.)]").Value + " " });
+                AddInline(paragraph, (bullet.Success ? bullet : numbered).Groups[1].Value);
+                var rich = new RichTextBlock { TextWrapping = TextWrapping.Wrap };
+                rich.Blocks.Add(paragraph);
+                root.Children.Add(rich);
+                continue;
+            }
+            paragraphLines.Add(raw);
+        }
+        FlushParagraph();
+        if (inCode) FlushCode();
+        return root;
+    }
+
     private static string MarkdownToSchoologyHtml(string markdown)
     {
         var output = new List<string>();
@@ -14190,7 +14397,7 @@ try {{
 
             for (var iteration = 0; iteration < 6; iteration++)
             {
-                thinkingLabel.Text = iteration == 0 ? "Choosing the right Schoology tools…" : "Reviewing Schoology results…";
+                thinkingLabel.Text = iteration == 0 ? "Understanding your request and preparing Schoology context…" : "Reviewing tool results and preparing the next step…";
                 var completion = _classWireAIProvider == ClassWireAIProvider.Puter
                     ? await (_classWireAIPuterService ?? throw new InvalidOperationException("Open the AI assistant and connect your Puter account first."))
                         .CompleteWithToolsAsync(_classWireAIModel, history, ClassWireAISchoologyTools.Definitions)
@@ -14208,9 +14415,11 @@ try {{
 
                 var results = new List<object>();
                 var calledTools = new List<string>();
+                var toolIndex = 0;
                 foreach (var call in completion.ToolCalls.Take(6))
                 {
-                    thinkingLabel.Text = "Checking " + call.Name.Replace("_", " ", StringComparison.Ordinal) + "…";
+                    toolIndex++;
+                    thinkingLabel.Text = "Using tool " + toolIndex.ToString(CultureInfo.CurrentCulture) + " of " + Math.Min(completion.ToolCalls.Count, 6).ToString(CultureInfo.CurrentCulture) + ": " + call.Name.Replace("_", " ", StringComparison.Ordinal) + "…";
                     calledTools.Add(call.Name);
                     try
                     {
@@ -14232,6 +14441,7 @@ try {{
 
                 if (pendingProposal is not null || generatedImage is not null) break;
                 if (results.Count == 0) break;
+                thinkingLabel.Text = "Summarizing results from " + calledTools.Count.ToString(CultureInfo.CurrentCulture) + " Schoology tool(s)…";
                 history.Add(new ClassWireAIMessage("assistant", "I used Schoology tools: " + string.Join(", ", calledTools)));
                 var resultText = JsonSerializer.Serialize(results);
                 if (resultText.Length > 14000) resultText = resultText[..14000] + "… [truncated]";

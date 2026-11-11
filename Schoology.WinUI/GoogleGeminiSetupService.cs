@@ -234,10 +234,10 @@ internal static class GoogleGeminiSetupService
         var project = await GoogleApiAsync(HttpMethod.Get,
             "https://cloudresourcemanager.googleapis.com/v3/projects/" + Uri.EscapeDataString(projectId),
             accessToken, null, cancellationToken);
-        var projectNumber = ReadString(project, "projectNumber");
-        if (string.IsNullOrWhiteSpace(projectNumber) ||
-            !System.Text.RegularExpressions.Regex.IsMatch(projectNumber, "^[0-9]+$"))
-            throw new InvalidOperationException("Google Cloud did not return a valid numeric project number for " + projectId + ".");
+        var projectNumber = ReadProjectNumber(project);
+        if (string.IsNullOrWhiteSpace(projectNumber))
+            throw new InvalidOperationException("Google Cloud did not return a numeric project number for " + projectId +
+                ". The project exists, but Resource Manager has not exposed its numeric identifier yet. Retry in a moment or select the project again in Advanced settings.");
 
         foreach (var service in new[] { "iam.googleapis.com", "apikeys.googleapis.com", "generativelanguage.googleapis.com" })
             await EnableServiceAsync(projectId, service, accessToken, cancellationToken);
@@ -422,6 +422,30 @@ internal static class GoogleGeminiSetupService
             result[key] = value;
         }
         return result;
+    }
+
+    private static string? ReadProjectNumber(JsonElement project)
+    {
+        if (project.ValueKind != JsonValueKind.Object) return null;
+        if (project.TryGetProperty("projectNumber", out var number))
+        {
+            if (number.ValueKind == JsonValueKind.String)
+            {
+                var text = number.GetString();
+                if (!string.IsNullOrWhiteSpace(text) && text.All(char.IsAsciiDigit)) return text;
+            }
+            else if (number.ValueKind == JsonValueKind.Number && number.TryGetInt64(out var numeric) && numeric > 0)
+                return numeric.ToString(CultureInfo.InvariantCulture);
+        }
+
+        var resourceName = ReadString(project, "name");
+        const string prefix = "projects/";
+        if (resourceName is not null && resourceName.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            var suffix = resourceName[prefix.Length..];
+            if (suffix.Length > 0 && suffix.All(char.IsAsciiDigit)) return suffix;
+        }
+        return null;
     }
 
     private static string? ReadString(JsonElement value, string property) =>

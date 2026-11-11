@@ -1,3 +1,15 @@
+## [2026.10.0-port.133] - 2026-11-11
+
+### Gemini project-number reliability
+- Accept numeric or string `projectNumber` values from Resource Manager and fall back to the canonical `projects/{number}` resource name.
+- Improve retry guidance when Google has created a project but has not yet exposed its numeric identifier.
+
+### AI workspace and rendering
+- Change the AI sidebar from a right-side overlay into a true second layout column that reflows the Schoology content; retain the floating popup presentation.
+- Add independent, bounded vertical scrolling to the Normal and Advanced settings tabs.
+- Render assistant messages with native rich text, inline code, fenced code blocks, clickable links, headings, lists, and horizontally scrollable Markdown tables without changing the Schoology submission HTML converter.
+- Improve thinking and tool-progress messages to show preparation, individual tool calls, and result summarization stages.
+
 ## [2026.10.0-port.132] - 2026-11-11
 
 ### Google Gemini setup and AI settings layout
