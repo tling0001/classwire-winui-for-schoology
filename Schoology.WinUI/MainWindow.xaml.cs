@@ -79,6 +79,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private bool _classWireAIPopoutOpen;
     private bool _classWireAISidebarMode;
     private Button? _classWireAIPresentationButton;
+    private ComboBox? _classWireAIModelPicker;
     private WebView2? _classWireAIPuterWebView;
     private PuterAIService? _classWireAIPuterService;
     private readonly Dictionary<long, JsonElement> _userProfileCache = new();
@@ -12892,134 +12893,65 @@ try {{
 
     private async Task ShowGoogleGeminiSetupAsync(PasswordBox keyBox, TextBlock status)
     {
-        var content = new StackPanel { Spacing = 10, MinWidth = 360 };
-        content.Children.Add(Text("Connect your Google account and create a Gemini API key in a Google Cloud project you control.", 14));
-        content.Children.Add(Text("Google will request Cloud Platform access so ClassWire can list your projects, enable the required APIs, create or reuse a dedicated service account, and create a key restricted to the Gemini API. Your selected project owns Gemini usage, quota, and billing.", 12));
-        var accountLabel = Text("Not connected to Google.", 13, true);
+        var content = new StackPanel { Spacing = 12, MinWidth = 380 };
+        content.Children.Add(Text("Sign in with Google once. ClassWire will then create or reuse a dedicated Google Cloud project, enable the required APIs, and create a Gemini-only API key automatically.", 14));
+        content.Children.Add(Text("The project belongs to your Google account and controls Gemini usage, quotas, and any applicable billing. You can choose another project or enter an existing key from Advanced settings.", 12));
+        var accountLabel = Text("Google is not connected.", 13, true);
+        var progress = Text("Ready to connect.", 12);
+        progress.TextWrapping = TextWrapping.Wrap;
+        var signInButton = new Button { Content = "Sign in with Google", HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetAutomationId(signInButton, "ClassWireAIGoogleConnectButton");
+        content.Children.Add(signInButton);
         content.Children.Add(accountLabel);
+        content.Children.Add(progress);
 
-        var connectButton = new Button { Content = "Connect Google account", HorizontalAlignment = HorizontalAlignment.Left };
-        var projects = new ComboBox { PlaceholderText = "Select a Google Cloud project", HorizontalAlignment = HorizontalAlignment.Stretch };
-        var manualProject = new TextBox { PlaceholderText = "Or enter a Google Cloud project ID" };
-        AutomationProperties.SetName(manualProject, "Google Cloud project ID");
-        var statusLabel = Text("Connect Google to load your projects.", 12);
-        statusLabel.TextWrapping = TextWrapping.Wrap;
-        var projectActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var refreshButton = new Button { Content = "Refresh projects" };
-        var createProjectButton = new HyperlinkButton { Content = "Create a Cloud project", NavigateUri = new Uri("https://console.cloud.google.com/projectcreate") };
-        var automaticSetupButton = new Button { Content = "Automatically create project and Gemini key" };
-        AutomationProperties.SetAutomationId(automaticSetupButton, "ClassWireGeminiAutomaticSetupButton");
-        projectActions.Children.Add(refreshButton);
-        projectActions.Children.Add(createProjectButton);
-        content.Children.Add(connectButton);
-        content.Children.Add(projects);
-        content.Children.Add(manualProject);
-        content.Children.Add(projectActions);
-        content.Children.Add(automaticSetupButton);
-        content.Children.Add(statusLabel);
-
-        async Task LoadProjectsAsync()
+        var dialog = new ContentDialog
         {
-            var result = await GoogleGeminiSetupService.ListProjectsAsync();
-            projects.Items.Clear();
-            foreach (var project in result)
-                projects.Items.Add(new ComboBoxItem { Content = project.DisplayName + " · " + project.ProjectId, Tag = project.ProjectId });
-            projects.SelectedIndex = projects.Items.Count > 0 ? 0 : -1;
-            statusLabel.Text = projects.Items.Count > 0
-                ? "Choose the project where ClassWire should create your Gemini key."
-                : "No active projects were found. Enter a project ID or create a project in Google Cloud.";
-        }
-
-        connectButton.Click += async (_, _) =>
-        {
-            connectButton.IsEnabled = false;
-            connectButton.Content = "Waiting for Google sign-in…";
-            statusLabel.Text = "Your browser will open. Complete Google sign-in and return to ClassWire.";
-            try
-            {
-                var result = await GoogleGeminiSetupService.ConnectAsync();
-                accountLabel.Text = "Connected: " + result.Email;
-                projects.Items.Clear();
-                foreach (var project in result.Projects)
-                    projects.Items.Add(new ComboBoxItem { Content = project.DisplayName + " · " + project.ProjectId, Tag = project.ProjectId });
-                projects.SelectedIndex = projects.Items.Count > 0 ? 0 : -1;
-                statusLabel.Text = result.ProjectListError ?? (projects.Items.Count > 0
-                    ? "Choose the project where ClassWire should create your Gemini key."
-                    : "No active projects were found. Enter a project ID or create a project in Google Cloud.");
-            }
-            catch (Exception ex) { statusLabel.Text = "Google sign-in failed: " + ex.Message; }
-            finally { connectButton.IsEnabled = true; connectButton.Content = "Connect Google account"; }
-        };
-        refreshButton.Click += async (_, _) =>
-        {
-            refreshButton.IsEnabled = false;
-            try { await LoadProjectsAsync(); }
-            catch (Exception ex) { statusLabel.Text = "Could not refresh projects: " + ex.Message; }
-            finally { refreshButton.IsEnabled = true; }
-        };
-
-        ContentDialog? dialog = null;
-        automaticSetupButton.Click += async (_, _) =>
-        {
-            automaticSetupButton.IsEnabled = false;
-            automaticSetupButton.Content = "Creating project and Gemini key…";
-            connectButton.IsEnabled = false;
-            refreshButton.IsEnabled = false;
-            statusLabel.Text = "Creating a dedicated Google Cloud project, enabling APIs, and securing a Gemini-restricted key. This may take a few minutes.";
-            try
-            {
-                var projectId = await GoogleGeminiSetupService.CreateProjectAndGeminiKeyAsync();
-                keyBox.Password = ClassWireAIStorage.LoadKey(ClassWireAIProvider.Gemini) ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(keyBox.Password))
-                    throw new InvalidOperationException("Google created the project and key, but the key could not be loaded from Windows Credential Manager.");
-                status.Text = "Gemini key created and saved securely in project " + projectId + ".";
-                dialog?.Hide();
-            }
-            catch (Exception ex) { statusLabel.Text = "Automatic Gemini setup failed: " + ex.Message; }
-            finally
-            {
-                automaticSetupButton.IsEnabled = true;
-                automaticSetupButton.Content = "Automatically create project and Gemini key";
-                connectButton.IsEnabled = true;
-                refreshButton.IsEnabled = true;
-            }
-        };
-
-        dialog = new ContentDialog
-        {
-            Title = "Set up Google Gemini",
+            Title = "Connect Google Gemini",
             Content = content,
-            PrimaryButtonText = "Create Gemini key",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
+            CloseButtonText = "Close",
+            DefaultButton = ContentDialogButton.Close,
             XamlRoot = _root.XamlRoot,
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
         };
-        dialog.PrimaryButtonClick += async (_, args) =>
+
+        signInButton.Click += async (_, _) =>
         {
-            var deferral = args.GetDeferral();
-            args.Cancel = true;
+            signInButton.IsEnabled = false;
+            signInButton.Content = "Connecting…";
+            progress.Text = "Opening Google's secure sign-in. Complete the browser flow and return to ClassWire.";
             try
             {
-                var projectId = manualProject.Text.Trim();
-                if (string.IsNullOrWhiteSpace(projectId) && projects.SelectedItem is ComboBoxItem selected)
-                    projectId = selected.Tag as string ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(projectId))
-                {
-                    statusLabel.Text = "Select a Google Cloud project or enter its project ID.";
-                    return;
-                }
-                statusLabel.Text = "Creating and securing your Gemini key in " + projectId + "…";
-                await GoogleGeminiSetupService.CreateGeminiKeyAsync(projectId);
+                var account = await GoogleGeminiSetupService.ConnectAsync();
+                accountLabel.Text = "Connected: " + account.Email;
+                progress.Text = "Google connected. Creating or reusing your dedicated Cloud project and Gemini key. This can take a few minutes.";
+                signInButton.Content = "Creating Gemini project and key…";
+                var projectId = await GoogleGeminiSetupService.CreateProjectAndGeminiKeyAsync(account.Email);
                 keyBox.Password = ClassWireAIStorage.LoadKey(ClassWireAIProvider.Gemini) ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(keyBox.Password))
-                    throw new InvalidOperationException("Google created the key, but it could not be loaded from Windows Credential Manager.");
-                status.Text = "Gemini key created and saved securely for your Windows account.";
-                args.Cancel = false;
+                    throw new InvalidOperationException("Google completed setup, but the Gemini key could not be loaded from Windows Credential Manager.");
+                _classWireAIProvider = ClassWireAIProvider.Gemini;
+                _classWireAIModel = ClassWireAIProviderDefaults.Model(ClassWireAIProvider.Gemini);
+                if (_classWireAIModelPicker is not null)
+                {
+                    _classWireAIModelPicker.Items.Clear();
+                    _classWireAIModelPicker.Items.Add(new ComboBoxItem { Content = _classWireAIModel });
+                    _classWireAIModelPicker.SelectedIndex = 0;
+                }
+                SaveClassWireAISettings();
+                status.Text = "Gemini is ready. The key was saved securely for project " + projectId + ".";
+                progress.Text = "Setup complete. You can close this window and start chatting.";
+                signInButton.Content = "Gemini is ready";
+                dialog.Hide();
             }
-            catch (Exception ex) { statusLabel.Text = "Could not create the Gemini key: " + ex.Message; }
-            finally { deferral.Complete(); }
+            catch (Exception ex)
+            {
+                progress.Text = "Google setup could not finish: " + ex.Message + " You can retry here or use Advanced settings to select an existing project.";
+                signInButton.Content = "Try Google setup again";
+                signInButton.IsEnabled = true;
+            }
         };
+
         await dialog.ShowAsync();
     }
 
@@ -13028,7 +12960,6 @@ try {{
         var root = new Grid { Margin = new Thickness(14, 12, 14, 12), RowSpacing = 10 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var header = new Grid { ColumnSpacing = 10 };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -13098,6 +13029,7 @@ try {{
         chatSurface.Children.Add(messageScroll);
 
         var composer = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
+        composer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         composer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         composer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -13178,123 +13110,76 @@ try {{
         Grid.SetRow(conversationArea, 1);
         root.Children.Add(conversationArea);
 
-        var providerRow = new StackPanel { Orientation = Orientation.Vertical, Spacing = 6 };
-        providerRow.Children.Add(Text("Provider", 12, true));
-        var providerPicker = new ComboBox { Width = 170, SelectedIndex = (int)_classWireAIProvider };
-        AutomationProperties.SetName(providerPicker, "AI provider");
-        AutomationProperties.SetAutomationId(providerPicker, "ClassWireAIProviderPicker");
-        providerPicker.Items.Add(new ComboBoxItem { Content = "Google Gemini" });
-        providerPicker.Items.Add(new ComboBoxItem { Content = "OpenAI" });
-        providerPicker.Items.Add(new ComboBoxItem { Content = "Anthropic" });
-        providerPicker.Items.Add(new ComboBoxItem { Content = "Ollama (local)" });
-        providerPicker.Items.Add(new ComboBoxItem { Content = "Puter" });
-        Grid.SetRow(providerPicker, 1);
-        Grid.SetColumn(providerPicker, 0);
-        providerPicker.MinWidth = 150;
-        ToolTipService.SetToolTip(providerPicker, "Choose the AI provider for this conversation");
-        composer.Children.Add(providerPicker);
-        var modelLabel = Text("Model", 12, true);
-        modelLabel.VerticalAlignment = VerticalAlignment.Center;
-        providerRow.Children.Add(modelLabel);
-        var modelBox = new TextBox { Width = 190, Text = _classWireAIModel, PlaceholderText = "Model name" };
-        AutomationProperties.SetName(modelBox, "AI model name");
-        AutomationProperties.SetAutomationId(modelBox, "ClassWireAIModel");
-        modelBox.LostFocus += (_, _) =>
+        var modelRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        modelRow.Children.Add(Text("Model", 12, true));
+        var modelPicker = new ComboBox
         {
-            if (!string.IsNullOrWhiteSpace(modelBox.Text))
+            MinWidth = 190,
+            MaxWidth = 300,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            PlaceholderText = "Choose a model"
+        };
+        AutomationProperties.SetName(modelPicker, "AI model");
+        AutomationProperties.SetAutomationId(modelPicker, "ClassWireAIModelPicker");
+        modelPicker.Items.Add(new ComboBoxItem { Content = _classWireAIModel });
+        modelPicker.SelectedIndex = 0;
+        _classWireAIModelPicker = modelPicker;
+        modelPicker.SelectionChanged += (_, _) =>
+        {
+            if (modelPicker.SelectedItem is ComboBoxItem selected && selected.Content is string modelId &&
+                !string.IsNullOrWhiteSpace(modelId))
             {
-                _classWireAIModel = modelBox.Text.Trim();
+                _classWireAIModel = modelId;
                 SaveClassWireAISettings();
             }
         };
-        providerRow.Children.Add(modelBox);
-        var keyLabel = Text("API key", 12, true);
-        keyLabel.VerticalAlignment = VerticalAlignment.Center;
-        providerRow.Children.Add(keyLabel);
-        var keyBox = new PasswordBox { Width = 190, PlaceholderText = "Provider API key" };
-        AutomationProperties.SetName(keyBox, "Provider API key");
-        AutomationProperties.SetAutomationId(keyBox, "ClassWireAIProviderKey");
-        keyBox.Password = ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty;
-        keyBox.PasswordChanged += (_, _) => ClassWireAIStorage.SaveKey(_classWireAIProvider, keyBox.Password);
-        keyBox.Width = 280;
-        providerRow.Children.Add(keyBox);
-
-        var providerStatus = Text("", 12);
-        providerStatus.TextWrapping = TextWrapping.Wrap;
-        var googleConnectButton = new Button { Content = "Connect Google and create a Gemini key", HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetAutomationId(googleConnectButton, "ClassWireAIGoogleConnectButton");
-        googleConnectButton.Visibility = _classWireAIProvider == ClassWireAIProvider.Gemini ? Visibility.Visible : Visibility.Collapsed;
-        googleConnectButton.Click += async (_, _) => await ShowGoogleGeminiSetupAsync(keyBox, providerStatus);
-        providerRow.Children.Add(googleConnectButton);
-
-        var puterConnectButton = new Button { Content = "Connect Puter account", HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetAutomationId(puterConnectButton, "ClassWireAIPuterConnectButton");
-        puterConnectButton.Visibility = _classWireAIProvider == ClassWireAIProvider.Puter ? Visibility.Visible : Visibility.Collapsed;
-        puterConnectButton.Click += async (_, _) =>
+        var modelStatus = Text("", 12);
+        modelStatus.TextWrapping = TextWrapping.Wrap;
+        var refreshModelsButton = new Button { Content = "Refresh models" };
+        AutomationProperties.SetName(refreshModelsButton, "Refresh available AI models");
+        AutomationProperties.SetAutomationId(refreshModelsButton, "ClassWireAIRefreshModelsButton");
+        refreshModelsButton.Click += async (_, _) =>
         {
-            if (_classWireAIPuterService is null || _classWireAIPuterOverlay is null) return;
-            _classWireAIPuterOverlay.Visibility = Visibility.Visible;
-            puterConnectButton.IsEnabled = false;
-            providerStatus.Text = "Opening Puter sign-in…";
+            var selectedProvider = _classWireAIProvider;
+            refreshModelsButton.IsEnabled = false;
+            refreshModelsButton.Content = "Loading…";
             try
             {
-                var account = await _classWireAIPuterService.ConnectAsync();
-                providerStatus.Text = "Connected to " + account + ". No API key is stored by ClassWire.";
+                IReadOnlyList<string> discovered = selectedProvider == ClassWireAIProvider.Puter
+                    ? await (_classWireAIPuterService ?? throw new InvalidOperationException("Open the AI assistant before discovering Puter models.")).ListModelsAsync()
+                    : await ClassWireAIProviderClient.ListModelsAsync(selectedProvider,
+                        selectedProvider is ClassWireAIProvider.Ollama ? "" : ClassWireAIStorage.LoadKey(selectedProvider) ?? "",
+                        _classWireAIOllamaEndpoint);
+                modelPicker.Items.Clear();
+                var choices = discovered.ToList();
+                if (!choices.Contains(_classWireAIModel, StringComparer.OrdinalIgnoreCase))
+                    choices.Insert(0, _classWireAIModel);
+                foreach (var modelId in choices)
+                    modelPicker.Items.Add(new ComboBoxItem { Content = modelId });
+                modelPicker.SelectedIndex = choices.Count > 0
+                    ? Math.Max(0, choices.FindIndex(value => string.Equals(value, _classWireAIModel, StringComparison.OrdinalIgnoreCase)))
+                    : -1;
+                modelStatus.Text = discovered.Count == 0
+                    ? "No compatible models were returned. Choose a model ID in Advanced settings."
+                    : "Loaded " + discovered.Count.ToString(CultureInfo.InvariantCulture) + " available model(s).";
             }
-            catch (Exception ex) { providerStatus.Text = "Puter sign-in failed: " + ex.Message; }
+            catch (Exception ex)
+            {
+                modelStatus.Text = "Could not refresh models: " + ex.Message;
+            }
             finally
             {
-                _classWireAIPuterOverlay.Visibility = Visibility.Collapsed;
-                puterConnectButton.IsEnabled = true;
+                refreshModelsButton.IsEnabled = true;
+                refreshModelsButton.Content = "Refresh models";
             }
         };
-        providerRow.Children.Add(puterConnectButton);
-        providerRow.Children.Add(providerStatus);
+        modelRow.Children.Add(modelPicker);
+        modelRow.Children.Add(refreshModelsButton);
+        modelRow.Children.Add(modelStatus);
+        Grid.SetRow(modelRow, 2);
+        Grid.SetColumnSpan(modelRow, 3);
+        composer.Children.Add(modelRow);
 
-        var ollamaLabel = Text("Ollama URL", 12, true);
-        ollamaLabel.VerticalAlignment = VerticalAlignment.Center;
-        providerRow.Children.Add(ollamaLabel);
-        var ollamaBox = new TextBox { Width = 190, Text = _classWireAIOllamaEndpoint, PlaceholderText = "Ollama URL" };
-        AutomationProperties.SetName(ollamaBox, "Ollama server URL");
-        AutomationProperties.SetAutomationId(ollamaBox, "ClassWireAIOllamaEndpoint");
-        ollamaBox.Visibility = _classWireAIProvider == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
-        ollamaLabel.Visibility = ollamaBox.Visibility;
-        providerRow.Children.Add(ollamaBox);
-
-        void UpdateProviderVisibility()
-        {
-            var isOllama = _classWireAIProvider == ClassWireAIProvider.Ollama;
-            var isPuter = _classWireAIProvider == ClassWireAIProvider.Puter;
-            var isGemini = _classWireAIProvider == ClassWireAIProvider.Gemini;
-            keyLabel.Visibility = isOllama || isPuter ? Visibility.Collapsed : Visibility.Visible;
-            keyBox.Visibility = isOllama || isPuter ? Visibility.Collapsed : Visibility.Visible;
-            googleConnectButton.Visibility = isGemini ? Visibility.Visible : Visibility.Collapsed;
-            puterConnectButton.Visibility = isPuter ? Visibility.Visible : Visibility.Collapsed;
-            ollamaLabel.Visibility = isOllama ? Visibility.Visible : Visibility.Collapsed;
-            ollamaBox.Visibility = isOllama ? Visibility.Visible : Visibility.Collapsed;
-        }
-        UpdateProviderVisibility();
-        providerPicker.SelectionChanged += (_, _) =>
-        {
-            if (providerPicker.SelectedIndex < 0) return;
-            _classWireAIProvider = (ClassWireAIProvider)providerPicker.SelectedIndex;
-            _classWireAIModel = ClassWireAIProviderDefaults.Model(_classWireAIProvider);
-            modelBox.Text = _classWireAIModel;
-            keyBox.Password = ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty;
-            UpdateProviderVisibility();
-            SaveClassWireAISettings();
-        };
-        ollamaBox.LostFocus += (_, _) =>
-        {
-            if (!string.IsNullOrWhiteSpace(ollamaBox.Text))
-            {
-                _classWireAIOllamaEndpoint = ollamaBox.Text.Trim();
-                SaveClassWireAISettings();
-            }
-        };
-        Grid.SetRow(providerRow, 2);
-        providerRow.Visibility = Visibility.Collapsed;
-        root.Children.Add(providerRow);
 
         var puterWebView = new WebView2
         {
@@ -13511,7 +13396,7 @@ try {{
         AutomationProperties.SetName(temperature, "Gemini response temperature");
         var maxTokens = new TextBox { Header = "Gemini maximum output tokens (256–8192)", Text = Math.Clamp(_classWireAIGeminiMaxOutputTokens, 256, 8192).ToString(CultureInfo.InvariantCulture) };
         var normal = new StackPanel { Spacing = 12, Padding = new Thickness(8) };
-        normal.Children.Add(new TextBlock { Text = "Choose your AI provider and connect its account. Google Gemini can create and save its API key automatically after Google sign-in. Model IDs and manual API-key overrides are in Advanced settings.", TextWrapping = TextWrapping.Wrap });
+        normal.Children.Add(new TextBlock { Text = "Choose your AI provider here. For Google Gemini, sign in once and ClassWire will automatically create or reuse a dedicated Cloud project and Gemini key. Model IDs, project selection, and manual API-key controls are in Advanced settings.", TextWrapping = TextWrapping.Wrap });
         normal.Children.Add(new TextBlock { Text = "Provider", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         normal.Children.Add(provider);
         var modelActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
@@ -13524,7 +13409,7 @@ try {{
         var keyStatus = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap };
         AutomationProperties.SetAutomationId(status, "ClassWireAISettingsStatus");
-        var connectGoogle = new Button { Content = "Connect Google and create a Gemini key" };
+        var connectGoogle = new Button { Content = "Sign in with Google" };
         AutomationProperties.SetAutomationId(connectGoogle, "ClassWireAIGoogleConnectButton");
         var disconnectGoogle = new Button { Content = "Disconnect Google account" };
         AutomationProperties.SetAutomationId(disconnectGoogle, "ClassWireAIGoogleDisconnectButton");
@@ -13585,6 +13470,13 @@ try {{
             var selected = (ClassWireAIProvider)provider.SelectedIndex;
             key.Password = ClassWireAIStorage.LoadKey(selected) ?? "";
             model.Text = ClassWireAIProviderDefaults.Model(selected);
+            _classWireAIModel = model.Text;
+            if (_classWireAIModelPicker is not null)
+            {
+                _classWireAIModelPicker.Items.Clear();
+                _classWireAIModelPicker.Items.Add(new ComboBoxItem { Content = _classWireAIModel });
+                _classWireAIModelPicker.SelectedIndex = 0;
+            }
             modelChoices.Items.Clear();
             modelChoices.Visibility = Visibility.Collapsed;
             status.Text = "";
@@ -13706,6 +13598,86 @@ try {{
         advanced.Children.Add(model);
         advanced.Children.Add(modelActions);
         advanced.Children.Add(modelChoices);
+        advanced.Children.Add(new TextBlock { Text = "Google Cloud project management", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        advanced.Children.Add(new TextBlock { Text = "These controls are optional. Normal Google sign-in creates or reuses a dedicated ClassWire project automatically; use this section only to select another project or create a key in an existing project.", TextWrapping = TextWrapping.Wrap });
+        var googleProjects = new ComboBox { MinWidth = 280, PlaceholderText = "Select an accessible Google Cloud project" };
+        AutomationProperties.SetName(googleProjects, "Google Cloud project");
+        AutomationProperties.SetAutomationId(googleProjects, "ClassWireGoogleCloudProjectPicker");
+        var manualGoogleProjectId = new TextBox { Header = "Or enter a project ID manually", PlaceholderText = "example-project-123" };
+        AutomationProperties.SetName(manualGoogleProjectId, "Manual Google Cloud project ID");
+        var googleProjectStatus = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var googleProjectActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var refreshGoogleProjects = new Button { Content = "Refresh projects" };
+        var createKeyInGoogleProject = new Button { Content = "Create Gemini key in project" };
+        AutomationProperties.SetAutomationId(createKeyInGoogleProject, "ClassWireGoogleCreateKeyInProjectButton");
+        googleProjectActions.Children.Add(refreshGoogleProjects);
+        googleProjectActions.Children.Add(createKeyInGoogleProject);
+        advanced.Children.Add(googleProjects);
+        advanced.Children.Add(manualGoogleProjectId);
+        advanced.Children.Add(googleProjectActions);
+        advanced.Children.Add(googleProjectStatus);
+
+        async Task RefreshGoogleProjectsAsync()
+        {
+            refreshGoogleProjects.IsEnabled = false;
+            refreshGoogleProjects.Content = "Refreshing…";
+            googleProjectStatus.Text = "Searching projects your Google account can access…";
+            try
+            {
+                var projects = await GoogleGeminiSetupService.ListProjectsAsync();
+                googleProjects.Items.Clear();
+                foreach (var cloudProject in projects)
+                    googleProjects.Items.Add(new ComboBoxItem
+                    {
+                        Content = cloudProject.DisplayName + " · " + cloudProject.ProjectId,
+                        Tag = cloudProject.ProjectId
+                    });
+                googleProjects.SelectedIndex = googleProjects.Items.Count > 0 ? 0 : -1;
+                googleProjectStatus.Text = projects.Count > 0
+                    ? "Found " + projects.Count.ToString(CultureInfo.InvariantCulture) + " accessible project(s)."
+                    : "No accessible projects were found. You can still enter a project ID manually.";
+            }
+            catch (Exception ex)
+            {
+                googleProjectStatus.Text = "Could not refresh projects: " + ex.Message;
+            }
+            finally
+            {
+                refreshGoogleProjects.IsEnabled = true;
+                refreshGoogleProjects.Content = "Refresh projects";
+            }
+        }
+
+        refreshGoogleProjects.Click += async (_, _) => await RefreshGoogleProjectsAsync();
+        createKeyInGoogleProject.Click += async (_, _) =>
+        {
+            var projectId = manualGoogleProjectId.Text.Trim();
+            if (string.IsNullOrWhiteSpace(projectId) && googleProjects.SelectedItem is ComboBoxItem selectedProject)
+                projectId = selectedProject.Tag as string ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(projectId))
+            {
+                googleProjectStatus.Text = "Select a project or enter a project ID.";
+                return;
+            }
+            createKeyInGoogleProject.IsEnabled = false;
+            createKeyInGoogleProject.Content = "Creating key…";
+            googleProjectStatus.Text = "Creating a Gemini-restricted key in " + projectId + "…";
+            try
+            {
+                await GoogleGeminiSetupService.CreateGeminiKeyAsync(projectId);
+                key.Password = ClassWireAIStorage.LoadKey(ClassWireAIProvider.Gemini) ?? string.Empty;
+                googleProjectStatus.Text = "Gemini key created and saved securely for project " + projectId + ".";
+            }
+            catch (Exception ex)
+            {
+                googleProjectStatus.Text = "Could not create the Gemini key: " + ex.Message;
+            }
+            finally
+            {
+                createKeyInGoogleProject.IsEnabled = true;
+                createKeyInGoogleProject.Content = "Create Gemini key in project";
+            }
+        };
         advanced.Children.Add(new TextBlock { Text = "Provider API key (stored in Windows Credential Manager)", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         advanced.Children.Add(key);
         advanced.Children.Add(removeKey);
@@ -13734,6 +13706,12 @@ try {{
             { args.Cancel = true; status.Text = "Choose a provider and enter a model."; return; }
             _classWireAIProvider = (ClassWireAIProvider)provider.SelectedIndex;
             _classWireAIModel = model.Text.Trim();
+            if (_classWireAIModelPicker is not null)
+            {
+                _classWireAIModelPicker.Items.Clear();
+                _classWireAIModelPicker.Items.Add(new ComboBoxItem { Content = _classWireAIModel });
+                _classWireAIModelPicker.SelectedIndex = 0;
+            }
             _classWireAIOllamaEndpoint = endpoint.Text.Trim();
             if (!int.TryParse(maxTokens.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedTokens) || parsedTokens is < 256 or > 8192)
             { args.Cancel = true; status.Text = "Gemini maximum output tokens must be between 256 and 8192."; return; }

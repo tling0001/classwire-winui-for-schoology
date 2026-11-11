@@ -1,3 +1,12 @@
+## [2026.10.0-port.132] - 2026-11-11
+
+### Google Gemini setup and AI settings layout
+- Fix Google Cloud project discovery by using Resource Manager `projects:search`, which lists projects the signed-in user can access without requiring an organization or folder parent.
+- Move AI provider selection to normal AI settings and place the active model picker directly below the chat composer.
+- Make normal Google sign-in run the complete automated setup: connect the account, create or reuse the account's dedicated ClassWire AI Cloud project, enable required APIs, and create/save a Gemini-restricted key.
+- Move Cloud project selection and manual Gemini key creation into Advanced settings.
+- Keep provider-specific model discovery and manual model/API-key configuration in Advanced settings, with the composer model picker synchronized to saved settings.
+
 ## [2026.10.0-port.131] - 2026-11-11
 
 ### WinUI AI panel and CI compiler fix

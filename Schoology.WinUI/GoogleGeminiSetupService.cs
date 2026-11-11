@@ -122,7 +122,7 @@ internal static class GoogleGeminiSetupService
         string? pageToken = null;
         for (var pageNumber = 0; pageNumber < 20; pageNumber++)
         {
-            var url = "https://cloudresourcemanager.googleapis.com/v3/projects?pageSize=100";
+            var url = "https://cloudresourcemanager.googleapis.com/v3/projects:search?pageSize=100";
             if (!string.IsNullOrWhiteSpace(pageToken)) url += "&pageToken=" + Uri.EscapeDataString(pageToken);
             var page = await GoogleApiAsync(HttpMethod.Get, url, accessToken, null, cancellationToken);
             if (page.TryGetProperty("projects", out var items) && items.ValueKind == JsonValueKind.Array)
@@ -165,16 +165,43 @@ internal static class GoogleGeminiSetupService
         return accessToken;
     }
 
-    internal static async Task<string> CreateProjectAndGeminiKeyAsync(CancellationToken cancellationToken = default)
+    internal static async Task<string> CreateProjectAndGeminiKeyAsync(string accountEmail, CancellationToken cancellationToken = default)
     {
         var accessToken = await RefreshAccessTokenAsync(cancellationToken);
-        var projectId = "classwire-gemini-" + Guid.NewGuid().ToString("N")[..10];
-        var operation = await GoogleApiAsync(HttpMethod.Post,
-            "https://cloudresourcemanager.googleapis.com/v3/projects", accessToken,
-            new { projectId, displayName = "ClassWire Gemini" }, cancellationToken);
-        var operationName = ReadString(operation, "name");
-        if (!string.IsNullOrWhiteSpace(operationName))
-            _ = await WaitOperationAsync("https://cloudresourcemanager.googleapis.com/v3", operationName, accessToken, cancellationToken);
+        var accountDigest = SHA256.HashData(Encoding.UTF8.GetBytes(accountEmail.Trim().ToLowerInvariant()));
+        var projectSuffix = Convert.ToHexString(accountDigest).ToLowerInvariant()[..10];
+        string? projectId = null;
+        try
+        {
+            var existingProjects = await ListProjectsWithTokenAsync(accessToken, cancellationToken);
+            projectId = existingProjects.FirstOrDefault(project =>
+                string.Equals(project.DisplayName, "ClassWire AI", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(project.ProjectId, "classwire-ai", StringComparison.OrdinalIgnoreCase) ||
+                project.ProjectId.StartsWith("classwire-ai-", StringComparison.OrdinalIgnoreCase))?.ProjectId;
+        }
+        catch
+        {
+            // Search is used to reuse an existing project. If discovery is unavailable,
+            // the deterministic project ID below still makes retries idempotent.
+        }
+
+        if (string.IsNullOrWhiteSpace(projectId))
+        {
+            projectId = "classwire-ai-" + projectSuffix;
+            try
+            {
+                var operation = await GoogleApiAsync(HttpMethod.Post,
+                    "https://cloudresourcemanager.googleapis.com/v3/projects", accessToken,
+                    new { projectId, displayName = "ClassWire AI" }, cancellationToken);
+                var operationName = ReadString(operation, "name");
+                if (!string.IsNullOrWhiteSpace(operationName))
+                    _ = await WaitOperationAsync("https://cloudresourcemanager.googleapis.com/v3", operationName, accessToken, cancellationToken);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("HTTP 409", StringComparison.Ordinal))
+            {
+                // A prior setup attempt may already have created this deterministic project.
+            }
+        }
 
         JsonElement project = default;
         for (var attempt = 0; attempt < 30; attempt++)
