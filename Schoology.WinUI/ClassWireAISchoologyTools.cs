@@ -24,14 +24,17 @@ internal sealed class ClassWireAISchoologyTools
         new("get_course_grades", "Read grade items, grading periods, categories, section grades, and the signed-in user's grades for a course. Optionally provide course_id.", Schema("""{"type":"object","properties":{"course_id":{"type":"integer"}}}""")),
         new("get_course_materials", "List materials in a course folder. Open a course first or provide course_id; folder_id defaults to zero.", Schema("""{"type":"object","properties":{"course_id":{"type":"integer"},"folder_id":{"type":"integer"}}}""")),
         new("get_course_updates", "List recent updates in a course. Open a course first or provide course_id.", Schema("""{"type":"object","properties":{"course_id":{"type":"integer"}}}""")),
+        new("search_message_recipients", "Search Schoology message recipients and return verified IDs and names. Always call this before send_message; never guess IDs.", Schema("""{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}""")),
         new("search_messages", "Search recent Schoology inbox and sent messages by subject or body. Returns sender/recipient IDs, timestamps, unread status and attachment metadata when available.", Schema("""{"type":"object","properties":{"query":{"type":"string"},"folder":{"type":"string","enum":["inbox","sent","both"]},"limit":{"type":"integer","minimum":1,"maximum":60}},"required":["query"]}""")),
         new("get_message_thread", "Retrieve message details from inbox, sent, or both folders by message ID, including attachment metadata and participant identities where available.", Schema("""{"type":"object","properties":{"message_id":{"type":"integer"},"folder":{"type":"string","enum":["inbox","sent","both"]}},"required":["message_id"]}""")),
         new("get_current_assignment", "Read full details and the signed-in user's submission/revision history for the currently open assignment.", Schema("""{"type":"object","properties":{}}""")),
         new("get_assignment_submission", "Read revisions and attachments for a submission. submission_id is the Schoology grade-item/submission path ID, not an arbitrary assignment ID. user_id defaults to the signed-in user.", Schema("""{"type":"object","properties":{"section_id":{"type":"integer"},"submission_id":{"type":"integer"},"user_id":{"type":"integer"}},"required":["section_id","submission_id"]}""")),
         new("get_current_page", "Read the current ClassWire page and selected course/group/assignment context.", Schema("""{"type":"object","properties":{}}""")),
         new("navigate_to_schoology_item", "Navigate within ClassWire to a course, group, assignment, or Messages. This does not change Schoology data.", Schema("""{"type":"object","properties":{"kind":{"type":"string","enum":["course","group","assignment","messages"]},"id":{"type":"integer"},"section_id":{"type":"integer"}},"required":["kind"]}""")),
+        new("submit_assignment_files", "PROPOSE submission of files attached to the latest user message to the currently open assignment. Only use when explicitly requested; confirmation is required.", Schema("""{"type":"object","properties":{}}""")),
+        new("generate_ai_image", "Generate an image with Google Gemini from the prompt and optional image references. Only use when Gemini is selected and the user asks to generate an image.", Schema("""{"type":"object","properties":{"prompt":{"type":"string"}},"required":["prompt"]}""")),
         new("submit_assignment_text", "PROPOSE a rich-text response for the currently open assignment. The app will show a preview and require explicit confirmation before submission.", Schema("""{"type":"object","properties":{"markdown":{"type":"string"},"text":{"type":"string"},"assignment_id":{"type":"integer"},"section_id":{"type":"integer"}},"required":["markdown"]}""")),
-        new("send_message", "PROPOSE a Schoology message. The app resolves one exact recipient name and requires explicit confirmation before sending.", Schema("""{"type":"object","properties":{"recipient_name":{"type":"string"},"subject":{"type":"string"},"message":{"type":"string"}},"required":["recipient_name","subject","message"]}""")),
+        new("send_message", "PROPOSE a Schoology message using the exact recipient ID returned by search_message_recipients. Explicit confirmation is required before sending.", Schema("""{"type":"object","properties":{"recipient_id":{"type":"integer"},"recipient_name":{"type":"string"},"subject":{"type":"string"},"message":{"type":"string"}},"required":["recipient_id","recipient_name","subject","message"]}""")),
         new("post_course_update", "PROPOSE a course or group update in the currently selected Schoology space. Explicit confirmation is required.", Schema("""{"type":"object","properties":{"body":{"type":"string"}},"required":["body"]}""")),
         new("update_assignment_grade", "PROPOSE a teacher grade change. Supply target section_id, assignment_id (grade item ID), enrollment_id, grade, and optional comment. Schoology enforces teacher permissions after confirmation.", Schema("""{"type":"object","properties":{"section_id":{"type":"integer"},"assignment_id":{"type":"integer"},"enrollment_id":{"type":"integer"},"grade":{"type":"string"},"comment":{"type":"string"},"comment_status":{"type":"boolean"}},"required":["section_id","assignment_id","enrollment_id","grade"]}"""))
     ];
@@ -143,6 +146,22 @@ internal sealed class ClassWireAISchoologyTools
                 if (sectionId <= 0) throw new InvalidOperationException("Open a course or supply course_id.");
                 using var document = await _api.GetEntityTabAsync(_session, "Courses", sectionId, "Updates", ct);
                 return Json(Records(document.RootElement, "update", "updates", "update_list"));
+            }
+
+            case "search_message_recipients":
+            {
+                var query = ReadString(args, "query")?.Trim() ?? "";
+                if (query.Length < 2) throw new InvalidOperationException("Enter at least two characters to search message recipients.");
+                using var document = await _api.GetMessageRecipientsAsync(_session, query, ct);
+                var recipients = SchoologyApiClient.ReadRecords(document.RootElement, "recipient", "recipients", "user", "users")
+                    .Select(record => record.Data)
+                    .Select(candidate =>
+                    {
+                        var user = candidate.TryGetProperty("user", out var nested) ? nested : candidate;
+                        return new { id = ReadLongAny(user, "id", "uid", "user_id", "userId", "recipient_id", "recipientId"),
+                            name = ReadString(user, "name_display", "nameDisplay", "display_name", "displayName", "name", "full_name", "fullName") ?? "" };
+                    }).Where(item => item.id > 0 && !string.IsNullOrWhiteSpace(item.name)).DistinctBy(item => item.id).Take(20).ToArray();
+                return Json(new { query, recipients });
             }
 
             case "search_messages":
@@ -318,11 +337,12 @@ internal sealed class ClassWireAISchoologyTools
             case "send_message":
             {
                 var recipient = ReadString(args, "recipient_name")?.Trim() ?? "";
+                var recipientId = ReadLongAny(args, "recipient_id", "recipientId");
                 var subject = ReadString(args, "subject")?.Trim() ?? "";
                 var message = ReadString(args, "message")?.Trim() ?? "";
-                if (recipient.Length == 0 || subject.Length == 0 || message.Length == 0)
-                    throw new InvalidOperationException("Recipient, subject, and message are required.");
-                return Json(new { pendingAction = new { type = "send_message", recipientName = recipient, subject, message } });
+                if (recipient.Length == 0 || recipientId <= 0 || subject.Length == 0 || message.Length == 0)
+                    throw new InvalidOperationException("A verified recipient ID, recipient name, subject, and message are required. Search recipients first.");
+                return Json(new { pendingAction = new { type = "send_message", recipientId, recipientName = recipient, subject, message } });
             }
 
             case "post_course_update":

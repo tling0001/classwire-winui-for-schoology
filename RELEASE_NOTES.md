@@ -173,6 +173,22 @@
 
 # Release notes
 
+## [2026.10.0-port.124]
+
+### ClassWire AI
+- Add multimodal image/PDF attachments for Gemini and Anthropic, image input for OpenAI and Ollama, and local text extraction for supported text documents.
+- Add Gemini image generation with generated-image previews in chat.
+- Add AI-proposed assignment file submissions; files upload together and are submitted only after explicit confirmation.
+- Add Normal and Advanced AI settings tabs for provider/model/key configuration and advanced endpoint/privacy guidance.
+- Add Schoology recipient search returning exact IDs; message proposals require and revalidate the selected recipient ID.
+- Preserve rich-text formatting when sending AI-composed messages.
+- Keep attachment bytes and extracted text out of saved conversation history.
+
+### Build
+- Fix x64 and ARM64 publish errors caused by treating the NavigationView selection event sender as a discard, unsupported TabView enum usage, StorageFile metadata access, and Ollama message serialization.
+- Increment the WinUI app version to `2026.10.0-port.124`.
+
+
 ## [2026.10.0-port.96] - 2026-11-05
 
 - Align standalone overall-grade loading with Android FinalGradesApiHelper and Tauri: use section grades, unfiltered paged enrollment data, grading scales, and section options; match the final-grade record to the signed-in user's enrollment and read only the `final` period.

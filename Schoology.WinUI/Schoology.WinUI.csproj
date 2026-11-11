@@ -17,7 +17,7 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>2026.10.0-port.123</Version>
+    <Version>2026.10.0-port.124</Version>
     <AssemblyVersion>2026.10.0.123</AssemblyVersion>
     <FileVersion>2026.10.0.123</FileVersion>
     <InformationalVersion>2026.10.0-port.123</InformationalVersion>

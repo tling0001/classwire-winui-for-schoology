@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Schoology.WinUI;
 
@@ -17,11 +18,21 @@ internal static class ClassWireAIProviderDefaults
     };
 }
 
+internal sealed class ClassWireAIAttachment
+{
+    public string FileName { get; set; } = "attachment";
+    public string MimeType { get; set; } = "application/octet-stream";
+    public long Size { get; set; }
+    [JsonIgnore] public string? DataBase64 { get; set; }
+    [JsonIgnore] public string? TextContent { get; set; }
+}
+
 internal sealed class ClassWireAIMessage(string role, string content)
 {
     public string Role { get; set; } = role;
     public string Content { get; set; } = content;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public List<ClassWireAIAttachment> Attachments { get; set; } = [];
 }
 
 internal sealed class ClassWireAIConversation
