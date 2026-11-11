@@ -528,6 +528,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (string.IsNullOrWhiteSpace(requestToken))
                 throw new InvalidOperationException("The Schoology sign-in callback did not include a request token.");
             _session = await _auth.CompleteSchoolBrowserSignInAsync(requestToken);
+            await LoadParentChildrenAsync();
             await LoadAccountCollectionsAsync();
             ShowHome();
             return;
@@ -1695,6 +1696,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             {
                 _session = await _auth.SignInAsync(username.Text, password.Password, null);
                 password.Password = string.Empty;
+                await LoadParentChildrenAsync();
                 ShowHome();
                 _ = LoadAccountCollectionsAsync();
             }
@@ -1738,6 +1740,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 {
                     SetStatusText(status, "Verifying your ClassWire account…");
                     _session = await _auth.CompleteSchoolBrowserSignInAsync(requestToken);
+                    await LoadParentChildrenAsync();
                     ShowHome();
                     await LoadAccountCollectionsAsync();
                 }
@@ -1809,6 +1812,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         {
             await StopQrScannerAsync();
             _session = await _auth.SignInWithQrAsync(qr);
+            await LoadParentChildrenAsync();
             ShowHome();
             _ = LoadAccountCollectionsAsync();
             _ = LoadAccountCollectionsAsync();
@@ -1823,6 +1827,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await StopQrScannerAsync();
+        _classWireAIPuterService?.Dispose();
     }
 
     private async Task StopQrScannerAsync()
@@ -1892,6 +1897,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             }
 
             _session = restored;
+            await LoadParentChildrenAsync();
             App.WriteStartupLog("Building logged-in homepage from restored session.");
             ShowHome();
             App.WriteStartupLog("Logged-in homepage visual tree created.");
@@ -2034,7 +2040,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         var aiButton = new Button
         {
-            Content = new FontIcon { Glyph = "\uE99A", FontSize = 18 },
+            Content = new FontIcon { Glyph = "\uEAB7", FontSize = 18, FontFamily = new FontFamily("Segoe Fluent Icons") },
             VerticalAlignment = VerticalAlignment.Center,
             Padding = new Thickness(10, 6, 10, 6),
             MinWidth = 40,
@@ -2117,6 +2123,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         };
         AutomationProperties.SetName(profileItem, profileName + " profile");
         nav.MenuItems.Add(profileItem);
+        if (_parentChildren.Count > 0)
+        {
+            var switchStudent = BuildParentStudentNavigationItem();
+            nav.MenuItems.Add(switchStudent);
+            if (_selectedLearningUserId > 0)
+                nav.SelectedItem = switchStudent.MenuItems.OfType<NavigationViewItem>()
+                    .FirstOrDefault(child => string.Equals(child.Tag as string, "student:" + _selectedLearningUserId, StringComparison.Ordinal));
+        }
         if (section == "Profile" && _activeProfileUserId == (_session?.UserId ?? 0))
             nav.SelectedItem = profileItem;
         nav.MenuItems.Add(new NavigationViewItemSeparator());
@@ -2156,6 +2170,13 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         nav.SelectionChanged += (_, args) =>
         {
             if (_syncingNavigationSelection || args.SelectedItem is not NavigationViewItem item) return;
+            if (item.Tag is string studentTarget && studentTarget.StartsWith("student:", StringComparison.Ordinal))
+            {
+                var value = studentTarget["student:".Length..];
+                if (value == "parent") _ = SelectLearningStudentAsync(0);
+                else if (long.TryParse(value, out var studentId) && studentId > 0) _ = SelectLearningStudentAsync(studentId);
+                return;
+            }
             if (item.Tag is string target && target.Contains(':'))
             {
                 var parts = target.Split(':', 2);
@@ -3734,7 +3755,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (session is null) return;
         try
         {
-            var results = await Task.WhenAll(_api.GetCoursesAsync(session), _api.GetGroupsAsync(session));
+            var results = await Task.WhenAll(_api.GetCoursesAsync(session, LearningUserId), _api.GetGroupsAsync(session, LearningUserId));
             _courses.Clear();
             foreach (var item in results[0]) _courses.Add(item);
             _groups.Clear();
@@ -4167,7 +4188,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private async Task<IReadOnlyList<SchoologyApiRecord>> FetchUpcomingRecordsAsync()
     {
         if (_session is null) throw new InvalidOperationException("Sign in to view upcoming items.");
-        using var document = await _auth.GetApiJsonAsync(_session, $"users/{_session.UserId}/events",
+        using var document = await _auth.GetApiJsonAsync(_session, $"users/{LearningUserId}/events",
             new Dictionary<string, string> { ["start_date"] = DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
                 ["start"] = "0", ["limit"] = "100" });
         return SchoologyApiClient.ReadRecords(document.RootElement, "event", "events");
@@ -4415,7 +4436,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             try
             {
                 var session = _session ?? throw new InvalidOperationException("Sign in to view your calendar.");
-                var records = await _api.GetCalendarEventsForMonthAsync(session, month);
+                var records = await _api.GetCalendarEventsForMonthAsync(session, month, LearningUserId);
                 var dates = records
                     .Select(record => ParseSchoologyDate(ProfileValue(record.Data,
                         "start", "start_time", "date", "due", "due_date")))
@@ -6800,6 +6821,10 @@ try {{
             var gradeItemId = JsonLong(gradeItem, "id", "grade_item_id", "gradeItemId", "gradeitem_id");
             if (gradeItemId <= 0) gradeItemId = JsonLong(assignment, "grade_item_id", "gradeItemId");
             if (gradeItemId <= 0) gradeItemId = assignmentId;
+            var isTeacherForSection = submissionsEnabled && await IsTeacherInSectionAsync(session, sectionId);
+            UIElement? teacherGradingView = isTeacherForSection
+                ? await BuildTeacherGradingViewAsync(session, sectionId, gradeItemId, assignment, gradeItem, record)
+                : null;
             var commentsEnabled = !isAssessment && JsonBoolean(assignment,
                 "allow_discussion", "allowDiscussion", "allow_comments", "allowComments",
                 "comments_enabled", "commentsEnabled");
@@ -6887,7 +6912,7 @@ try {{
             {
                 try
                 {
-                    using var submissionDocument = await _api.GetAssignmentSubmissionAsync(session, sectionId, gradeItemId, session.UserId);
+                    using var submissionDocument = await _api.GetAssignmentSubmissionAsync(session, sectionId, gradeItemId, LearningUserId);
                     submissionRecords = SchoologyApiClient.ReadRecords(submissionDocument.RootElement, "revision", "revisions", "submission", "submissions");
                 }
                 catch (Exception ex) { submissionLoadError = ex.Message; }
@@ -7006,20 +7031,23 @@ try {{
 
             var wide = new Grid { RowSpacing = 8, ColumnSpacing = 16, Margin = new Thickness(16, 8, 16, 16) };
             wide.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            if (submissionsEnabled) wide.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(360) });
+            var showStudentSubmissionPane = submissionsEnabled && !isTeacherForSection;
+            if (showStudentSubmissionPane) wide.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(360) });
             wide.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             wide.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             var wideSelector = new SelectorBar();
             var wideInfo = new SelectorBarItem { Text = "Info" };
             var wideComments = new SelectorBarItem { Text = "Comments" };
+            var wideGrading = new SelectorBarItem { Text = "Grading" };
             wideSelector.Items.Add(wideInfo);
             if (commentsEnabled) wideSelector.Items.Add(wideComments);
+            if (isTeacherForSection) wideSelector.Items.Add(wideGrading);
             Grid.SetRow(wideSelector, 0);
             wide.Children.Add(wideSelector);
             var wideFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
             Grid.SetRow(wideFrame, 1);
             wide.Children.Add(wideFrame);
-            if (submissionsEnabled)
+            if (showStudentSubmissionPane)
             {
                 var pane = Surface(BuildSubmissionsView(), new Thickness(10));
                 Grid.SetColumn(pane, 1);
@@ -7055,8 +7083,9 @@ try {{
             }
             void SelectWide(SelectorBarItem item)
             {
-                wideSelectedTab = item == wideComments ? "Comments" : "Info";
-                SetConnectedFrameContent(wideFrame, wideSelectedTab == "Comments" ? BuildCommentsView() : BuildInfoView());
+                wideSelectedTab = item == wideComments ? "Comments" : item == wideGrading ? "Grading" : "Info";
+                SetConnectedFrameContent(wideFrame, wideSelectedTab == "Comments" ? BuildCommentsView() :
+                    wideSelectedTab == "Grading" ? teacherGradingView ?? EmptyState("Teacher grading is unavailable.") : BuildInfoView());
                 UpdateAssignmentCreateContext(true, wideSelectedTab);
             }
             wideSelector.SelectionChanged += (_, _) => { if (wideSelector.SelectedItem is SelectorBarItem item) SelectWide(item); };
@@ -7069,10 +7098,10 @@ try {{
             var narrowSelector = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Stretch };
             var narrowInfo = new SelectorBarItem { Text = "Info" };
             var narrowComments = new SelectorBarItem { Text = "Comments" };
-            var narrowSubmissions = new SelectorBarItem { Text = "Submissions" };
+            var narrowSubmissions = new SelectorBarItem { Text = isTeacherForSection ? "Grading" : "Submissions" };
             narrowSelector.Items.Add(narrowInfo);
             if (commentsEnabled) narrowSelector.Items.Add(narrowComments);
-            if (submissionsEnabled) narrowSelector.Items.Add(narrowSubmissions);
+            if (submissionsEnabled || isTeacherForSection) narrowSelector.Items.Add(narrowSubmissions);
             Grid.SetRow(narrowSelector, 0);
             narrow.Children.Add(narrowSelector);
             var narrowFrame = new Frame { Background = new SolidColorBrush(Colors.Transparent) };
@@ -7081,8 +7110,10 @@ try {{
             void SelectNarrow(SelectorBarItem item)
             {
                 narrowSelectedTab = item == narrowComments ? "Comments" :
+                    item == narrowSubmissions && isTeacherForSection ? "Grading" :
                     item == narrowSubmissions && submissionsEnabled ? "Submissions" : "Info";
                 var nextContent = narrowSelectedTab == "Comments" ? BuildCommentsView() :
+                    narrowSelectedTab == "Grading" ? teacherGradingView ?? EmptyState("Teacher grading is unavailable.") :
                     narrowSelectedTab == "Submissions" ? BuildSubmissionsView() : BuildInfoView();
                 SetConnectedFrameContent(narrowFrame, nextContent);
                 UpdateAssignmentCreateContext(false, narrowSelectedTab);
@@ -7323,7 +7354,7 @@ try {{
                 : tab == "Resources" && kind == "Groups"
                     ? await _api.GetGroupResourcesAsync(session, entityId)
                     : tab == "Grades"
-                        ? await _api.GetUserGradesAsync(session)
+                        ? await _api.GetUserGradesAsync(session, LearningUserId)
                         : await _api.GetEntityTabAsync(session, kind, entityId, tab);
             if (kind == "School Profile" && tab == "Info")
             {
@@ -11563,7 +11594,7 @@ try {{
             var enrollmentRecords = SchoologyApiClient.ReadRecords(enrollmentsDocument?.RootElement ?? default, "enrollment", "enrollments");
             var ownEnrollment = enrollmentRecords.FirstOrDefault(record =>
                 string.Equals(ProfileValue(record.Data, "uid", "user_id", "userId"),
-                    session.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal));
+                    LearningUserId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal));
             var enrollmentData = ownEnrollment is null ? default : ownEnrollment.Data;
             var enrollmentId = JsonLong(enrollmentData, "id", "enrollment_id", "enrollmentId");
             var finalRecord = finalGradeRecords.FirstOrDefault(record =>
@@ -11923,7 +11954,7 @@ try {{
                         catch (Exception ex) { App.WriteStartupLog($"A grade endpoint was unavailable for section {course.Id}.", ex); return null; }
                     }
                     var responses = await Task.WhenAll(
-                        TryLoadAsync(() => _api.GetUserGradesForSectionAsync(session, course.Id)),
+                        TryLoadAsync(() => _api.GetUserGradesForSectionAsync(session, course.Id, LearningUserId)),
                         TryLoadAsync(() => _api.GetGradingPeriodsAsync(session, course.Id)),
                         TryLoadAsync(() => _api.GetGradingCategoriesAsync(session, course.Id)),
                         TryLoadAsync(() => _api.GetGradeItemsAsync(session, course.Id)));
@@ -12909,7 +12940,7 @@ try {{
         await dialog.ShowAsync();
     }
 
-    private UIElement BuildClassWireAIAssistantPage()
+    private Grid BuildClassWireAIAssistantPage()
     {
         var root = new Grid { Margin = new Thickness(14, 12, 14, 12), RowSpacing = 10 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -13184,7 +13215,15 @@ try {{
                 var welcome = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 560 };
                 welcome.Children.Add(new FontIcon { Glyph = "\uE99A", FontSize = 32, Foreground = ThemeBrush("SchoologyBlueBrush"), HorizontalAlignment = HorizontalAlignment.Center });
                 welcome.Children.Add(Text("What can I help you with?", 20, true));
-                welcome.Children.Add(Text("Ask questions, brainstorm, or explore your Schoology courses, assignments, grades, materials, updates and messages. Changes always require your confirmation.", 14));
+                welcome.Children.Add(Text("Ask naturally about your courses, assignments, grades, materials, updates and messages. I can research, explain, draft, and prepare Schoology actions for your review.", 14));
+                var suggestions = new StackPanel { Spacing = 6, Margin = new Thickness(0, 10, 0, 0) };
+                foreach (var suggestion in new[] { "Summarize recent activity across my courses.", "What assignments are due soon?", "Help me understand my grades.", "Find a course material or message." })
+                {
+                    var suggestionButton = new Button { Content = suggestion, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(12, 9, 12, 9) };
+                    suggestionButton.Click += async (_, _) => await SendClassWireAIMessageAsync(suggestion, messageStack, messageScroll, sendButton!);
+                    suggestions.Children.Add(suggestionButton);
+                }
+                welcome.Children.Add(suggestions);
                 messageStack.Children.Add(welcome);
             }
             else
@@ -13559,6 +13598,14 @@ try {{
         if (_classWireAISending || _classWireAIConversation is null) return;
         _classWireAISending = true;
         sendButton.IsEnabled = false;
+        var thinkingLabel = Text("Connecting to Schoology…", 12, true);
+        var thinkingRing = new ProgressRing { IsActive = true, Width = 18, Height = 18, VerticalAlignment = VerticalAlignment.Center };
+        var thinkingRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Padding = new Thickness(12, 8, 12, 8) };
+        thinkingRow.Children.Add(thinkingRing);
+        thinkingRow.Children.Add(thinkingLabel);
+        var thinkingSurface = Surface(thinkingRow, new Thickness(4));
+        messageStack.Children.Add(thinkingSurface);
+        messageScroll.ChangeView(null, messageScroll.ScrollableHeight, null);
         try
         {
             _classWireAIConversation.Messages.Add(new ClassWireAIMessage("user", prompt));
@@ -13578,6 +13625,7 @@ try {{
 
             for (var iteration = 0; iteration < 6; iteration++)
             {
+                thinkingLabel.Text = iteration == 0 ? "Choosing the right Schoology tools…" : "Reviewing Schoology results…";
                 var completion = _classWireAIProvider == ClassWireAIProvider.Puter
                     ? await (_classWireAIPuterService ?? throw new InvalidOperationException("Open the AI assistant and connect your Puter account first."))
                         .CompleteWithToolsAsync(_classWireAIModel, history, ClassWireAISchoologyTools.Definitions)
@@ -13595,6 +13643,7 @@ try {{
                 var calledTools = new List<string>();
                 foreach (var call in completion.ToolCalls.Take(6))
                 {
+                    thinkingLabel.Text = "Checking " + call.Name.Replace("_", " ", StringComparison.Ordinal) + "…";
                     calledTools.Add(call.Name);
                     try
                     {
@@ -13652,6 +13701,7 @@ try {{
         }
         finally
         {
+            messageStack.Children.Remove(thinkingSurface);
             _classWireAISending = false;
             sendButton.IsEnabled = true;
             messageScroll.ChangeView(null, messageScroll.ScrollableHeight, null);

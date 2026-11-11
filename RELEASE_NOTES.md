@@ -1,3 +1,26 @@
+## [2026.10.0-port.123] - 2026-11-10
+
+### Teacher grading
+- Add a teacher-only assignment Grading view with active student enrollments, grade status, submission status, revision history, and attachment review.
+- Paginate enrollment, grade, and submission roster requests instead of silently stopping at the first 200 records.
+- Add rubric criteria, preset rating choices, criterion comments, overall comments, comment visibility, and optional total-grade overrides.
+- Preserve numeric and grading-scale grade editing for assignments without rubrics.
+
+### Parent accounts
+- Discover linked students through the authenticated parent's `child_uids` profile field.
+- Add a Switch Student navigation section while retaining the parent's OAuth session.
+- Scope course/group lists, upcoming events, calendar, grades, and assignment submissions to the selected linked student.
+
+### ClassWire AI and Puter
+- Replace the toolbar robot glyph with the native ChatSparkle icon.
+- Add contextual welcome prompts and a native thinking/loading indicator during Schoology tool calls.
+- Serve the Puter SDK bridge from a loopback-only `http://localhost` origin rather than the originless `NavigateToString` document; validate web messages against that origin.
+- Dispose the Puter listener and resources with the main window.
+
+### Build and warnings
+- Resolve WinUI analyzer warnings CA1001 and CA1859.
+- Update artifact actions to Node 24-compatible versions and use Inno Setup's preferred x64 architecture identifier.
+
 ## [2026.10.0-port.122] - 2026-11-10
 
 - Fix the x64 and ARM64 publish error by creating the dedicated persistent Puter WebView2 environment with the same `CoreWebView2Environment.CreateWithOptionsAsync` API already used by the shared Schoology WebView.

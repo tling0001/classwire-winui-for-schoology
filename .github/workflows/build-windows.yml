@@ -173,7 +173,7 @@ jobs:
           Write-Host "Created per-user installer: $installer"
 
       - name: Upload installer and published files
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ClassWire-WinUI-${{ matrix.rid }}
           path: |
@@ -213,7 +213,7 @@ jobs:
           PY
 
       - name: Download installer artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           pattern: ClassWire-WinUI-*
           path: release-assets

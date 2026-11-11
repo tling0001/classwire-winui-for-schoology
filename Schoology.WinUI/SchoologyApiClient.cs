@@ -18,11 +18,19 @@ internal sealed class SchoologyApiClient
 
     internal Task<IReadOnlyList<SchoologyEntity>> GetCoursesAsync(
         SchoologyAuthService.Session session, CancellationToken cancellationToken = default) =>
-        GetEntitiesAsync(session, $"users/{session.UserId}/sections", ["section", "sections"], cancellationToken);
+        GetCoursesAsync(session, session.UserId, cancellationToken);
+
+    internal Task<IReadOnlyList<SchoologyEntity>> GetCoursesAsync(
+        SchoologyAuthService.Session session, long learningUserId, CancellationToken cancellationToken = default) =>
+        GetEntitiesAsync(session, $"users/{learningUserId}/sections", ["section", "sections"], cancellationToken);
 
     internal Task<IReadOnlyList<SchoologyEntity>> GetGroupsAsync(
         SchoologyAuthService.Session session, CancellationToken cancellationToken = default) =>
-        GetEntitiesAsync(session, $"users/{session.UserId}/groups", ["group", "groups"], cancellationToken);
+        GetGroupsAsync(session, session.UserId, cancellationToken);
+
+    internal Task<IReadOnlyList<SchoologyEntity>> GetGroupsAsync(
+        SchoologyAuthService.Session session, long learningUserId, CancellationToken cancellationToken = default) =>
+        GetEntitiesAsync(session, $"users/{learningUserId}/groups", ["group", "groups"], cancellationToken);
 
     internal Task<JsonDocument> GetPeopleAsync(
         SchoologyAuthService.Session session, int start = 0, int limit = 200,
@@ -40,12 +48,20 @@ internal sealed class SchoologyApiClient
 
     internal Task<JsonDocument> GetUserGradesAsync(
         SchoologyAuthService.Session session, CancellationToken cancellationToken = default) =>
-        _auth.GetApiJsonAsync(session, $"users/{session.UserId}/grades",
+        GetUserGradesAsync(session, session.UserId, cancellationToken);
+
+    internal Task<JsonDocument> GetUserGradesAsync(
+        SchoologyAuthService.Session session, long learningUserId, CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, $"users/{learningUserId}/grades",
             new Dictionary<string, string> { ["limit"] = "100" }, cancellationToken);
 
     internal Task<JsonDocument> GetUserGradesForSectionAsync(
         SchoologyAuthService.Session session, long sectionId, CancellationToken cancellationToken = default) =>
-        _auth.GetApiJsonAsync(session, $"users/{session.UserId}/grades",
+        GetUserGradesForSectionAsync(session, sectionId, session.UserId, cancellationToken);
+
+    internal Task<JsonDocument> GetUserGradesForSectionAsync(
+        SchoologyAuthService.Session session, long sectionId, long learningUserId, CancellationToken cancellationToken = default) =>
+        _auth.GetApiJsonAsync(session, $"users/{learningUserId}/grades",
             new Dictionary<string, string>
             {
                 ["section_id"] = sectionId.ToString(CultureInfo.InvariantCulture),
@@ -119,8 +135,12 @@ internal sealed class SchoologyApiClient
         SchoologyAuthService.Session session, long sectionId, long appId, CancellationToken cancellationToken = default) =>
         _auth.GetApiJsonAtVersionAsync(session, "v2", $"sections/{sectionId}/applications/{appId}/launch", null, cancellationToken);
 
+    internal Task<IReadOnlyList<SchoologyApiRecord>> GetCalendarEventsForMonthAsync(
+        SchoologyAuthService.Session session, DateTime month, CancellationToken cancellationToken = default) =>
+        GetCalendarEventsForMonthAsync(session, month, session.UserId, cancellationToken);
+
     internal async Task<IReadOnlyList<SchoologyApiRecord>> GetCalendarEventsForMonthAsync(
-        SchoologyAuthService.Session session, DateTime month, CancellationToken cancellationToken = default)
+        SchoologyAuthService.Session session, DateTime month, long learningUserId, CancellationToken cancellationToken = default)
     {
         var monthStart = new DateTime(month.Year, month.Month, 1);
         var monthEnd = monthStart.AddMonths(1);
@@ -131,7 +151,7 @@ internal sealed class SchoologyApiClient
         // with start_date/end_date and follows every 20-item page.
         for (var offset = 0; offset < 2000; offset += pageSize)
         {
-            using var document = await _auth.GetApiJsonAsync(session, $"users/{session.UserId}/events",
+            using var document = await _auth.GetApiJsonAsync(session, $"users/{learningUserId}/events",
                 new Dictionary<string, string>
                 {
                     ["start_date"] = monthStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
@@ -479,6 +499,37 @@ internal sealed class SchoologyApiClient
         _auth.GetApiJsonAsync(session, $"sections/{sectionId}/grades",
             new Dictionary<string, string> { ["assignment_id"] = gradeItemId.ToString(CultureInfo.InvariantCulture) },
             cancellationToken);
+
+    internal Task<JsonDocument> GetSectionEnrollmentsPageAsync(
+        SchoologyAuthService.Session session, long sectionId, int start, int limit = 200, CancellationToken ct = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/enrollments",
+            new Dictionary<string, string> { ["start"] = start.ToString(CultureInfo.InvariantCulture), ["limit"] = Math.Clamp(limit, 1, 200).ToString(CultureInfo.InvariantCulture) }, ct);
+
+    internal Task<JsonDocument> GetSectionGradesPageAsync(
+        SchoologyAuthService.Session session, long sectionId, long gradeItemId, int start, int limit = 200, CancellationToken ct = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/grades",
+            new Dictionary<string, string> { ["assignment_id"] = gradeItemId.ToString(CultureInfo.InvariantCulture),
+                ["start"] = start.ToString(CultureInfo.InvariantCulture), ["limit"] = Math.Clamp(limit, 1, 200).ToString(CultureInfo.InvariantCulture) }, ct);
+
+    internal Task<JsonDocument> GetAssignmentSubmissionsPageAsync(
+        SchoologyAuthService.Session session, long sectionId, long gradeItemId, int start, int limit = 200, CancellationToken ct = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/submissions/{gradeItemId}",
+            new Dictionary<string, string> { ["with_attachments"] = "TRUE", ["all_revisions"] = "TRUE",
+                ["start"] = start.ToString(CultureInfo.InvariantCulture), ["limit"] = Math.Clamp(limit, 1, 200).ToString(CultureInfo.InvariantCulture) }, ct);
+
+    internal Task<JsonDocument> GetGradingRubricAsync(SchoologyAuthService.Session session, long sectionId, long rubricId, CancellationToken ct = default) =>
+        _auth.GetApiJsonAsync(session, $"sections/{sectionId}/grading_rubrics/{rubricId}", null, ct);
+
+    internal Task<JsonDocument> GetRubricGradeAsync(SchoologyAuthService.Session session, long rubricId, long gradeItemId, long enrollmentId, CancellationToken ct = default) =>
+        _auth.GetApiJsonAsync(session, $"rubric_grade/{rubricId}/grade_item/{gradeItemId}/enrollment/{enrollmentId}", null, ct);
+
+    internal Task<JsonDocument> UpdateAssignmentRubricGradeAsync(
+        SchoologyAuthService.Session session, long rubricId, long gradeItemId, long enrollmentId, object payload, CancellationToken ct = default)
+    {
+        if (rubricId <= 0 || gradeItemId <= 0 || enrollmentId <= 0) throw new InvalidOperationException("Rubric, grade item, and enrollment IDs are required.");
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Put,
+            $"rubric_grade/{rubricId}/grade_item/{gradeItemId}/enrollment/{enrollmentId}", payload, ct);
+    }
 
     internal Task<JsonDocument> GetAssignmentSubmissionAsync(
         SchoologyAuthService.Session session, long sectionId, long gradeItemId, long userId,

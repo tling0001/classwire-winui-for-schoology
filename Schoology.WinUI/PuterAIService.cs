@@ -1,16 +1,22 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
 
 namespace Schoology.WinUI;
 
-internal sealed class PuterAIService
+internal sealed class PuterAIService : IDisposable
 {
     private readonly WebView2 _webView;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pending = new();
     private readonly SemaphoreSlim _initializeGate = new(1, 1);
     private bool _initialized;
+    private TcpListener? _localBridgeListener;
+    private readonly CancellationTokenSource _bridgeLifetime = new();
+    private int _bridgePort;
 
     internal PuterAIService(WebView2 webView) => _webView = webView;
 
@@ -95,6 +101,9 @@ internal sealed class PuterAIService
             {
                 try
                 {
+                    if (!Uri.TryCreate(args.Source, UriKind.Absolute, out var source) ||
+                        source.Scheme != Uri.UriSchemeHttp || !source.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                        source.Port != _bridgePort) return;
                     using var document = JsonDocument.Parse(args.WebMessageAsJson);
                     var root = document.RootElement;
                     var id = root.TryGetProperty("id", out var idValue) ? idValue.GetString() : null;
@@ -112,7 +121,8 @@ internal sealed class PuterAIService
                 }
                 catch { }
             };
-            _webView.NavigateToString("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'></head><body><script src='https://js.puter.com/v2/'></script></body></html>");
+            var bridgeUrl = await StartLocalBridgeAsync(cancellationToken);
+            _webView.Source = new Uri(bridgeUrl);
             var ready = false;
             for (var attempt = 0; attempt < 120; attempt++)
             {
@@ -125,6 +135,73 @@ internal sealed class PuterAIService
             _initialized = true;
         }
         finally { _initializeGate.Release(); }
+    }
+
+    private async Task<string> StartLocalBridgeAsync(CancellationToken cancellationToken)
+    {
+        _localBridgeListener = new TcpListener(IPAddress.Loopback, 0);
+        _localBridgeListener.Start();
+        _bridgePort = ((IPEndPoint)_localBridgeListener.LocalEndpoint).Port;
+        _ = Task.Run(() => AcceptBridgeConnectionsAsync(_localBridgeListener, _bridgeLifetime.Token));
+        return "http://localhost:" + _bridgePort.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/";
+    }
+
+    private static async Task AcceptBridgeConnectionsAsync(TcpListener listener, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var client = await listener.AcceptTcpClientAsync(cancellationToken);
+                _ = Task.Run(() => ServeBridgeRequestAsync(client, cancellationToken), cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch (SocketException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
+    private static async Task ServeBridgeRequestAsync(TcpClient client, CancellationToken cancellationToken)
+    {
+        using (client)
+        {
+            try
+            {
+                await using var stream = client.GetStream();
+                using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
+                var requestLine = await reader.ReadLineAsync(cancellationToken);
+                if (string.IsNullOrWhiteSpace(requestLine)) return;
+                string? line;
+                var headerBytes = 0;
+                while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync(cancellationToken)))
+                {
+                    headerBytes += line.Length;
+                    if (headerBytes > 16384) return;
+                }
+                const string html = "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>ClassWire Puter</title></head><body><p role='status'>Loading Puter…</p><script src='https://js.puter.com/v2/'></script></body></html>";
+                var isRoot = requestLine.StartsWith("GET / ", StringComparison.Ordinal) ||
+                    requestLine.StartsWith("GET / HTTP/", StringComparison.Ordinal) ||
+                    requestLine.StartsWith("GET /index.html ", StringComparison.Ordinal);
+                var body = isRoot ? Encoding.UTF8.GetBytes(html) : Array.Empty<byte>();
+                var status = isRoot ? "200 OK" : "404 Not Found";
+                var headers = Encoding.ASCII.GetBytes("HTTP/1.1 " + status + "\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: " +
+                    body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                    "\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n\r\n");
+                await stream.WriteAsync(headers, cancellationToken);
+                if (body.Length > 0) await stream.WriteAsync(body, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) { }
+            catch (IOException) { }
+        }
+    }
+
+    public void Dispose()
+    {
+        try { _bridgeLifetime.Cancel(); } catch { }
+        try { _localBridgeListener?.Stop(); } catch { }
+        try { _initializeGate.Dispose(); } catch { }
+        try { _bridgeLifetime.Dispose(); } catch { }
     }
 
     private static JsonElement ReadArguments(JsonElement value)
