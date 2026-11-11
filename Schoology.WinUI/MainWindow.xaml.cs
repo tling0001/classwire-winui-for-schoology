@@ -13045,7 +13045,9 @@ try {{
         messageScroll.Content = messageStack;
         chatSurface.Children.Add(messageScroll);
 
-        var composer = new Grid { ColumnSpacing = 8 };
+        var composer = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
+        composer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        composer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         composer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         composer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         composer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -13060,8 +13062,14 @@ try {{
         };
         AutomationProperties.SetName(promptBox, "Message ClassWire AI");
         AutomationProperties.SetAutomationId(promptBox, "ClassWireAIPrompt");
+        Grid.SetRow(promptBox, 0);
+        Grid.SetColumnSpan(promptBox, 3);
         composer.Children.Add(promptBox);
-        var attachButton = new Button { Content = "Attach", MinWidth = 72 };
+        var attachButton = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE710", FontSize = 16 },
+            Width = 40, MinWidth = 40, Height = 36
+        };
         AutomationProperties.SetName(attachButton, "Attach files or images to the AI message");
         AutomationProperties.SetAutomationId(attachButton, "ClassWireAIAttachButton");
         attachButton.Click += async (_, _) =>
@@ -13076,6 +13084,7 @@ try {{
             }
         };
         ToolTipService.SetToolTip(attachButton, "Attach up to five images, PDFs, or text files");
+        Grid.SetRow(attachButton, 1);
         Grid.SetColumn(attachButton, 1);
         composer.Children.Add(attachButton);
         Button? sendButton = null;
@@ -13086,16 +13095,32 @@ try {{
             promptBox.Text = string.Empty;
             var attachments = _classWireAIPendingAttachments.ToArray();
             _classWireAIPendingAttachments.Clear();
-            attachButton.Content = "Attach";
+            attachButton.Content = new FontIcon { Glyph = "\uE710", FontSize = 16 };
             ToolTipService.SetToolTip(attachButton, "Attach up to five images, PDFs, or text files");
             await SendClassWireAIMessageAsync(prompt, messageStack, messageScroll, sendButton, attachments);
         });
+        sendButton.Content = new FontIcon { Glyph = "\uE724", FontSize = 16 };
+        sendButton.Width = 40;
+        sendButton.MinWidth = 40;
+        sendButton.Height = 36;
         sendButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+        AutomationProperties.SetName(sendButton, "Send message");
+        ToolTipService.SetToolTip(sendButton, "Send message");
         AutomationProperties.SetAutomationId(sendButton, "ClassWireAISendButton");
+        Grid.SetRow(sendButton, 1);
         Grid.SetColumn(sendButton, 2);
         composer.Children.Add(sendButton);
-        Grid.SetRow(composer, 1);
-        chatSurface.Children.Add(composer);
+        var composerSurface = new Border
+        {
+            Background = InAppAcrylicBrush(),
+            BorderBrush = ThemeBrush("SchoologySubtleBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(8),
+            Child = composer
+        };
+        Grid.SetRow(composerSurface, 1);
+        chatSurface.Children.Add(composerSurface);
         Grid.SetColumn(chatSurface, 1);
         conversationArea.Children.Add(chatSurface);
         Grid.SetRow(conversationArea, 1);
@@ -13111,7 +13136,11 @@ try {{
         providerPicker.Items.Add(new ComboBoxItem { Content = "Anthropic" });
         providerPicker.Items.Add(new ComboBoxItem { Content = "Ollama (local)" });
         providerPicker.Items.Add(new ComboBoxItem { Content = "Puter" });
-        providerRow.Children.Add(providerPicker);
+        Grid.SetRow(providerPicker, 1);
+        Grid.SetColumn(providerPicker, 0);
+        providerPicker.MinWidth = 150;
+        ToolTipService.SetToolTip(providerPicker, "Choose the AI provider for this conversation");
+        composer.Children.Add(providerPicker);
         var modelLabel = Text("Model", 12, true);
         modelLabel.VerticalAlignment = VerticalAlignment.Center;
         providerRow.Children.Add(modelLabel);
@@ -13430,16 +13459,14 @@ try {{
         AutomationProperties.SetName(temperature, "Gemini response temperature");
         var maxTokens = new TextBox { Header = "Gemini maximum output tokens (256–8192)", Text = Math.Clamp(_classWireAIGeminiMaxOutputTokens, 256, 8192).ToString(CultureInfo.InvariantCulture) };
         var normal = new StackPanel { Spacing = 12, Padding = new Thickness(8) };
-        normal.Children.Add(new TextBlock { Text = "Choose the provider and model. Discover available models, or enter a custom model ID. API keys are stored in Windows Credential Manager; Puter uses its own signed-in session.", TextWrapping = TextWrapping.Wrap });
+        normal.Children.Add(new TextBlock { Text = "Choose your AI provider and connect its account. Google Gemini can create and save its API key automatically after Google sign-in. Model IDs and manual API-key overrides are in Advanced settings.", TextWrapping = TextWrapping.Wrap });
         normal.Children.Add(new TextBlock { Text = "Provider", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         normal.Children.Add(provider);
-        normal.Children.Add(model);
         var modelActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var discoverModels = new Button { Content = "Discover models" };
         AutomationProperties.SetAutomationId(discoverModels, "ClassWireAIDiscoverModelsButton");
         modelActions.Children.Add(discoverModels);
-        normal.Children.Add(modelActions);
-        normal.Children.Add(modelChoices);
+ 
         var removeKey = new Button { Content = "Remove saved API key" };
         AutomationProperties.SetAutomationId(removeKey, "ClassWireAIRemoveProviderKeyButton");
         var keyStatus = new TextBlock { TextWrapping = TextWrapping.Wrap };
@@ -13457,9 +13484,6 @@ try {{
         var puterConnected = false;
         ContentDialog? dialog = null;
 
-        normal.Children.Add(key);
-        normal.Children.Add(removeKey);
-        normal.Children.Add(keyStatus);
         normal.Children.Add(status);
         normal.Children.Add(connectGoogle);
         normal.Children.Add(disconnectGoogle);
@@ -13490,7 +13514,9 @@ try {{
             key.Visibility = needsKey ? Visibility.Visible : Visibility.Collapsed;
             removeKey.Visibility = needsKey && ClassWireAIStorage.LoadKey(selected) is not null ? Visibility.Visible : Visibility.Collapsed;
             keyStatus.Text = needsKey
-                ? (ClassWireAIStorage.LoadKey(selected) is null ? "No saved key for this provider." : "A key is saved in Windows Credential Manager. Enter a replacement or remove it.")
+                ? (selected == ClassWireAIProvider.Gemini && ClassWireAIStorage.LoadGoogleRefreshToken() is not null
+                    ? "Google is connected. The Gemini key created for your Cloud project is saved in Windows Credential Manager; a manual key can be entered in Advanced settings."
+                    : ClassWireAIStorage.LoadKey(selected) is null ? "No saved key for this provider." : "A key is saved in Windows Credential Manager. Enter a replacement or remove it.")
                 : selected == ClassWireAIProvider.Puter ? "Puter manages sign-in; ClassWire never stores a Puter API key." : "Ollama does not require an API key.";
             endpoint.Visibility = selected == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
             connectGoogle.Visibility = selected == ClassWireAIProvider.Gemini ? Visibility.Visible : Visibility.Collapsed;
@@ -13529,9 +13555,16 @@ try {{
         };
         connectGoogle.Click += async (_, _) =>
         {
-            if (provider.SelectedIndex == (int)ClassWireAIProvider.Gemini)
-                await ShowGoogleGeminiSetupAsync(key, status);
-            UpdateProviderControls();
+            if (provider.SelectedIndex != (int)ClassWireAIProvider.Gemini) return;
+            // WinUI allows only one active ContentDialog per XamlRoot. Close
+            // settings before showing the Google OAuth/setup dialog to avoid
+            // the nested-dialog activation crash.
+            _classWireAIProvider = ClassWireAIProvider.Gemini;
+            _classWireAIModel = model.Text.Trim();
+            dialog?.Hide();
+            await Task.Delay(180);
+            await ShowGoogleGeminiSetupAsync(key, status);
+            await ShowClassWireAISettingsAsync();
         };
         disconnectGoogle.Click += (_, _) =>
         {
@@ -13617,6 +13650,14 @@ try {{
 
         var advanced = new StackPanel { Spacing = 12, Padding = new Thickness(8) };
         advanced.Children.Add(new TextBlock { Text = "Advanced provider configuration", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        advanced.Children.Add(new TextBlock { Text = "Model ID", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        advanced.Children.Add(model);
+        advanced.Children.Add(modelActions);
+        advanced.Children.Add(modelChoices);
+        advanced.Children.Add(new TextBlock { Text = "Provider API key (stored in Windows Credential Manager)", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        advanced.Children.Add(key);
+        advanced.Children.Add(removeKey);
+        advanced.Children.Add(keyStatus);
         advanced.Children.Add(endpoint);
         advanced.Children.Add(new TextBlock { Text = "Gemini response temperature · " + temperature.Value.ToString("0.00", CultureInfo.CurrentCulture), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         advanced.Children.Add(temperature);

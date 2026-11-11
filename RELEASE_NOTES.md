@@ -1,3 +1,11 @@
+## [2026.10.0-port.130] - 2026-11-11
+
+### AI composer and Google connection
+- Place the provider/model selector, plus-icon attachment action, and send-icon action inside one rounded native AI message composer.
+- Move custom model IDs, model discovery, and provider API-key overrides into Advanced AI settings; keep provider selection and Google account setup in the normal flow.
+- Fix the Google connection crash by closing the settings ContentDialog before opening the Google OAuth/setup dialog, then restore settings after setup.
+- Clarify that Google sign-in can automatically create and securely save the Gemini API key; preserve the optional manual key override in Advanced settings.
+
 ## [2026.10.0-port.129] - 2026-11-11
 
 ### Gemini setup and school sign-in fixes
