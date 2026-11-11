@@ -165,12 +165,53 @@ internal static class GoogleGeminiSetupService
         return accessToken;
     }
 
+    internal static async Task<string> CreateProjectAndGeminiKeyAsync(CancellationToken cancellationToken = default)
+    {
+        var accessToken = await RefreshAccessTokenAsync(cancellationToken);
+        var projectId = "classwire-gemini-" + Guid.NewGuid().ToString("N")[..10];
+        var operation = await GoogleApiAsync(HttpMethod.Post,
+            "https://cloudresourcemanager.googleapis.com/v3/projects", accessToken,
+            new { projectId, displayName = "ClassWire Gemini" }, cancellationToken);
+        var operationName = ReadString(operation, "name");
+        if (!string.IsNullOrWhiteSpace(operationName))
+            _ = await WaitOperationAsync("https://cloudresourcemanager.googleapis.com/v3", operationName, accessToken, cancellationToken);
+
+        JsonElement project = default;
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            try
+            {
+                project = await GoogleApiAsync(HttpMethod.Get,
+                    "https://cloudresourcemanager.googleapis.com/v3/projects/" + Uri.EscapeDataString(projectId),
+                    accessToken, null, cancellationToken);
+                if (ReadString(project, "state") == "ACTIVE") break;
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("HTTP 404", StringComparison.Ordinal) && attempt < 29)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            }
+        }
+        if (ReadString(project, "state") != "ACTIVE")
+            throw new InvalidOperationException("Google created the project but it is not active yet. Wait a moment, refresh projects, and try again.");
+
+        await CreateGeminiKeyAsync(projectId, cancellationToken);
+        return projectId;
+    }
+
     internal static async Task CreateGeminiKeyAsync(string projectId, CancellationToken cancellationToken = default)
     {
         projectId = projectId.Trim();
         if (!System.Text.RegularExpressions.Regex.IsMatch(projectId, "^[a-z][a-z0-9-]{4,28}[a-z0-9]$"))
             throw new InvalidOperationException("Enter a valid Google Cloud project ID.");
         var accessToken = await RefreshAccessTokenAsync(cancellationToken);
+        var project = await GoogleApiAsync(HttpMethod.Get,
+            "https://cloudresourcemanager.googleapis.com/v3/projects/" + Uri.EscapeDataString(projectId),
+            accessToken, null, cancellationToken);
+        var projectNumber = ReadString(project, "projectNumber");
+        if (string.IsNullOrWhiteSpace(projectNumber) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(projectNumber, "^[0-9]+$"))
+            throw new InvalidOperationException("Google Cloud did not return a valid numeric project number for " + projectId + ".");
+
         foreach (var service in new[] { "iam.googleapis.com", "apikeys.googleapis.com", "generativelanguage.googleapis.com" })
             await EnableServiceAsync(projectId, service, accessToken, cancellationToken);
 
@@ -221,7 +262,7 @@ internal static class GoogleGeminiSetupService
         string? pageToken = null;
         for (var pageNumber = 0; pageNumber < 10; pageNumber++)
         {
-            var listUrl = "https://apikeys.googleapis.com/v2/projects/" + Uri.EscapeDataString(projectId) + "/locations/global/keys?pageSize=100";
+            var listUrl = "https://apikeys.googleapis.com/v2/projects/" + Uri.EscapeDataString(projectNumber) + "/locations/global/keys?pageSize=100";
             if (!string.IsNullOrWhiteSpace(pageToken)) listUrl += "&pageToken=" + Uri.EscapeDataString(pageToken);
             var keyList = await GoogleApiAsync(HttpMethod.Get, listUrl, accessToken, null, cancellationToken);
             if (keyList.TryGetProperty("keys", out var keys) && keys.ValueKind == JsonValueKind.Array)
@@ -245,7 +286,7 @@ internal static class GoogleGeminiSetupService
         var keyName = existingKeyName;
         if (string.IsNullOrWhiteSpace(keyName))
         {
-            var createUrl = "https://apikeys.googleapis.com/v2/projects/" + Uri.EscapeDataString(projectId) + "/locations/global/keys";
+            var createUrl = "https://apikeys.googleapis.com/v2/projects/" + Uri.EscapeDataString(projectNumber) + "/locations/global/keys";
             JsonElement operation = default;
             string? lastBindingError = null;
             for (var attempt = 0; attempt < 5; attempt++)

@@ -178,13 +178,25 @@ internal sealed partial class SchoologyAuthService
         var body = await ReadResponseTextAsync(response.Content, cancellationToken);
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException(ReadableError(body, "School search failed", response.StatusCode));
         using var document = JsonDocument.Parse(body);
-        if (!document.RootElement.TryGetProperty("school", out var schools) || schools.ValueKind != JsonValueKind.Array) return [];
-        return schools.EnumerateArray().Select(item => new School(
-            Read(item, "title", "name", "school_name") ?? "School",
-            Read(item, "id", "school_id") ?? string.Empty,
-            Read(item, "login_type", "loginType"),
-            Read(item, "login_url", "loginUrl"),
-            Read(item, "domain"))).Where(s => !string.IsNullOrWhiteSpace(s.Id)).ToArray();
+        var results = new List<School>();
+        if (document.RootElement.TryGetProperty("school", out var schools) && schools.ValueKind == JsonValueKind.Array)
+        {
+            results.AddRange(schools.EnumerateArray().Select(item => new School(
+                Read(item, "title", "name", "school_name") ?? "School",
+                Read(item, "id", "school_id") ?? string.Empty,
+                Read(item, "login_type", "loginType"),
+                Read(item, "login_url", "loginUrl"),
+                Read(item, "domain"))).Where(s => !string.IsNullOrWhiteSpace(s.Id)));
+        }
+        if (string.Equals(query.Trim().TrimEnd('/'), "app.classwire.com", StringComparison.OrdinalIgnoreCase))
+        {
+            var aliasIndex = results.FindIndex(s => string.Equals(s.Domain, "app.classwire.com", StringComparison.OrdinalIgnoreCase));
+            if (aliasIndex >= 0)
+                results[aliasIndex] = results[aliasIndex] with { LoginType = "oauth", Domain = "app.classwire.com" };
+            else
+                results.Insert(0, new School("ClassWire Test School", "classwire-test", "oauth", null, "app.classwire.com"));
+        }
+        return results;
     }
 
     public async Task<Session> SignInAsync(string username, string password, string? schoolId, CancellationToken cancellationToken = default)
@@ -238,6 +250,8 @@ internal sealed partial class SchoologyAuthService
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var domainUri) || domainUri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException("This school provided an invalid sign-in domain.");
         var host = domainUri.Host;
+        if (string.Equals(host, "app.classwire.com", StringComparison.OrdinalIgnoreCase))
+            host = "app.schoology.com";
         await SyncServerTimeAsync(cancellationToken);
         var temporary = await GetRequestTokenAsync(cancellationToken);
         _pendingSchoolRequest = temporary;

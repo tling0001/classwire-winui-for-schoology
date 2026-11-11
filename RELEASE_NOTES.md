@@ -1,3 +1,12 @@
+## [2026.10.0-port.129] - 2026-11-11
+
+### Gemini setup and school sign-in fixes
+- Use the numeric Google Cloud project number for API Keys API resource paths while retaining project IDs for Resource Manager, Service Usage, and IAM.
+- Add automatic Gemini setup that creates a dedicated Cloud project without an invalid parent field, enables required APIs, provisions the service account, and saves a Gemini-restricted key in Windows Credential Manager.
+- Preserve manual project selection and project-ID entry alongside automatic setup.
+- Route schools with non-OAuth login types through the native account form and retain the selected school ID during credential sign-in.
+- Add the `app.classwire.com` test-school alias and map its OAuth flow to the official Schoology app host.
+
 ## [2026.10.0-port.128] - 2026-11-11
 
 ### AI account and credential management parity

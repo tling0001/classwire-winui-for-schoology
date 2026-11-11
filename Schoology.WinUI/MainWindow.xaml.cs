@@ -1635,6 +1635,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             {
                 search.Visibility = Visibility.Collapsed;
                 continueButton.Visibility = Visibility.Collapsed;
+                if (!string.Equals(selectedSchool.LoginType, "oauth", StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowAccountSignInPage(selectedSchool);
+                    return;
+                }
                 await OpenRemoteSchoolLoginAsync(selectedSchool, browser, status, search);
             }
             catch (Exception ex)
@@ -1649,9 +1654,10 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         content.Children.Add(browser);
     }
 
-    private void ShowAccountSignInPage()
+    private void ShowAccountSignInPage(SchoologyAuthService.School? selectedSchool = null)
     {
-        CreateLoginSubpage("Sign in with my account", "Use your Schoology username or email and password.", out var content);
+        var title = selectedSchool is null ? "Sign in with my account" : "Sign in to " + selectedSchool.Name;
+        CreateLoginSubpage(title, "Use your Schoology username or email and password.", out var content);
         var username = new TextBox { Header = "Username or email", PlaceholderText = "Enter your username or email" };
         var password = new PasswordBox { Header = "Password", PlaceholderText = "Enter your password" };
         var status = Text("", 13);
@@ -1698,7 +1704,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             SetStatusText(status, "Signing in and verifying your ClassWire profile…");
             try
             {
-                _session = await _auth.SignInAsync(username.Text, password.Password, null);
+                _session = await _auth.SignInAsync(username.Text, password.Password, selectedSchool?.Id);
                 password.Password = string.Empty;
                 await LoadParentChildrenAsync();
                 ShowHome();
@@ -12861,12 +12867,15 @@ try {{
         var projectActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var refreshButton = new Button { Content = "Refresh projects" };
         var createProjectButton = new HyperlinkButton { Content = "Create a Cloud project", NavigateUri = new Uri("https://console.cloud.google.com/projectcreate") };
+        var automaticSetupButton = new Button { Content = "Automatically create project and Gemini key" };
+        AutomationProperties.SetAutomationId(automaticSetupButton, "ClassWireGeminiAutomaticSetupButton");
         projectActions.Children.Add(refreshButton);
         projectActions.Children.Add(createProjectButton);
         content.Children.Add(connectButton);
         content.Children.Add(projects);
         content.Children.Add(manualProject);
         content.Children.Add(projectActions);
+        content.Children.Add(automaticSetupButton);
         content.Children.Add(statusLabel);
 
         async Task LoadProjectsAsync()
@@ -12909,7 +12918,34 @@ try {{
             finally { refreshButton.IsEnabled = true; }
         };
 
-        var dialog = new ContentDialog
+        ContentDialog? dialog = null;
+        automaticSetupButton.Click += async (_, _) =>
+        {
+            automaticSetupButton.IsEnabled = false;
+            automaticSetupButton.Content = "Creating project and Gemini key…";
+            connectButton.IsEnabled = false;
+            refreshButton.IsEnabled = false;
+            statusLabel.Text = "Creating a dedicated Google Cloud project, enabling APIs, and securing a Gemini-restricted key. This may take a few minutes.";
+            try
+            {
+                var projectId = await GoogleGeminiSetupService.CreateProjectAndGeminiKeyAsync();
+                keyBox.Password = ClassWireAIStorage.LoadKey(ClassWireAIProvider.Gemini) ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(keyBox.Password))
+                    throw new InvalidOperationException("Google created the project and key, but the key could not be loaded from Windows Credential Manager.");
+                status.Text = "Gemini key created and saved securely in project " + projectId + ".";
+                dialog?.Hide();
+            }
+            catch (Exception ex) { statusLabel.Text = "Automatic Gemini setup failed: " + ex.Message; }
+            finally
+            {
+                automaticSetupButton.IsEnabled = true;
+                automaticSetupButton.Content = "Automatically create project and Gemini key";
+                connectButton.IsEnabled = true;
+                refreshButton.IsEnabled = true;
+            }
+        };
+
+        dialog = new ContentDialog
         {
             Title = "Set up Google Gemini",
             Content = content,
