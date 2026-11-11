@@ -28,6 +28,21 @@ internal sealed class PuterAIService : IDisposable
         return result.ValueKind == JsonValueKind.String ? result.GetString() ?? "Puter account" : "Puter account";
     }
 
+    internal async Task<string?> GetAccountAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await InvokeAsync(
+            "const p=window.puter;if(!p.auth.isSignedIn())return null;const user=await p.auth.getUser().catch(()=>null);return user?.username||user?.email||user?.name||'Puter account';",
+            TimeSpan.FromSeconds(20), cancellationToken);
+        return result.ValueKind == JsonValueKind.String ? result.GetString() : null;
+    }
+
+    internal async Task DisconnectAsync(CancellationToken cancellationToken = default)
+    {
+        await InvokeAsync(
+            "const p=window.puter;if(p.auth.isSignedIn())await p.auth.signOut();return true;",
+            TimeSpan.FromSeconds(30), cancellationToken);
+    }
+
     internal async Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
         var script = "const p=window.puter;if(!p.auth.isSignedIn())throw new Error('Connect your Puter account in AI settings first.');" +

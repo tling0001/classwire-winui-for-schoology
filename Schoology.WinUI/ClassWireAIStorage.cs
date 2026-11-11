@@ -80,6 +80,26 @@ internal static class ClassWireAIStorage
         catch (Exception ex) { throw new InvalidOperationException("Could not save the Google OAuth refresh token securely in Windows Credential Manager.", ex); }
     }
 
+    internal static void RemoveKey(ClassWireAIProvider provider)
+    {
+        try
+        {
+            var vault = new PasswordVault();
+            try { vault.Remove(vault.Retrieve(VaultResource, provider.ToString())); } catch { }
+        }
+        catch (Exception ex) { App.WriteStartupLog("Could not remove the ClassWire AI provider key from Windows Credential Manager.", ex); }
+    }
+
+    internal static void RemoveGoogleRefreshToken()
+    {
+        try
+        {
+            var vault = new PasswordVault();
+            try { vault.Remove(vault.Retrieve("ClassWire Google OAuth", "refresh-token")); } catch { }
+        }
+        catch (Exception ex) { App.WriteStartupLog("Could not remove the Google OAuth refresh token from Windows Credential Manager.", ex); }
+    }
+
     internal static void SaveKey(ClassWireAIProvider provider, string key)
     {
         try

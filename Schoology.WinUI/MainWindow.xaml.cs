@@ -13394,7 +13394,7 @@ try {{
         AutomationProperties.SetName(temperature, "Gemini response temperature");
         var maxTokens = new TextBox { Header = "Gemini maximum output tokens (256–8192)", Text = Math.Clamp(_classWireAIGeminiMaxOutputTokens, 256, 8192).ToString(CultureInfo.InvariantCulture) };
         var normal = new StackPanel { Spacing = 12, Padding = new Thickness(8) };
-        normal.Children.Add(new TextBlock { Text = "Choose the provider and model. Discover available models from your connected provider, or enter a custom model ID. API keys are stored in Windows Credential Manager.", TextWrapping = TextWrapping.Wrap });
+        normal.Children.Add(new TextBlock { Text = "Choose the provider and model. Discover available models, or enter a custom model ID. API keys are stored in Windows Credential Manager; Puter uses its own signed-in session.", TextWrapping = TextWrapping.Wrap });
         normal.Children.Add(new TextBlock { Text = "Provider", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         normal.Children.Add(provider);
         normal.Children.Add(model);
@@ -13404,22 +13404,66 @@ try {{
         modelActions.Children.Add(discoverModels);
         normal.Children.Add(modelActions);
         normal.Children.Add(modelChoices);
-        var keyLabelVisibility = _classWireAIProvider is ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter ? Visibility.Collapsed : Visibility.Visible;
-        key.Visibility = keyLabelVisibility;
-        endpoint.Visibility = _classWireAIProvider == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
-        normal.Children.Add(key);
+        var removeKey = new Button { Content = "Remove saved API key" };
+        AutomationProperties.SetAutomationId(removeKey, "ClassWireAIRemoveProviderKeyButton");
+        var keyStatus = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap };
         AutomationProperties.SetAutomationId(status, "ClassWireAISettingsStatus");
-        normal.Children.Add(status);
         var connectGoogle = new Button { Content = "Connect Google and create a Gemini key" };
-        connectGoogle.Visibility = _classWireAIProvider == ClassWireAIProvider.Gemini ? Visibility.Visible : Visibility.Collapsed;
         AutomationProperties.SetAutomationId(connectGoogle, "ClassWireAIGoogleConnectButton");
-        connectGoogle.Click += async (_, _) =>
-        {
-            if (provider.SelectedIndex == (int)ClassWireAIProvider.Gemini)
-                await ShowGoogleGeminiSetupAsync(key, status);
-        };
+        var disconnectGoogle = new Button { Content = "Disconnect Google account" };
+        AutomationProperties.SetAutomationId(disconnectGoogle, "ClassWireAIGoogleDisconnectButton");
+        var puterAccount = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var connectPuter = new Button { Content = "Connect Puter account" };
+        AutomationProperties.SetAutomationId(connectPuter, "ClassWireAIPuterConnectButton");
+        var disconnectPuter = new Button { Content = "Disconnect Puter account" };
+        AutomationProperties.SetAutomationId(disconnectPuter, "ClassWireAIPuterDisconnectButton");
+        var puterConnected = false;
+        ContentDialog? dialog = null;
+
+        normal.Children.Add(key);
+        normal.Children.Add(removeKey);
+        normal.Children.Add(keyStatus);
+        normal.Children.Add(status);
         normal.Children.Add(connectGoogle);
+        normal.Children.Add(disconnectGoogle);
+        normal.Children.Add(puterAccount);
+        normal.Children.Add(connectPuter);
+        normal.Children.Add(disconnectPuter);
+
+        async Task RefreshPuterStatusAsync()
+        {
+            try
+            {
+                var account = await (_classWireAIPuterService ?? throw new InvalidOperationException("Open the AI assistant before connecting Puter.")).GetAccountAsync();
+                puterConnected = !string.IsNullOrWhiteSpace(account);
+                puterAccount.Text = puterConnected ? "Connected to Puter as " + account + ". Authentication stays in the WebView session." : "Not connected to Puter. Sign in to use Puter models.";
+            }
+            catch (Exception ex)
+            {
+                puterConnected = false;
+                puterAccount.Text = "Puter connection status unavailable: " + ex.Message;
+            }
+        }
+
+        void UpdateProviderControls()
+        {
+            if (provider.SelectedIndex < 0) return;
+            var selected = (ClassWireAIProvider)provider.SelectedIndex;
+            var needsKey = selected is not (ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter);
+            key.Visibility = needsKey ? Visibility.Visible : Visibility.Collapsed;
+            removeKey.Visibility = needsKey && ClassWireAIStorage.LoadKey(selected) is not null ? Visibility.Visible : Visibility.Collapsed;
+            keyStatus.Text = needsKey
+                ? (ClassWireAIStorage.LoadKey(selected) is null ? "No saved key for this provider." : "A key is saved in Windows Credential Manager. Enter a replacement or remove it.")
+                : selected == ClassWireAIProvider.Puter ? "Puter manages sign-in; ClassWire never stores a Puter API key." : "Ollama does not require an API key.";
+            endpoint.Visibility = selected == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
+            connectGoogle.Visibility = selected == ClassWireAIProvider.Gemini ? Visibility.Visible : Visibility.Collapsed;
+            disconnectGoogle.Visibility = selected == ClassWireAIProvider.Gemini && ClassWireAIStorage.LoadGoogleRefreshToken() is not null ? Visibility.Visible : Visibility.Collapsed;
+            puterAccount.Visibility = selected == ClassWireAIProvider.Puter ? Visibility.Visible : Visibility.Collapsed;
+            connectPuter.Visibility = selected == ClassWireAIProvider.Puter && !puterConnected ? Visibility.Visible : Visibility.Collapsed;
+            disconnectPuter.Visibility = selected == ClassWireAIProvider.Puter && puterConnected ? Visibility.Visible : Visibility.Collapsed;
+            if (selected != ClassWireAIProvider.Puter) puterAccount.Text = "";
+        }
 
         provider.SelectionChanged += (_, _) =>
         {
@@ -13427,17 +13471,74 @@ try {{
             var selected = (ClassWireAIProvider)provider.SelectedIndex;
             key.Password = ClassWireAIStorage.LoadKey(selected) ?? "";
             model.Text = ClassWireAIProviderDefaults.Model(selected);
-            key.Visibility = selected is ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter ? Visibility.Collapsed : Visibility.Visible;
-            endpoint.Visibility = selected == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
-            connectGoogle.Visibility = selected == ClassWireAIProvider.Gemini ? Visibility.Visible : Visibility.Collapsed;
             modelChoices.Items.Clear();
             modelChoices.Visibility = Visibility.Collapsed;
             status.Text = "";
+            UpdateProviderControls();
+            if (selected == ClassWireAIProvider.Puter) _ = RefreshPuterStatusAsync();
         };
         modelChoices.SelectionChanged += (_, _) =>
         {
             if (modelChoices.SelectedItem is ComboBoxItem selected && selected.Content is string id)
                 model.Text = id;
+        };
+        removeKey.Click += (_, _) =>
+        {
+            if (provider.SelectedIndex < 0) return;
+            var selected = (ClassWireAIProvider)provider.SelectedIndex;
+            ClassWireAIStorage.RemoveKey(selected);
+            key.Password = "";
+            removeKey.Visibility = Visibility.Collapsed;
+            keyStatus.Text = "Saved " + selected + " API key removed from Windows Credential Manager.";
+        };
+        connectGoogle.Click += async (_, _) =>
+        {
+            if (provider.SelectedIndex == (int)ClassWireAIProvider.Gemini)
+                await ShowGoogleGeminiSetupAsync(key, status);
+            UpdateProviderControls();
+        };
+        disconnectGoogle.Click += (_, _) =>
+        {
+            ClassWireAIStorage.RemoveGoogleRefreshToken();
+            status.Text = "Google account disconnected. Your saved Gemini API key remains available until you remove it.";
+            UpdateProviderControls();
+        };
+        connectPuter.Click += async (_, _) =>
+        {
+            dialog?.Hide();
+            if (_classWireAIPuterService is null || _classWireAIPuterOverlay is null)
+            {
+                status.Text = "Open the AI assistant first, then connect Puter.";
+                await ShowClassWireAISettingsAsync();
+                return;
+            }
+            _classWireAIPuterOverlay.Visibility = Visibility.Visible;
+            connectPuter.IsEnabled = false;
+            status.Text = "Opening Puter sign-in…";
+            try
+            {
+                var account = await _classWireAIPuterService.ConnectAsync();
+                status.Text = "Connected to " + account + ". No API key is stored by ClassWire.";
+            }
+            catch (Exception ex) { status.Text = "Puter sign-in failed: " + ex.Message; }
+            finally
+            {
+                _classWireAIPuterOverlay.Visibility = Visibility.Collapsed;
+                connectPuter.IsEnabled = true;
+            }
+            await ShowClassWireAISettingsAsync();
+        };
+        disconnectPuter.Click += async (_, _) =>
+        {
+            try
+            {
+                await (_classWireAIPuterService ?? throw new InvalidOperationException("Open the AI assistant first.")).DisconnectAsync();
+                puterConnected = false;
+                puterAccount.Text = "Disconnected from Puter. Your WebView session no longer has a signed-in account.";
+                status.Text = "Puter disconnected.";
+                UpdateProviderControls();
+            }
+            catch (Exception ex) { status.Text = "Could not disconnect Puter: " + ex.Message; }
         };
         discoverModels.Click += async (_, _) =>
         {
@@ -13452,11 +13553,9 @@ try {{
                 IReadOnlyList<string> discovered = selected == ClassWireAIProvider.Puter
                     ? await (_classWireAIPuterService ?? throw new InvalidOperationException("Open the AI assistant before discovering Puter models.")).ListModelsAsync()
                     : await ClassWireAIProviderClient.ListModelsAsync(selected,
-                        selected is ClassWireAIProvider.Ollama ? "" : key.Password,
-                        endpoint.Text);
+                        selected is ClassWireAIProvider.Ollama ? "" : key.Password, endpoint.Text);
                 if (provider.SelectedIndex != (int)selected) return;
-                foreach (var id in discovered)
-                    modelChoices.Items.Add(new ComboBoxItem { Content = id });
+                foreach (var id in discovered) modelChoices.Items.Add(new ComboBoxItem { Content = id });
                 if (!discovered.Contains(model.Text.Trim(), StringComparer.OrdinalIgnoreCase))
                     modelChoices.Items.Insert(0, new ComboBoxItem { Content = model.Text.Trim() });
                 modelChoices.SelectedIndex = Math.Max(0, modelChoices.Items.Count > 0
@@ -13486,17 +13585,18 @@ try {{
         advanced.Children.Add(new TextBlock { Text = "Gemini response temperature · " + temperature.Value.ToString("0.00", CultureInfo.CurrentCulture), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         advanced.Children.Add(temperature);
         advanced.Children.Add(maxTokens);
-        advanced.Children.Add(new TextBlock { Text = "Lower temperature is more focused; higher values are more varied. Maximum output tokens controls Gemini response length. Gemini and Anthropic support image and PDF input; OpenAI and Ollama support image input. Puter supports image input here; PDF files need Gemini or Anthropic. Text files are extracted locally.", TextWrapping = TextWrapping.Wrap });
+        advanced.Children.Add(new TextBlock { Text = "Lower temperature is more focused; higher values are more varied. Maximum output tokens controls Gemini response length. Gemini and Anthropic support image and PDF input; OpenAI and Ollama support image input. Puter forwards supported image/PDF files through temporary Puter storage and deletes those temporary files after each response; text files are extracted locally.", TextWrapping = TextWrapping.Wrap });
         temperature.ValueChanged += (_, args) =>
         {
             var label = advanced.Children.OfType<TextBlock>().FirstOrDefault(item => item.Text.StartsWith("Gemini response temperature", StringComparison.Ordinal));
             if (label is not null) label.Text = "Gemini response temperature · " + args.NewValue.ToString("0.00", CultureInfo.CurrentCulture);
         };
+        advanced.Children.Add(new TextBlock { Text = "Privacy: provider API keys and Google refresh tokens are stored in Windows Credential Manager. Puter authentication remains in the WebView website session. Prompts and relevant Schoology context are sent to the selected AI provider. Conversation history is stored locally on this device.", TextWrapping = TextWrapping.Wrap });
         advanced.Children.Add(new TextBlock { Text = "Schoology writes are proposal-only. Assignment submissions, messages, updates, and grade changes require explicit confirmation.", TextWrapping = TextWrapping.Wrap });
         var tabs = new TabView { IsAddTabButtonVisible = false };
         tabs.TabItems.Add(new TabViewItem { Header = "Normal", Content = normal });
         tabs.TabItems.Add(new TabViewItem { Header = "Advanced", Content = advanced });
-        var dialog = new ContentDialog { Title = "ClassWire AI settings", Content = tabs, PrimaryButtonText = "Save settings",
+        dialog = new ContentDialog { Title = "ClassWire AI settings", Content = tabs, PrimaryButtonText = "Save settings",
             CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = _root.XamlRoot,
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         dialog.PrimaryButtonClick += (_, args) =>
@@ -13515,6 +13615,8 @@ try {{
                 ClassWireAIStorage.SaveKey(_classWireAIProvider, key.Password);
             SaveClassWireAISettings();
         };
+        UpdateProviderControls();
+        if (_classWireAIProvider == ClassWireAIProvider.Puter) await RefreshPuterStatusAsync();
         await dialog.ShowAsync();
     }
 

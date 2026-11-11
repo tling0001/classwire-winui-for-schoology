@@ -1,3 +1,13 @@
+## [2026.10.0-port.128] - 2026-11-11
+
+### AI account and credential management parity
+- Add Puter account status, sign-in, and disconnect controls directly to WinUI AI settings, matching the account-session workflow in Tauri and SwiftUI.
+- Keep Puter authentication inside its dedicated WebView2 website session; do not request, persist, or expose a Puter API key.
+- Add explicit removal controls for saved Gemini, OpenAI, and Anthropic provider keys in Windows Credential Manager.
+- Add Google account disconnect support that removes the stored refresh token without deleting the separately saved Gemini API key.
+- Improve provider-aware settings visibility and status messaging, and document temporary Puter attachment upload/deletion behavior in advanced privacy information.
+- Preserve provider model discovery, custom model IDs, Gemini generation controls, Ollama endpoint settings, and confirmation-gated Schoology writes.
+
 ## [2026.10.0-port.127] - 2026-11-11
 
 ### ClassWire AI provider parity
