@@ -1,3 +1,11 @@
+## [2026.10.0-port.131] - 2026-11-11
+
+### WinUI AI panel and CI compiler fix
+- Fix the account sign-in navigation method-group compile error that blocked both x64 and ARM64 publishing.
+- Add an in-assistant presentation switch between a floating popup and a right-docked sidebar layout.
+- Refine the sidebar surface with edge docking and reduced chrome while retaining the floating popup as the default.
+- Add WinUI entrance and reposition transitions when system animations are enabled.
+
 ## [2026.10.0-port.130] - 2026-11-11
 
 ### AI composer and Google connection

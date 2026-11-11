@@ -77,6 +77,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private Border? _classWireAIPuterOverlay;
     private Button? _titleBarAIButton;
     private bool _classWireAIPopoutOpen;
+    private bool _classWireAISidebarMode;
+    private Button? _classWireAIPresentationButton;
     private WebView2? _classWireAIPuterWebView;
     private PuterAIService? _classWireAIPuterService;
     private readonly Dictionary<long, JsonElement> _userProfileCache = new();
@@ -1349,7 +1351,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         stack.Children.Add(logo);
         stack.Children.Add(LoginActionButton("Sign in through my school", "ic_school.svg", ShowSchoolSignInPage));
         App.WriteStartupLog("Login school sign-in button created.");
-        stack.Children.Add(LoginActionButton("Sign in with my account", "ic_person.svg", ShowAccountSignInPage));
+        stack.Children.Add(LoginActionButton("Sign in with my account", "ic_person.svg", () => ShowAccountSignInPage()));
         App.WriteStartupLog("Login account sign-in button created.");
         stack.Children.Add(LoginActionButton("Sign in with a QR code", "ic_qr_code.svg", ShowQrSignInPage));
         App.WriteStartupLog("Login QR sign-in button created.");
@@ -2225,12 +2227,50 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             Visibility = _classWireAIPopoutOpen ? Visibility.Visible : Visibility.Collapsed,
             Child = BuildClassWireAIAssistantPage()
         };
+        if (new UISettings().AnimationsEnabled)
+        {
+            aiPanel.Transitions = new Microsoft.UI.Xaml.Media.Animation.TransitionCollection
+            {
+                new Microsoft.UI.Xaml.Media.Animation.EntranceThemeTransition { FromHorizontalOffset = 28 },
+                new Microsoft.UI.Xaml.Media.Animation.RepositionThemeTransition()
+            };
+        }
         Grid.SetRowSpan(aiPanel, 2);
         _classWireAIPopout = aiPanel;
+        ApplyClassWireAIPresentationMode();
         shell.Children.Add(aiPanel);
 
         SetTitleBar(titleBar);
         return shell;
+    }
+
+    private void ApplyClassWireAIPresentationMode()
+    {
+        if (_classWireAIPopout is null) return;
+        if (_classWireAISidebarMode)
+        {
+            _classWireAIPopout.Width = 420;
+            _classWireAIPopout.Margin = new Thickness(0, 52, 0, 0);
+            _classWireAIPopout.CornerRadius = new CornerRadius(12, 0, 0, 0);
+            _classWireAIPopout.BorderThickness = new Thickness(1, 1, 0, 0);
+            if (_classWireAIPresentationButton is not null)
+            {
+                _classWireAIPresentationButton.Content = "Popup";
+                ToolTipService.SetToolTip(_classWireAIPresentationButton, "Switch to floating AI popup");
+            }
+        }
+        else
+        {
+            _classWireAIPopout.Width = 480;
+            _classWireAIPopout.Margin = new Thickness(0, 52, 12, 12);
+            _classWireAIPopout.CornerRadius = new CornerRadius(14);
+            _classWireAIPopout.BorderThickness = new Thickness(1);
+            if (_classWireAIPresentationButton is not null)
+            {
+                _classWireAIPresentationButton.Content = "Sidebar";
+                ToolTipService.SetToolTip(_classWireAIPresentationButton, "Switch to docked AI sidebar");
+            }
+        }
     }
 
     private void ToggleClassWireAIPopout()
@@ -12995,6 +13035,7 @@ try {{
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var heading = new StackPanel { Spacing = 3 };
         heading.Children.Add(Text("ClassWire AI", 23, true));
         heading.Children.Add(Text("Your Schoology learning assistant", 13));
@@ -13013,11 +13054,22 @@ try {{
         AutomationProperties.SetAutomationId(settingsButton, "ClassWireAISettingsButton");
         Grid.SetColumn(settingsButton, 2);
         header.Children.Add(settingsButton);
+        var presentation = Action("Sidebar", (_, _) =>
+        {
+            _classWireAISidebarMode = !_classWireAISidebarMode;
+            ApplyClassWireAIPresentationMode();
+        });
+        AutomationProperties.SetName(presentation, "Switch between AI popup and sidebar");
+        AutomationProperties.SetAutomationId(presentation, "ClassWireAIPresentationModeButton");
+        ToolTipService.SetToolTip(presentation, "Switch between floating popup and docked sidebar");
+        _classWireAIPresentationButton = presentation;
+        Grid.SetColumn(presentation, 3);
+        header.Children.Add(presentation);
         var closeAI = Action("×", (_, _) => ToggleClassWireAIPopout());
         AutomationProperties.SetName(closeAI, "Close ClassWire AI");
         AutomationProperties.SetAutomationId(closeAI, "ClassWireAICloseButton");
         ToolTipService.SetToolTip(closeAI, "Close assistant");
-        Grid.SetColumn(closeAI, 3);
+        Grid.SetColumn(closeAI, 4);
         header.Children.Add(closeAI);
         root.Children.Add(header);
 
