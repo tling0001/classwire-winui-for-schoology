@@ -173,6 +173,19 @@
 
 # Release notes
 
+## [2026.10.0-port.125]
+
+### ClassWire AI
+- Forward image and extracted text attachments to Puter multimodal chat; PDF attachments now show a clear provider-specific limitation rather than being silently omitted.
+- Add persisted Gemini temperature and maximum-output-token controls to Advanced settings.
+- Expand first-run onboarding guidance for provider setup, attachments, and confirmation-gated Schoology actions.
+- Scope AI course, group, calendar, grade, assignment, and submission reads to the currently selected learner in parent accounts.
+- Include the active learner identity in AI page context and prevent parent-context grade changes or assignment submissions when the Schoology API does not expose a verified on-behalf-of-student write parameter.
+
+### Version
+- Increment WinUI app version to `2026.10.0-port.125`.
+
+
 ## [2026.10.0-port.124]
 
 ### ClassWire AI

@@ -66,6 +66,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private ClassWireAIProvider _classWireAIProvider = ClassWireAIStorage.LoadSettings().Provider;
     private string _classWireAIModel = ClassWireAIStorage.LoadSettings().Model;
     private string _classWireAIOllamaEndpoint = ClassWireAIStorage.LoadSettings().OllamaEndpoint;
+    private double _classWireAIGeminiTemperature = ClassWireAIStorage.LoadSettings().GeminiTemperature;
+    private int _classWireAIGeminiMaxOutputTokens = ClassWireAIStorage.LoadSettings().GeminiMaxOutputTokens;
+    private bool _classWireAIOnboardingCompleted = ClassWireAIStorage.LoadSettings().HasCompletedOnboarding;
     private bool _classWireAISending;
     private readonly List<ClassWireAIAttachment> _classWireAIPendingAttachments = [];
     private Action? _renderClassWireAIHistory;
@@ -12833,7 +12836,10 @@ try {{
     {
         Provider = _classWireAIProvider,
         Model = _classWireAIModel,
-        OllamaEndpoint = _classWireAIOllamaEndpoint
+        OllamaEndpoint = _classWireAIOllamaEndpoint,
+        GeminiTemperature = _classWireAIGeminiTemperature,
+        GeminiMaxOutputTokens = _classWireAIGeminiMaxOutputTokens,
+        HasCompletedOnboarding = _classWireAIOnboardingCompleted
     });
 
     private void SaveClassWireAIConversations() => ClassWireAIStorage.SaveConversations(_classWireAIConversations);
@@ -13245,6 +13251,19 @@ try {{
                 welcome.Children.Add(new FontIcon { Glyph = "\uE99A", FontSize = 32, Foreground = ThemeBrush("SchoologyBlueBrush"), HorizontalAlignment = HorizontalAlignment.Center });
                 welcome.Children.Add(Text("What can I help you with?", 20, true));
                 welcome.Children.Add(Text("Ask naturally about your courses, assignments, grades, materials, updates and messages. I can research, explain, draft, and prepare Schoology actions for your review.", 14));
+                if (!_classWireAIOnboardingCompleted)
+                {
+                    var onboarding = Surface(new StackPanel
+                    {
+                        Spacing = 6,
+                        Children =
+                        {
+                            Text("Getting started", 14, true),
+                            Text("1. Choose Gemini, OpenAI, Anthropic, local Ollama, or Puter. 2. Connect or add the provider credentials in Settings. 3. Ask a question or attach images and supported documents. Schoology changes always require your confirmation.", 12)
+                        }
+                    }, new Thickness(12));
+                    welcome.Children.Add(onboarding);
+                }
                 var suggestions = new StackPanel { Spacing = 6, Margin = new Thickness(0, 10, 0, 0) };
                 foreach (var suggestion in new[] { "Summarize recent activity across my courses.", "What assignments are due soon?", "Help me understand my grades.", "Find a course material or message." })
                 {
@@ -13378,6 +13397,9 @@ try {{
         };
         key.Visibility = _classWireAIProvider is ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter ? Visibility.Collapsed : Visibility.Visible;
         var endpoint = new TextBox { Header = "Ollama server URL", Text = _classWireAIOllamaEndpoint };
+        var temperature = new Slider { Minimum = 0, Maximum = 1, StepFrequency = 0.05, Value = Math.Clamp(_classWireAIGeminiTemperature, 0, 1) };
+        AutomationProperties.SetName(temperature, "Gemini response temperature");
+        var maxTokens = new TextBox { Header = "Gemini maximum output tokens (256–8192)", Text = Math.Clamp(_classWireAIGeminiMaxOutputTokens, 256, 8192).ToString(CultureInfo.InvariantCulture) };
         var normal = new StackPanel { Spacing = 12, Padding = new Thickness(8) };
         normal.Children.Add(new TextBlock { Text = "Choose the provider and model. API keys are stored in Windows Credential Manager.", TextWrapping = TextWrapping.Wrap });
         normal.Children.Add(new TextBlock { Text = "Provider", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
@@ -13392,7 +13414,15 @@ try {{
         var advanced = new StackPanel { Spacing = 12, Padding = new Thickness(8) };
         advanced.Children.Add(new TextBlock { Text = "Advanced provider configuration", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         advanced.Children.Add(endpoint);
-        advanced.Children.Add(new TextBlock { Text = "Gemini and Anthropic support image and PDF input; OpenAI and Ollama support image input. Text files are extracted locally. Attachment bytes and extracted text are excluded from saved chat history.", TextWrapping = TextWrapping.Wrap });
+        advanced.Children.Add(new TextBlock { Text = "Gemini response temperature · " + temperature.Value.ToString("0.00", CultureInfo.CurrentCulture), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        advanced.Children.Add(temperature);
+        advanced.Children.Add(maxTokens);
+        advanced.Children.Add(new TextBlock { Text = "Lower temperature is more focused; higher values are more varied. Maximum output tokens controls response length. Gemini and Anthropic support image and PDF input; OpenAI and Ollama support image input. Puter supports image input here; PDF files need Gemini or Anthropic. Text files are extracted locally.", TextWrapping = TextWrapping.Wrap });
+        temperature.ValueChanged += (_, args) =>
+        {
+            var label = advanced.Children.OfType<TextBlock>().FirstOrDefault(item => item.Text.StartsWith("Gemini response temperature", StringComparison.Ordinal));
+            if (label is not null) label.Text = "Gemini response temperature · " + args.NewValue.ToString("0.00", CultureInfo.CurrentCulture);
+        };
         advanced.Children.Add(new TextBlock { Text = "Schoology writes are proposal-only. Assignment submissions, messages, updates, and grade changes require explicit confirmation.", TextWrapping = TextWrapping.Wrap });
         var tabs = new TabView { IsAddTabButtonVisible = false };
         tabs.TabItems.Add(new TabViewItem { Header = "Normal", Content = normal });
@@ -13406,8 +13436,13 @@ try {{
             _classWireAIProvider = (ClassWireAIProvider)provider.SelectedIndex;
             _classWireAIModel = model.Text.Trim();
             _classWireAIOllamaEndpoint = endpoint.Text.Trim();
+            if (!int.TryParse(maxTokens.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedTokens) || parsedTokens is < 256 or > 8192)
+            { args.Cancel = true; status.Text = "Gemini maximum output tokens must be between 256 and 8192."; return; }
+            _classWireAIGeminiTemperature = Math.Clamp(temperature.Value, 0, 1);
+            _classWireAIGeminiMaxOutputTokens = parsedTokens;
+            _classWireAIOnboardingCompleted = true;
             if (_classWireAIProvider is not (ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter)) ClassWireAIStorage.SaveKey(_classWireAIProvider, key.Password);
-            ClassWireAIStorage.SaveSettings(new ClassWireAISettings { Provider = _classWireAIProvider, Model = _classWireAIModel, OllamaEndpoint = _classWireAIOllamaEndpoint });
+            SaveClassWireAISettings();
         };
         await dialog.ShowAsync();
     }
@@ -13426,7 +13461,9 @@ try {{
             assignmentActive ? _activeAssignmentSectionId : 0,
             assignmentActive ? _activeAssignmentId : 0,
             assignmentActive ? _activeAssignmentGradeItemId : 0,
-            assignmentActive && _activeAssignmentAllowsSubmission);
+            assignmentActive && _activeAssignmentAllowsSubmission,
+            _selectedLearningUserId > 0 ? _selectedLearningUserId : _session?.UserId ?? 0,
+            _selectedLearningUserName);
     }
 
     private async Task<JsonElement> ExecuteClassWireAIToolAsync(
@@ -13442,6 +13479,8 @@ try {{
         }
         if (name == "submit_assignment_files")
         {
+            if (_selectedLearningUserId > 0)
+                throw new InvalidOperationException("Schoology's assignment submission endpoint does not expose a verified parent-on-behalf-of-student parameter. You can review the selected student's work, but this API integration will not submit as the parent.");
             if (!_activeAssignmentAllowsSubmission || _activeAssignmentSectionId <= 0 || _activeAssignmentId <= 0)
                 throw new InvalidOperationException("Open an assignment whose dropbox accepts submissions before proposing file submission.");
             var attached = _classWireAIConversation?.Messages.LastOrDefault(item => item.Role == "user")?.Attachments
@@ -13502,6 +13541,9 @@ try {{
             "send_message" => "Send this Schoology message?",
             "post_update" => "Post this update to the selected Schoology space?",
             "modify_grade" => "Change this student's assignment grade?",
+            "respond_to_request" => proposal.TryGetProperty("accept", out var acceptValue) && acceptValue.ValueKind == JsonValueKind.True
+                ? "Accept this Schoology request or invitation?"
+                : "Decline this Schoology request or invitation?",
             _ => "Continue with this Schoology action?"
         };
         var summaryText = Text(summary, 15, true);
@@ -13538,6 +13580,12 @@ try {{
             case "post_update":
                 AddDetail("Destination", proposal.TryGetProperty("entityName", out var entityName) ? entityName.GetString() : "");
                 AddDetail("Update", proposal.TryGetProperty("body", out var body) ? body.GetString() : "");
+                break;
+            case "respond_to_request":
+                AddDetail("Request", proposal.TryGetProperty("requestName", out var requestName) ? requestName.GetString() : "");
+                AddDetail("Type", proposal.TryGetProperty("requestType", out var requestType) ? requestType.GetString() : "");
+                AddDetail("Request ID", ReadProposalLong(proposal, "requestId").ToString(CultureInfo.InvariantCulture));
+                AddDetail("Action", proposal.TryGetProperty("accept", out var requestAccept) && requestAccept.ValueKind == JsonValueKind.True ? "Accept" : "Decline");
                 break;
             case "modify_grade":
                 AddDetail("Assignment", proposal.TryGetProperty("assignmentTitle", out var assignmentTitle) ? assignmentTitle.GetString() : "");
@@ -13590,6 +13638,8 @@ try {{
         {
             case "submit_assignment_files":
             {
+                if (_selectedLearningUserId > 0)
+                    throw new InvalidOperationException("Parent accounts cannot submit files on behalf of a linked student through this Schoology API endpoint.");
                 var sectionId = ReadProposalLong(proposal, "sectionId");
                 var assignmentId = ReadProposalLong(proposal, "assignmentId");
                 if (!_activeAssignmentAllowsSubmission || sectionId != _activeAssignmentSectionId || assignmentId != _activeAssignmentId)
@@ -13613,6 +13663,8 @@ try {{
             }
             case "submit_assignment_text":
             {
+                if (_selectedLearningUserId > 0)
+                    throw new InvalidOperationException("Parent accounts cannot submit text on behalf of a linked student through this Schoology API endpoint.");
                 var sectionId = ReadProposalLong(proposal, "sectionId");
                 var assignmentId = ReadProposalLong(proposal, "assignmentId");
                 var gradeItemId = ReadProposalLong(proposal, "gradeItemId");
@@ -13622,6 +13674,26 @@ try {{
                 var markdown = proposal.TryGetProperty("markdown", out var markdownValue) ? markdownValue.GetString() ?? "" : "";
                 var html = MarkdownToSchoologyHtml(markdown);
                 using var result = await _api.SubmitAssignmentTextAsync(session, sectionId, gradeItemId, html, draft: false);
+                break;
+            }
+            case "respond_to_request":
+            {
+                var requestType = proposal.TryGetProperty("requestType", out var requestTypeValue) ? requestTypeValue.GetString() ?? "" : "";
+                var requestId = ReadProposalLong(proposal, "requestId");
+                var accept = proposal.TryGetProperty("accept", out var acceptValue) && acceptValue.ValueKind == JsonValueKind.True;
+                if (requestType is not ("friend" or "group" or "section") || requestId <= 0)
+                    throw new InvalidOperationException("The request proposal is invalid.");
+                using var pending = requestType switch
+                {
+                    "friend" => await _api.GetFriendRequestsAsync(session),
+                    "group" => await _api.GetGroupInvitationsAsync(session),
+                    _ => await _api.GetSectionInvitationsAsync(session)
+                };
+                var keys = requestType == "friend" ? new[] { "request", "requests" } : new[] { "invite", "invites" };
+                if (!SchoologyApiClient.ReadRecords(pending.RootElement, keys).Any(item =>
+                    JsonLong(item.Data, "id", "request_id", "requestId", "invite_id", "inviteId") == requestId))
+                    throw new InvalidOperationException("That request is no longer pending. No change was made.");
+                using var response = await _api.RespondToRequestAsync(session, requestType, requestId, accept);
                 break;
             }
             case "send_message":
@@ -13797,6 +13869,8 @@ try {{
                 Regex.IsMatch(value, @"\b(update|post|announcement|course|group)\b", options),
             "modify_grade" => Regex.IsMatch(value, @"\b(change|set|update|modify|edit)\b", options) &&
                 Regex.IsMatch(value, @"\b(grade|score|mark)\b", options),
+            "respond_to_request" => Regex.IsMatch(value, @"\b(accept|decline|deny|reject)\b", options) &&
+                Regex.IsMatch(value, @"\b(request|invitation|invite)\b", options),
             _ => false
         };
     }
@@ -13843,7 +13917,9 @@ try {{
                     : await ClassWireAIProviderClient.CompleteWithToolsAsync(
                         _classWireAIProvider, _classWireAIModel,
                         ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? string.Empty,
-                        _classWireAIOllamaEndpoint, history, ClassWireAISchoologyTools.Definitions);
+                        _classWireAIOllamaEndpoint, history, ClassWireAISchoologyTools.Definitions,
+                        geminiTemperature: _classWireAIGeminiTemperature,
+                        geminiMaxOutputTokens: _classWireAIGeminiMaxOutputTokens);
                 if (completion.ToolCalls.Count == 0)
                 {
                     answer = completion.Text;

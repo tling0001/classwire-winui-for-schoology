@@ -8,6 +8,8 @@ internal sealed class ClassWireAISchoologyTools
     private readonly SchoologyApiClient _api;
     private readonly SchoologyAuthService.Session _session;
     private readonly ClassWireAIPageContext _context;
+    private long LearningUserId => _context.LearningUserId > 0 ? _context.LearningUserId : _session.UserId;
+    private bool IsParentLearningContext => LearningUserId != _session.UserId;
 
     internal ClassWireAISchoologyTools(SchoologyApiClient api, SchoologyAuthService.Session session, ClassWireAIPageContext context)
     { _api = api; _session = session; _context = context; }
@@ -17,11 +19,13 @@ internal sealed class ClassWireAISchoologyTools
 
     internal static IReadOnlyList<ClassWireAIToolDefinition> Definitions { get; } =
     [
-        new("get_courses", "List the signed-in user's Schoology courses.", Schema("""{"type":"object","properties":{}}""")),
-        new("get_groups", "List the signed-in user's Schoology groups.", Schema("""{"type":"object","properties":{}}""")),
+        new("get_courses", "List the active learning user's Schoology courses. In a parent account, this means the selected student.", Schema("""{"type":"object","properties":{}}""")),
+        new("get_groups", "List the active learning user's Schoology groups. In a parent account, this means the selected student.", Schema("""{"type":"object","properties":{}}""")),
+        new("get_pending_requests", "List friend requests and group/course invitations for the signed-in account. These are account-level requests, not the selected student's requests.", Schema("""{"type":"object","properties":{}}""")),
+        new("respond_to_request", "PROPOSE accepting or declining a verified friend request or group/course invitation for the signed-in account. Use an exact type and ID from get_pending_requests; confirmation is required.", Schema("""{"type":"object","properties":{"type":{"type":"string","enum":["friend","group","section"]},"id":{"type":"integer"},"accept":{"type":"boolean"}},"required":["type","id","accept"]}""")),
         new("get_upcoming_events", "List upcoming Schoology events and assignment due dates. days defaults to 30 and is limited to 120.", Schema("""{"type":"object","properties":{"days":{"type":"integer","minimum":1,"maximum":120}}}""")),
         new("search_assignments", "Search assignment titles and descriptions across enrolled courses or within course_id.", Schema("""{"type":"object","properties":{"query":{"type":"string"},"course_id":{"type":"integer"}},"required":["query"]}""")),
-        new("get_course_grades", "Read grade items, grading periods, categories, section grades, and the signed-in user's grades for a course. Optionally provide course_id.", Schema("""{"type":"object","properties":{"course_id":{"type":"integer"}}}""")),
+        new("get_course_grades", "Read grade items, grading periods, categories, section grades, and the active learning user's grades for a course. Optionally provide course_id.", Schema("""{"type":"object","properties":{"course_id":{"type":"integer"}}}""")),
         new("get_course_materials", "List materials in a course folder. Open a course first or provide course_id; folder_id defaults to zero.", Schema("""{"type":"object","properties":{"course_id":{"type":"integer"},"folder_id":{"type":"integer"}}}""")),
         new("get_course_updates", "List recent updates in a course. Open a course first or provide course_id.", Schema("""{"type":"object","properties":{"course_id":{"type":"integer"}}}""")),
         new("search_message_recipients", "Search Schoology message recipients and return verified IDs and names. Always call this before send_message; never guess IDs.", Schema("""{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}""")),
@@ -48,15 +52,64 @@ internal sealed class ClassWireAISchoologyTools
             case "get_current_page":
                 return Json(new { page = _context.Page, selectedEntityKind = _context.SelectedEntityKind,
                     selectedEntityId = _context.SelectedEntityId, selectedEntityName = _context.SelectedEntityName,
+                    learningUserId = LearningUserId, learningUserName = _context.LearningUserName,
+                    isParentLearningContext = IsParentLearningContext,
                     assignment = _context.AssignmentId > 0 ? new { sectionId = _context.AssignmentSectionId,
                         assignmentId = _context.AssignmentId, gradeItemId = _context.GradeItemId,
                         allowsSubmission = _context.AllowsSubmission } : null });
 
             case "get_courses":
-                return Json((await _api.GetCoursesAsync(_session, ct)).Select(item => new { id = item.Id, title = item.Name, section = item.Subtitle }).ToArray());
+                return Json((await _api.GetCoursesAsync(_session, LearningUserId, ct)).Select(item => new { id = item.Id, title = item.Name, section = item.Subtitle }).ToArray());
 
             case "get_groups":
-                return Json((await _api.GetGroupsAsync(_session, ct)).Select(item => new { id = item.Id, name = item.Name, description = item.Subtitle }).ToArray());
+                return Json((await _api.GetGroupsAsync(_session, LearningUserId, ct)).Select(item => new { id = item.Id, name = item.Name, description = item.Subtitle }).ToArray());
+
+            case "get_pending_requests":
+            {
+                var results = await Task.WhenAll(_api.GetFriendRequestsAsync(_session, ct),
+                    _api.GetGroupInvitationsAsync(_session, ct), _api.GetSectionInvitationsAsync(_session, ct));
+                using var friends = results[0];
+                using var groups = results[1];
+                using var sections = results[2];
+                object[] Map(JsonElement root, string type, params string[] keys) =>
+                    SchoologyApiClient.ReadRecords(root, keys).Select(record => new
+                    {
+                        type,
+                        id = ReadLongAny(record.Data, "id", "request_id", "requestId", "invite_id", "inviteId"),
+                        name = type == "friend"
+                            ? ReadString(record.Data, "requester_name", "requesterName", "name", "display_name") ?? "Friend request"
+                            : ReadString(record.Data, "name", "title", type == "group" ? "group_name" : "section_title") ?? "Invitation",
+                        details = ReadString(record.Data, "school_name", "schoolName", "description", "message") ?? ""
+                    }).Where(item => item.id > 0).Cast<object>().ToArray();
+                return Json(new { friendRequests = Map(friends.RootElement, "friend", "request", "requests"),
+                    groupInvitations = Map(groups.RootElement, "group", "invite", "invites"),
+                    sectionInvitations = Map(sections.RootElement, "section", "invite", "invites") });
+            }
+
+            case "respond_to_request":
+            {
+                var type = ReadString(args, "type") ?? "";
+                var id = ReadLongAny(args, "id", "request_id", "invite_id");
+                var accept = args.TryGetProperty("accept", out var acceptValue) && acceptValue.ValueKind == JsonValueKind.True;
+                if (type is not ("friend" or "group" or "section") || id <= 0)
+                    throw new InvalidOperationException("Choose a valid request type and an exact request ID returned by get_pending_requests.");
+                using var pending = type switch
+                {
+                    "friend" => await _api.GetFriendRequestsAsync(_session, ct),
+                    "group" => await _api.GetGroupInvitationsAsync(_session, ct),
+                    _ => await _api.GetSectionInvitationsAsync(_session, ct)
+                };
+                var keys = type == "friend" ? new[] { "request", "requests" } : new[] { "invite", "invites" };
+                var matches = SchoologyApiClient.ReadRecords(pending.RootElement, keys)
+                    .Where(item => ReadLongAny(item.Data, "id", "request_id", "requestId", "invite_id", "inviteId") == id).ToArray();
+                if (matches.Length != 1)
+                    throw new InvalidOperationException("That request is no longer pending or its ID is ambiguous. Refresh requests and try again.");
+                var name = type == "friend"
+                    ? ReadString(matches[0].Data, "requester_name", "requesterName", "name", "display_name") ?? "Friend request"
+                    : ReadString(matches[0].Data, "name", "title", type == "group" ? "group_name" : "section_title") ?? "Invitation";
+                return Json(new { pendingAction = new { type = "respond_to_request", requestType = type,
+                    requestId = id, accept, requestName = name } });
+            }
 
             case "get_upcoming_events":
             {
@@ -64,7 +117,7 @@ internal sealed class ClassWireAISchoologyTools
                 var end = DateTime.Today.AddDays(days);
                 var events = new List<JsonElement>();
                 for (var month = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1); month <= end && events.Count < 250; month = month.AddMonths(1))
-                    events.AddRange((await _api.GetCalendarEventsForMonthAsync(_session, month, ct)).Select(item => item.Data));
+                    events.AddRange((await _api.GetCalendarEventsForMonthAsync(_session, month, LearningUserId, ct)).Select(item => item.Data));
                 return Json(events.Where(item =>
                 {
                     var due = ReadString(item, "start", "due", "due_date", "end");
@@ -79,7 +132,7 @@ internal sealed class ClassWireAISchoologyTools
                 if (query.Length == 0) throw new InvalidOperationException("Enter a word or phrase to search assignments.");
                 var courses = sectionId > 0
                     ? new[] { (Id: sectionId, Name: _context.SelectedEntityName) }
-                    : (await _api.GetCoursesAsync(_session, ct)).Take(35).Select(item => (Id: item.Id, Name: item.Name)).ToArray();
+                    : (await _api.GetCoursesAsync(_session, LearningUserId, ct)).Take(35).Select(item => (Id: item.Id, Name: item.Name)).ToArray();
                 var results = new List<object>();
                 foreach (var course in courses)
                 {
@@ -108,7 +161,7 @@ internal sealed class ClassWireAISchoologyTools
                 using var periods = await _api.GetGradingPeriodsAsync(_session, sectionId, ct);
                 using var categories = await _api.GetGradingCategoriesAsync(_session, sectionId, ct);
                 using var items = await _api.GetGradeItemsAsync(_session, sectionId, ct);
-                using var grades = await _api.GetUserGradesForSectionAsync(_session, sectionId, ct);
+                using var grades = await _api.GetUserGradesForSectionAsync(_session, sectionId, LearningUserId, ct);
                 JsonElement[] sectionGradeRecords = [];
                 JsonElement[] enrollmentRecords = [];
                 string? sectionGradeError = null;
@@ -297,14 +350,14 @@ internal sealed class ClassWireAISchoologyTools
                 {
                     try
                     {
-                        using var document = await _api.GetAssignmentSubmissionAsync(_session, _context.AssignmentSectionId, _context.GradeItemId, _session.UserId, ct);
+                        using var document = await _api.GetAssignmentSubmissionAsync(_session, _context.AssignmentSectionId, _context.GradeItemId, LearningUserId, ct);
                         submission = document.RootElement.Clone();
                     }
                     catch (Exception ex) { submissionError = ex.Message; }
                 }
                 return Json(new { assignment = data, submission, submissionError,
                     submissionContext = new { sectionId = _context.AssignmentSectionId, assignmentId = _context.AssignmentId,
-                        gradeItemId = _context.GradeItemId, userId = _session.UserId },
+                        gradeItemId = _context.GradeItemId, userId = LearningUserId, learnerName = _context.LearningUserName },
                     allowsSubmission = _context.AllowsSubmission });
             }
 
@@ -312,7 +365,9 @@ internal sealed class ClassWireAISchoologyTools
             {
                 var requestedSection = ReadLongAny(args, "section_id");
                 var submissionId = ReadLongAny(args, "submission_id");
-                var userId = ReadLong(args, "user_id", _session.UserId);
+                var userId = ReadLong(args, "user_id", LearningUserId);
+                if (IsParentLearningContext && userId != LearningUserId)
+                    throw new InvalidOperationException("A parent account can only inspect submissions for the student currently selected in Switch Student.");
                 if (requestedSection <= 0 || submissionId <= 0 || userId <= 0)
                     throw new InvalidOperationException("Valid section_id, submission_id, and user_id are required.");
                 using var document = await _api.GetAssignmentSubmissionAsync(_session, requestedSection, submissionId, userId, ct);
@@ -327,6 +382,8 @@ internal sealed class ClassWireAISchoologyTools
                 if (markdown.Length == 0) throw new InvalidOperationException("Provide the complete assignment response in Markdown.");
                 var targetSection = ReadLong(args, "section_id", _context.AssignmentSectionId);
                 var targetAssignment = ReadLong(args, "assignment_id", _context.AssignmentId);
+                if (IsParentLearningContext)
+                    throw new InvalidOperationException("Schoology's assignment submission endpoint does not expose a verified parent-on-behalf-of-student parameter. You can review the selected student's work, but this API integration will not submit as the parent.");
                 if (!_context.AllowsSubmission || _context.AssignmentId <= 0 ||
                     targetSection != _context.AssignmentSectionId || targetAssignment != _context.AssignmentId)
                     throw new InvalidOperationException("Open the target assignment in ClassWire and make sure its dropbox accepts submissions before proposing a text submission.");
@@ -357,6 +414,8 @@ internal sealed class ClassWireAISchoologyTools
 
             case "update_assignment_grade":
             {
+                if (IsParentLearningContext)
+                    throw new InvalidOperationException("Grade changes are teacher actions and are not available in a parent learning context.");
                 var targetSection = ReadLongAny(args, "section_id");
                 var assignmentId = ReadLongAny(args, "assignment_id");
                 var enrollmentId = ReadLongAny(args, "enrollment_id");

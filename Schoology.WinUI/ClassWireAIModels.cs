@@ -49,6 +49,9 @@ internal sealed class ClassWireAISettings
     public ClassWireAIProvider Provider { get; set; } = ClassWireAIProvider.Gemini;
     public string Model { get; set; } = ClassWireAIProviderDefaults.Model(ClassWireAIProvider.Gemini);
     public string OllamaEndpoint { get; set; } = "http://127.0.0.1:11434";
+    public double GeminiTemperature { get; set; } = 0.2;
+    public int GeminiMaxOutputTokens { get; set; } = 3000;
+    public bool HasCompletedOnboarding { get; set; }
 }
 
 
@@ -56,4 +59,5 @@ internal sealed record ClassWireAIToolDefinition(string Name, string Description
 internal sealed record ClassWireAIToolCall(string Id, string Name, JsonElement Arguments);
 internal sealed record ClassWireAICompletion(string Text, IReadOnlyList<ClassWireAIToolCall> ToolCalls);
 internal sealed record ClassWireAIPageContext(string Page, string SelectedEntityKind, long SelectedEntityId,
-    string SelectedEntityName, long AssignmentSectionId, long AssignmentId, long GradeItemId, bool AllowsSubmission);
+    string SelectedEntityName, long AssignmentSectionId, long AssignmentId, long GradeItemId, bool AllowsSubmission,
+    long LearningUserId, string LearningUserName);

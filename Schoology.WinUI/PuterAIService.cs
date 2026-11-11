@@ -37,18 +37,50 @@ internal sealed class PuterAIService : IDisposable
             type = "function",
             function = new { name = tool.Name, description = tool.Description, parameters = tool.Parameters }
         }).ToArray();
-        var messagePayload = new[] { new { role = "system", content = ClassWireAIProviderClient.SystemPrompt } }
-            .Concat(messages.Select(message => new { role = message.Role, content = message.Content })).ToArray();
-        var payloadLiteral = JsonSerializer.Serialize(JsonSerializer.Serialize(new { model, messages = messagePayload, tools = toolPayload }));
+        var messagePayload = messages.Select(message => new
+        {
+            role = message.Role,
+            content = message.Content,
+            attachments = message.Attachments.Select(attachment => new
+            {
+                filename = attachment.FileName,
+                mimeType = attachment.MimeType,
+                dataBase64 = attachment.DataBase64,
+                textContent = attachment.TextContent
+            }).ToArray()
+        }).ToArray();
+        var payloadLiteral = JsonSerializer.Serialize(JsonSerializer.Serialize(new
+        {
+            model, messages = messagePayload, tools = toolPayload
+        }));
         var script = "const args=JSON.parse(" + payloadLiteral + ");" +
             "const p=window.puter;if(!p.auth.isSignedIn())throw new Error('Connect your Puter account in AI settings first.');" +
-            "const response=await p.ai.chat(args.messages,{model:args.model,tools:args.tools,toolChoice:'auto',normalize:true});" +
+            "const uploaded=[];" +
+            "try{" +
+            "const messages=[{role:'system',content:" + JsonSerializer.Serialize(ClassWireAIProviderClient.SystemPrompt) + "}];" +
+            "for(const item of args.messages){" +
+            "const parts=[];const extracted=(item.attachments||[]).map(a=>a.textContent?'[Contents of '+a.filename+']\\n'+a.textContent:'').filter(Boolean).join('\\n\\n');" +
+            "const text=[item.content,extracted].filter(Boolean).join('\\n\\n');if(text)parts.push({type:'text',text});" +
+            "for(const a of (item.attachments||[])){" +
+            "if(!a.dataBase64)continue;" +
+            "if(!(a.mimeType==='application/pdf'||String(a.mimeType||'').startsWith('image/'))){if(a.textContent)continue;throw new Error('Puter file input supports images, PDFs, and locally extracted text files here; choose Gemini or Anthropic for this file type.');}" +
+            "const binary=atob(a.dataBase64);const bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);" +
+            "const safe=(a.filename||'attachment').replace(/[^A-Za-z0-9._-]/g,'_');" +
+            "const path='classwire-ai-temp/'+Date.now()+'-'+Math.random().toString(36).slice(2)+'-'+safe;" +
+            "const stored=await p.fs.write(path,new Blob([bytes],{type:a.mimeType}),{createMissingParents:true,dedupeName:true});" +
+            "const puterPath=stored?.path||path;uploaded.push(puterPath);parts.push({type:'file',puter_path:puterPath});" +
+            "}" +
+            "if(parts.length===0)throw new Error('This Puter message has no supported text or file content.');" +
+            "messages.push({role:item.role,content:parts.length===1&&parts[0].type==='text'?text:parts});" +
+            "}" +
+            "const response=await p.ai.chat(messages,{model:args.model,tools:args.tools,toolChoice:'auto',normalize:true});" +
             "const message=response?.message||response||{};let content=message.content??response?.content??'';" +
             "if(Array.isArray(content))content=content.map(part=>part?.text||'').filter(Boolean).join('\\n');" +
             "const raw=message.tool_calls||message.toolCalls||response?.tool_calls||response?.toolCalls||[];" +
             "const toolCalls=raw.map(call=>{let value=call?.function?.arguments??call?.arguments??{};if(typeof value==='string'){try{value=JSON.parse(value)}catch{value={}}}return{name:call?.function?.name||call?.name,arguments:value}}).filter(call=>typeof call.name==='string');" +
-            "return {text:typeof content==='string'?content:'',toolCalls};";
-        var result = await InvokeAsync(script, TimeSpan.FromSeconds(120), cancellationToken);
+            "return {text:typeof content==='string'?content:'',toolCalls};" +
+            "}finally{await Promise.all(uploaded.map(path=>p.fs.delete(path).catch(()=>{})));}";
+        var result = await InvokeAsync(script, TimeSpan.FromSeconds(180), cancellationToken);
         var text = result.TryGetProperty("text", out var textValue) && textValue.ValueKind == JsonValueKind.String ? textValue.GetString() ?? "" : "";
         var calls = new List<ClassWireAIToolCall>();
         if (result.TryGetProperty("toolCalls", out var rawCalls) && rawCalls.ValueKind == JsonValueKind.Array)
