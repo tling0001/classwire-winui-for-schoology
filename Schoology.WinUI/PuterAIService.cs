@@ -28,6 +28,23 @@ internal sealed class PuterAIService : IDisposable
         return result.ValueKind == JsonValueKind.String ? result.GetString() ?? "Puter account" : "Puter account";
     }
 
+    internal async Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken cancellationToken = default)
+    {
+        var script = "const p=window.puter;if(!p.auth.isSignedIn())throw new Error('Connect your Puter account in AI settings first.');" +
+            "const catalogue=await Promise.race([p.ai.listModels(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Puter model discovery timed out after 25 seconds. Check your connection and refresh the model list.')),25000))]);" +
+            "return (Array.isArray(catalogue)?catalogue:[]).map(item=>typeof item==='string'?item:item?.id).filter(id=>typeof id==='string'&&id.length);";
+        var result = await InvokeAsync(script, TimeSpan.FromSeconds(30), cancellationToken);
+        if (result.ValueKind != JsonValueKind.Array) return [];
+        return result.EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : null)
+            .Where(value => !string.IsNullOrWhiteSpace(value) && value!.Length <= 160 &&
+                value.All(ch => char.IsLetterOrDigit(ch) || "-_.:".Contains(ch)))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     internal async Task<ClassWireAICompletion> CompleteWithToolsAsync(
         string model, IReadOnlyList<ClassWireAIMessage> messages,
         IReadOnlyList<ClassWireAIToolDefinition> tools, CancellationToken cancellationToken = default)

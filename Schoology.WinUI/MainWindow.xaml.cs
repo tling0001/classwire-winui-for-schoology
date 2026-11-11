@@ -13385,8 +13385,42 @@ try {{
     {
         var provider = new ComboBox { MinWidth = 280, SelectedIndex = (int)_classWireAIProvider };
         foreach (var item in new[] { "Google Gemini", "OpenAI", "Anthropic", "Ollama (local)", "Puter" }) provider.Items.Add(new ComboBoxItem { Content = item });
-        var model = new TextBox { Header = "Model", Text = _classWireAIModel, PlaceholderText = "Provider model ID" };
+        var model = new TextBox { Header = "Model ID", Text = _classWireAIModel, PlaceholderText = "Provider model ID" };
+        var modelChoices = new ComboBox { MinWidth = 280, PlaceholderText = "Choose a discovered model" };
+        AutomationProperties.SetName(modelChoices, "Discovered AI models");
         var key = new PasswordBox { Header = "Provider API key", Password = ClassWireAIStorage.LoadKey(_classWireAIProvider) ?? "" };
+        var endpoint = new TextBox { Header = "Ollama server URL", Text = _classWireAIOllamaEndpoint };
+        var temperature = new Slider { Minimum = 0, Maximum = 1, StepFrequency = 0.05, Value = Math.Clamp(_classWireAIGeminiTemperature, 0, 1) };
+        AutomationProperties.SetName(temperature, "Gemini response temperature");
+        var maxTokens = new TextBox { Header = "Gemini maximum output tokens (256–8192)", Text = Math.Clamp(_classWireAIGeminiMaxOutputTokens, 256, 8192).ToString(CultureInfo.InvariantCulture) };
+        var normal = new StackPanel { Spacing = 12, Padding = new Thickness(8) };
+        normal.Children.Add(new TextBlock { Text = "Choose the provider and model. Discover available models from your connected provider, or enter a custom model ID. API keys are stored in Windows Credential Manager.", TextWrapping = TextWrapping.Wrap });
+        normal.Children.Add(new TextBlock { Text = "Provider", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        normal.Children.Add(provider);
+        normal.Children.Add(model);
+        var modelActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var discoverModels = new Button { Content = "Discover models" };
+        AutomationProperties.SetAutomationId(discoverModels, "ClassWireAIDiscoverModelsButton");
+        modelActions.Children.Add(discoverModels);
+        normal.Children.Add(modelActions);
+        normal.Children.Add(modelChoices);
+        var keyLabelVisibility = _classWireAIProvider is ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter ? Visibility.Collapsed : Visibility.Visible;
+        key.Visibility = keyLabelVisibility;
+        endpoint.Visibility = _classWireAIProvider == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
+        normal.Children.Add(key);
+        var status = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        AutomationProperties.SetAutomationId(status, "ClassWireAISettingsStatus");
+        normal.Children.Add(status);
+        var connectGoogle = new Button { Content = "Connect Google and create a Gemini key" };
+        connectGoogle.Visibility = _classWireAIProvider == ClassWireAIProvider.Gemini ? Visibility.Visible : Visibility.Collapsed;
+        AutomationProperties.SetAutomationId(connectGoogle, "ClassWireAIGoogleConnectButton");
+        connectGoogle.Click += async (_, _) =>
+        {
+            if (provider.SelectedIndex == (int)ClassWireAIProvider.Gemini)
+                await ShowGoogleGeminiSetupAsync(key, status);
+        };
+        normal.Children.Add(connectGoogle);
+
         provider.SelectionChanged += (_, _) =>
         {
             if (provider.SelectedIndex < 0) return;
@@ -13394,30 +13428,65 @@ try {{
             key.Password = ClassWireAIStorage.LoadKey(selected) ?? "";
             model.Text = ClassWireAIProviderDefaults.Model(selected);
             key.Visibility = selected is ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter ? Visibility.Collapsed : Visibility.Visible;
+            endpoint.Visibility = selected == ClassWireAIProvider.Ollama ? Visibility.Visible : Visibility.Collapsed;
+            connectGoogle.Visibility = selected == ClassWireAIProvider.Gemini ? Visibility.Visible : Visibility.Collapsed;
+            modelChoices.Items.Clear();
+            modelChoices.Visibility = Visibility.Collapsed;
+            status.Text = "";
         };
-        key.Visibility = _classWireAIProvider is ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter ? Visibility.Collapsed : Visibility.Visible;
-        var endpoint = new TextBox { Header = "Ollama server URL", Text = _classWireAIOllamaEndpoint };
-        var temperature = new Slider { Minimum = 0, Maximum = 1, StepFrequency = 0.05, Value = Math.Clamp(_classWireAIGeminiTemperature, 0, 1) };
-        AutomationProperties.SetName(temperature, "Gemini response temperature");
-        var maxTokens = new TextBox { Header = "Gemini maximum output tokens (256–8192)", Text = Math.Clamp(_classWireAIGeminiMaxOutputTokens, 256, 8192).ToString(CultureInfo.InvariantCulture) };
-        var normal = new StackPanel { Spacing = 12, Padding = new Thickness(8) };
-        normal.Children.Add(new TextBlock { Text = "Choose the provider and model. API keys are stored in Windows Credential Manager.", TextWrapping = TextWrapping.Wrap });
-        normal.Children.Add(new TextBlock { Text = "Provider", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        normal.Children.Add(provider);
-        normal.Children.Add(model);
-        normal.Children.Add(key);
-        var status = new TextBlock { TextWrapping = TextWrapping.Wrap };
-        normal.Children.Add(status);
-        var connectGoogle = new Button { Content = "Connect Google and create a Gemini key" };
-        connectGoogle.Click += async (_, _) => { if (provider.SelectedIndex == (int)ClassWireAIProvider.Gemini) await ShowGoogleGeminiSetupAsync(key, status); };
-        normal.Children.Add(connectGoogle);
+        modelChoices.SelectionChanged += (_, _) =>
+        {
+            if (modelChoices.SelectedItem is ComboBoxItem selected && selected.Content is string id)
+                model.Text = id;
+        };
+        discoverModels.Click += async (_, _) =>
+        {
+            if (provider.SelectedIndex < 0) return;
+            var selected = (ClassWireAIProvider)provider.SelectedIndex;
+            discoverModels.IsEnabled = false;
+            discoverModels.Content = "Discovering…";
+            status.Text = "Connecting to " + selected + " to retrieve available models…";
+            modelChoices.Items.Clear();
+            try
+            {
+                IReadOnlyList<string> discovered = selected == ClassWireAIProvider.Puter
+                    ? await (_classWireAIPuterService ?? throw new InvalidOperationException("Open the AI assistant before discovering Puter models.")).ListModelsAsync()
+                    : await ClassWireAIProviderClient.ListModelsAsync(selected,
+                        selected is ClassWireAIProvider.Ollama ? "" : key.Password,
+                        endpoint.Text);
+                if (provider.SelectedIndex != (int)selected) return;
+                foreach (var id in discovered)
+                    modelChoices.Items.Add(new ComboBoxItem { Content = id });
+                if (!discovered.Contains(model.Text.Trim(), StringComparer.OrdinalIgnoreCase))
+                    modelChoices.Items.Insert(0, new ComboBoxItem { Content = model.Text.Trim() });
+                modelChoices.SelectedIndex = Math.Max(0, modelChoices.Items.Count > 0
+                    ? Enumerable.Range(0, modelChoices.Items.Count).FirstOrDefault(i =>
+                        modelChoices.Items[i] is ComboBoxItem item && string.Equals(item.Content?.ToString(), model.Text.Trim(), StringComparison.OrdinalIgnoreCase))
+                    : -1);
+                modelChoices.Visibility = modelChoices.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                status.Text = discovered.Count == 0
+                    ? "The provider returned no compatible chat models. You can still enter a model ID manually."
+                    : "Found " + discovered.Count.ToString(CultureInfo.InvariantCulture) + " compatible model(s). Select one or keep a custom model ID.";
+            }
+            catch (Exception ex)
+            {
+                status.Text = "Model discovery failed: " + ex.Message + " You can still enter a model ID manually.";
+                modelChoices.Visibility = Visibility.Collapsed;
+            }
+            finally
+            {
+                discoverModels.IsEnabled = true;
+                discoverModels.Content = "Refresh models";
+            }
+        };
+
         var advanced = new StackPanel { Spacing = 12, Padding = new Thickness(8) };
         advanced.Children.Add(new TextBlock { Text = "Advanced provider configuration", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         advanced.Children.Add(endpoint);
         advanced.Children.Add(new TextBlock { Text = "Gemini response temperature · " + temperature.Value.ToString("0.00", CultureInfo.CurrentCulture), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         advanced.Children.Add(temperature);
         advanced.Children.Add(maxTokens);
-        advanced.Children.Add(new TextBlock { Text = "Lower temperature is more focused; higher values are more varied. Maximum output tokens controls response length. Gemini and Anthropic support image and PDF input; OpenAI and Ollama support image input. Puter supports image input here; PDF files need Gemini or Anthropic. Text files are extracted locally.", TextWrapping = TextWrapping.Wrap });
+        advanced.Children.Add(new TextBlock { Text = "Lower temperature is more focused; higher values are more varied. Maximum output tokens controls Gemini response length. Gemini and Anthropic support image and PDF input; OpenAI and Ollama support image input. Puter supports image input here; PDF files need Gemini or Anthropic. Text files are extracted locally.", TextWrapping = TextWrapping.Wrap });
         temperature.ValueChanged += (_, args) =>
         {
             var label = advanced.Children.OfType<TextBlock>().FirstOrDefault(item => item.Text.StartsWith("Gemini response temperature", StringComparison.Ordinal));
@@ -13432,7 +13501,8 @@ try {{
             RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme };
         dialog.PrimaryButtonClick += (_, args) =>
         {
-            if (provider.SelectedIndex < 0 || string.IsNullOrWhiteSpace(model.Text)) { args.Cancel = true; status.Text = "Choose a provider and enter a model."; return; }
+            if (provider.SelectedIndex < 0 || string.IsNullOrWhiteSpace(model.Text))
+            { args.Cancel = true; status.Text = "Choose a provider and enter a model."; return; }
             _classWireAIProvider = (ClassWireAIProvider)provider.SelectedIndex;
             _classWireAIModel = model.Text.Trim();
             _classWireAIOllamaEndpoint = endpoint.Text.Trim();
@@ -13441,7 +13511,8 @@ try {{
             _classWireAIGeminiTemperature = Math.Clamp(temperature.Value, 0, 1);
             _classWireAIGeminiMaxOutputTokens = parsedTokens;
             _classWireAIOnboardingCompleted = true;
-            if (_classWireAIProvider is not (ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter)) ClassWireAIStorage.SaveKey(_classWireAIProvider, key.Password);
+            if (_classWireAIProvider is not (ClassWireAIProvider.Ollama or ClassWireAIProvider.Puter))
+                ClassWireAIStorage.SaveKey(_classWireAIProvider, key.Password);
             SaveClassWireAISettings();
         };
         await dialog.ShowAsync();

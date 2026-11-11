@@ -1,3 +1,12 @@
+## [2026.10.0-port.127] - 2026-11-11
+
+### ClassWire AI provider parity
+- Add live model discovery for Gemini, OpenAI, Anthropic, and Ollama using each provider's model-list API; filter out non-chat OpenAI models and Gemini models without generateContent support.
+- Add Puter model discovery through the existing authenticated WebView session, matching the Tauri model picker without storing Puter credentials.
+- Let users refresh discovered models, select a returned model, or continue entering a custom model ID; use the configured Ollama server URL for discovery instead of assuming localhost.
+- Improve the native WinUI AI settings layout with clear provider-aware controls, accessible model discovery status, and visibility rules for Gemini setup and Ollama endpoint settings.
+- Keep provider credentials in Windows Credential Manager and retain the existing Gemini temperature/output-token controls and confirmation-gated Schoology actions.
+
 ## [2026.10.0-port.126] - 2026-11-11
 
 ### Build repair
