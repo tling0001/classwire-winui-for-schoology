@@ -29,6 +29,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using Microsoft.Windows.AppNotifications;
@@ -69,6 +70,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private double _classWireAIGeminiTemperature = ClassWireAIStorage.LoadSettings().GeminiTemperature;
     private int _classWireAIGeminiMaxOutputTokens = ClassWireAIStorage.LoadSettings().GeminiMaxOutputTokens;
     private bool _classWireAIOnboardingCompleted = ClassWireAIStorage.LoadSettings().HasCompletedOnboarding;
+    private bool _classWireAIOnboardingInProgress;
     private bool _classWireAISending;
     private readonly List<ClassWireAIAttachment> _classWireAIPendingAttachments = [];
     private Action? _renderClassWireAIHistory;
@@ -4346,7 +4348,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         if (type is "assessment" or "assessment_v2" or "managed_assessment" or "quiz" or "test")
         {
             if (assignmentId > 0 && sectionId > 0)
-            { await ShowAssessmentDetailsAsync(sectionId, record); return; }
+            {
+                // Match Android Upcoming: open the authenticated assessment WebView directly.
+                await OpenSharedWebViewAsync($"https://app.schoology.com/assignment/{assignmentId}",
+                    record.Title, allowLtiExternal: true, onBack: () => ShowHome(returnSection));
+                return;
+            }
         }
         if ((type is "external_tool" or "lti" or "scorm") && sectionId > 0 && assignmentId > 0)
         {
@@ -13331,7 +13338,107 @@ try {{
                 _classWireAIConversations.Insert(0, _classWireAIConversation);
         }
         _renderClassWireAIMessages();
+        if (!_classWireAIOnboardingCompleted && !_classWireAIOnboardingInProgress)
+        {
+            root.Loaded += async (_, _) =>
+            {
+                if (_classWireAIOnboardingCompleted || _classWireAIOnboardingInProgress) return;
+                _classWireAIOnboardingInProgress = true;
+                try { await ShowClassWireAIOnboardingAsync(); }
+                catch (Exception ex) { App.WriteStartupLog("ClassWire AI first-run onboarding could not be displayed.", ex); }
+                finally { _classWireAIOnboardingInProgress = false; }
+            };
+        }
         return root;
+    }
+
+    private async Task ShowClassWireAIOnboardingAsync()
+    {
+        var provider = new ComboBox { MinWidth = 280 };
+        foreach (var name in new[] { "Google Gemini", "OpenAI", "Anthropic", "Ollama (local)", "Puter" })
+            provider.Items.Add(new ComboBoxItem { Content = name });
+        provider.SelectedIndex = (int)_classWireAIProvider;
+        AutomationProperties.SetName(provider, "Choose your AI provider");
+        AutomationProperties.SetAutomationId(provider, "ClassWireAIOnboardingProvider");
+
+        var pageContent = new StackPanel { Spacing = 12, MinWidth = 420, MaxWidth = 620 };
+        var pageHeading = new TextBlock { FontSize = 19, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
+        var pageDescription = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var providerHint = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var back = new Button { Content = "Back", HorizontalAlignment = HorizontalAlignment.Left };
+        AutomationProperties.SetAutomationId(back, "ClassWireAIOnboardingBackButton");
+
+        string ProviderGuidance() => (ClassWireAIProvider)Math.Clamp(provider.SelectedIndex, 0, 4) switch
+        {
+            ClassWireAIProvider.Gemini => "Sign in with Google in the next step. ClassWire can create or reuse your dedicated Cloud project and set up a Gemini key; manual project and key controls remain in Advanced settings.",
+            ClassWireAIProvider.OpenAI => "Add your OpenAI API key in the next step. Your key is stored in Windows Credential Manager.",
+            ClassWireAIProvider.Anthropic => "Add your Anthropic API key in the next step. Your key is stored in Windows Credential Manager.",
+            ClassWireAIProvider.Ollama => "Use a local Ollama server. Make sure Ollama is running and the selected model is installed.",
+            ClassWireAIProvider.Puter => "Connect your Puter account in the next step. Authentication stays in the embedded Puter session; ClassWire does not store a Puter API key.",
+            _ => "Choose a provider to continue."
+        };
+
+        var page = 0;
+        ContentDialog? dialog = null;
+        void RenderPage()
+        {
+            pageContent.Children.Clear();
+            pageContent.Children.Add(pageHeading);
+            pageContent.Children.Add(pageDescription);
+            pageHeading.Text = page switch
+            {
+                0 => "Welcome to ClassWire AI",
+                1 => "Choose your AI provider",
+                _ => "Your data and permissions"
+            };
+            pageDescription.Text = page switch
+            {
+                0 => "Your learning assistant can help explain course content, find assignments and messages, summarize activity, and prepare work for your review.",
+                1 => "Select the service you want to use. You can change providers at any time in AI Settings.",
+                _ => "ClassWire AI starts with read-only access to Schoology context. Sending messages, posting updates, submitting work, and other supported changes are confirmation-gated. You stay in control of every action."
+            };
+            if (page == 1)
+            {
+                pageContent.Children.Add(provider);
+                providerHint.Text = ProviderGuidance();
+                pageContent.Children.Add(providerHint);
+            }
+            if (page > 0) pageContent.Children.Add(back);
+            if (dialog is not null) dialog.PrimaryButtonText = page == 2 ? "Finish and configure" : "Next";
+        }
+
+        provider.SelectionChanged += (_, _) => providerHint.Text = ProviderGuidance();
+        back.Click += (_, _) => { if (page > 0) { page--; RenderPage(); } };
+        dialog = new ContentDialog
+        {
+            Title = "Get started",
+            Content = pageContent,
+            PrimaryButtonText = "Next",
+            CloseButtonText = "Not now",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+        };
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            if (page < 2)
+            {
+                args.Cancel = true;
+                page++;
+                RenderPage();
+                return;
+            }
+            var selectedProvider = (ClassWireAIProvider)Math.Clamp(provider.SelectedIndex, 0, 4);
+            if (selectedProvider != _classWireAIProvider)
+                _classWireAIModel = ClassWireAIProviderDefaults.Model(selectedProvider);
+            _classWireAIProvider = selectedProvider;
+            _classWireAIOnboardingCompleted = true;
+            SaveClassWireAISettings();
+        };
+        RenderPage();
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && _classWireAIOnboardingCompleted)
+            await ShowClassWireAISettingsAsync();
     }
 
 

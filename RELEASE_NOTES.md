@@ -1,3 +1,18 @@
+## [2026.10.0-port.134] - 2026-11-12
+
+### Upcoming assessments
+- Open assessment, assessment-v2, managed-assessment, quiz, and test items directly in the authenticated embedded Schoology assessment WebView from Upcoming, matching the Android app's assessment route.
+- Return from the embedded assessment to the same Upcoming or Calendar view.
+
+### First-run AI onboarding
+- Add a three-step first-run wizard covering AI capabilities, provider selection, and read-only/confirmation-gated Schoology permissions.
+- Explain the setup path for Gemini, OpenAI, Anthropic, Ollama, and Puter, then continue into the full provider settings without removing existing configuration options.
+- Keep onboarding incomplete when dismissed so it can be completed on a later visit.
+
+### CI build corrections
+- Add the missing WinUI rich-text document namespace used by the assistant Markdown renderer.
+- Add the missing globalization namespace used by Gemini project-number parsing.
+
 ## [2026.10.0-port.133] - 2026-11-11
 
 ### Gemini project-number reliability
