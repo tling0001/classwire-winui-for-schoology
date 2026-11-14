@@ -1,3 +1,13 @@
+## [2026.10.0-port.138] - 2026-11-14
+
+### Resources creation menu
+- Replace the modal “What would you like to create?” picker with a native WinUI MenuFlyout anchored to the title-bar Create button.
+- Show the currently permitted New Collection, New Resource Item, and New Folder actions directly in the dropdown.
+- Keep the existing native resource and collection composers, resource type fields, and permission-gated choices unchanged.
+
+### Build
+- Increment the WinUI assembly and package version to `2026.10.0-port.138`.
+
 ## [2026.10.0-port.137] - 2026-11-14
 
 ### Resource creation consistency

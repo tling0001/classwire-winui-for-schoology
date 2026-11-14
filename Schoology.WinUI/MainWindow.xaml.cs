@@ -5373,41 +5373,50 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         try
         {
             var session = _session ?? throw new InvalidOperationException("Sign in to create Schoology resources.");
-            var choices = new List<string>();
-            if (_resourceCanCreateCollection) choices.Add("New collection");
-            if (_resourceCreatableCollections.Count > 0) { choices.Add("New Resource Item"); choices.Add("New Folder"); }
-            if (choices.Count == 0)
-                throw new InvalidOperationException("Schoology does not allow this account to create resource collections or resources.");
-            if (choices.Count == 1)
+            var flyout = new MenuFlyout();
+
+            if (_resourceCanCreateCollection)
             {
-                if (choices[0] == "New collection") await ShowResourceCollectionComposerAsync(session);
-                else await ShowResourceTemplateComposerAsync(session, choices[0] == "New Folder" ? "Folder" : "Page");
-                return;
+                var collectionItem = new MenuFlyoutItem
+                {
+                    Text = "New Collection",
+                    Icon = new SymbolIcon(Symbol.NewFolder)
+                };
+                collectionItem.Click += async (_, _) => await ShowResourceCollectionComposerAsync(session);
+                flyout.Items.Add(collectionItem);
             }
-            var picker = new ComboBox
+
+            if (_resourceCreatableCollections.Count > 0)
             {
-                Header = "What would you like to create?",
-                ItemsSource = choices,
-                SelectedIndex = 0,
-                HorizontalAlignment = HorizontalAlignment.Stretch
-            };
-            var dialog = new ContentDialog
-            {
-                Title = "Create in Resources",
-                Content = picker,
-                PrimaryButtonText = "Continue",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = _root.XamlRoot,
-                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
-            };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            if (picker.SelectedItem as string == "New collection")
-                await ShowResourceCollectionComposerAsync(session);
-            else
-                await ShowResourceTemplateComposerAsync(session, picker.SelectedItem as string == "New Folder" ? "Folder" : "Page");
+                var resourceItem = new MenuFlyoutItem
+                {
+                    Text = "New Resource Item",
+                    Icon = new SymbolIcon(Symbol.Page)
+                };
+                resourceItem.Click += async (_, _) => await ShowResourceTemplateComposerAsync(session, "Page");
+                flyout.Items.Add(resourceItem);
+
+                var folderItem = new MenuFlyoutItem
+                {
+                    Text = "New Folder",
+                    Icon = new SymbolIcon(Symbol.Folder)
+                };
+                folderItem.Click += async (_, _) => await ShowResourceTemplateComposerAsync(session, "Folder");
+                flyout.Items.Add(folderItem);
+            }
+
+            if (flyout.Items.Count == 0)
+                throw new InvalidOperationException("Schoology does not allow this account to create resource collections or resources.");
+
+            if (_titleBarCreateButton is null)
+                throw new InvalidOperationException("The Resources creation button is unavailable.");
+
+            flyout.ShowAt(_titleBarCreateButton);
         }
-        catch (Exception ex) { await ShowApiErrorAsync("Unable to create resource", ex.Message); }
+        catch (Exception ex)
+        {
+            await ShowApiErrorAsync("Unable to create resource", ex.Message);
+        }
     }
 
     private async Task ShowResourceCollectionComposerAsync(SchoologyAuthService.Session session)
