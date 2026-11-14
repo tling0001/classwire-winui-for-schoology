@@ -1,3 +1,13 @@
+## [2026.10.0-port.139] - 2026-11-14
+
+### Consistent centered loading states
+- Standardize page-level loading indicators as a centered vertical composition, matching the PDF viewer's clear spinner-and-caption treatment.
+- Apply the treatment to resource tree expansion and message-detail loading, as well as the existing shared loading-status surfaces across the app.
+- Keep reduced-motion behavior: show a static native Fluent icon instead of an animated ProgressRing when system animations are disabled.
+
+### Build
+- Increment the WinUI assembly and package version to `2026.10.0-port.139`.
+
 ## [2026.10.0-port.138] - 2026-11-14
 
 ### Resources creation menu

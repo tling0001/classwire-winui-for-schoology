@@ -1006,33 +1006,47 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
     private Grid LoadingStatus(string message) => LoadingStatus(message, out var ignoredStatus);
 
-    private Grid LoadingStatus(string message, out TextBlock status, double ringSize = 18)
+    private Grid LoadingStatus(string message, out TextBlock status, double ringSize = 32)
     {
-        var host = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        host.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        host.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        // Page-level loading uses the same centered composition as the native PDF
+        // viewer: indicator first, then a readable, centered status caption.
+        var host = new Grid
+        {
+            MinHeight = 128,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+        var content = new StackPanel
+        {
+            Spacing = 10,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MaxWidth = 360
+        };
         var animationsEnabled = AnimationsEnabled;
         var ring = new ProgressRing
         {
             Width = ringSize, Height = ringSize, IsActive = animationsEnabled,
             Visibility = animationsEnabled ? Visibility.Visible : Visibility.Collapsed,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Left
+            HorizontalAlignment = HorizontalAlignment.Center
         };
         // Reduced-motion mode keeps a static indicator instead of animating the ring.
         var staticIndicator = new FontIcon
         {
-            Glyph = "", FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 16,
+            Glyph = "", FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 26,
             Foreground = ThemeBrush("SchoologyBlueBrush"),
             Visibility = animationsEnabled ? Visibility.Collapsed : Visibility.Visible,
-            VerticalAlignment = VerticalAlignment.Center
+            HorizontalAlignment = HorizontalAlignment.Center
         };
-        status = Text(message, 13);
+        status = Text(message, 14);
+        status.TextAlignment = TextAlignment.Center;
+        status.HorizontalAlignment = HorizontalAlignment.Center;
+        status.MaxWidth = 360;
         status.Tag = (ring, staticIndicator);
-        host.Children.Add(ring);
-        host.Children.Add(staticIndicator);
-        Grid.SetColumn(status, 1);
-        host.Children.Add(status);
+        content.Children.Add(ring);
+        content.Children.Add(staticIndicator);
+        content.Children.Add(status);
+        host.Children.Add(content);
         return host;
     }
 
@@ -1051,7 +1065,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private static void RemoveLoadingStatus(TextBlock status)
     {
         if (status.Tag is ValueTuple<ProgressRing, FontIcon> indicators &&
-            indicators.Item1.Parent is Grid host && host.Parent is Panel parent)
+            indicators.Item1.Parent is StackPanel content &&
+            content.Parent is Grid host && host.Parent is Panel parent)
             parent.Children.Remove(host);
         else if (status.Parent is Panel directParent)
             directParent.Children.Remove(status);
@@ -5202,9 +5217,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 if (children is null || loading) return;
                 loading = true;
                 children.Children.Clear();
-                children.Children.Add(new TextBlock { Text = "Loading resources…",
-                    Style = (Style)Application.Current.Resources["BodyTextBlockStyle"],
-                    Margin = new Thickness(24, 8, 8, 8), Foreground = ThemeBrush("TextFillColorSecondaryBrush") });
+                children.Children.Add(LoadingStatus("Loading resources…"));
                 try
                 {
                     var nested = await LoadResourceChildrenAsync(entry, contextKind, contextId);
@@ -11185,9 +11198,7 @@ try {{
             messageCancellation.CancelAfter(TimeSpan.FromSeconds(35));
             messageLoadCancellation = messageCancellation;
             messageSelected = true;
-            var loadingPanel = new StackPanel { Spacing = 10, Margin = new Thickness(24) };
-            loadingPanel.Children.Add(new ProgressRing { IsActive = true, Width = 28, Height = 28 });
-            loadingPanel.Children.Add(Text("Loading message…", 13));
+            var loadingPanel = LoadingStatus("Loading message…");
             NavigateShellFrame(detailFrame, loadingPanel, SlideNavigationTransitionEffect.FromRight);
             try
             {
