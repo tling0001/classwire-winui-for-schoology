@@ -1,3 +1,12 @@
+## [2026.10.0-port.143] - 2026-11-14
+
+### Resource folder navigation
+- Use a right-pointing chevron for collection rows because selecting a collection navigates to a separate folder screen.
+- Preserve the existing disclosure arrow and expand/collapse rotation for inline nested folders.
+
+### Build
+- Increment WinUI assembly and package version to `2026.10.0-port.143`.
+
 ## [2026.10.0-port.142] - 2026-11-14
 
 ### Resource navigation and editing

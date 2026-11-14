@@ -5161,7 +5161,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             FontIcon? selectionIcon = null;
             if (isFolder)
             {
-                arrow = new FontIcon { Glyph = "\uE70D", FontSize = 14,
+                arrow = new FontIcon { Glyph = entry.Kind == "collection" ? "\uE76C" : "\uE70D", FontSize = 14,
                     Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
                     VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center,
                     RenderTransform = new RotateTransform { Angle = 0 } };
