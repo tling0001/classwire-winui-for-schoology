@@ -4605,6 +4605,56 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         public override string ToString() => Title;
     }
 
+    private sealed record NormalizedSchoologyAttachment(
+        string Id, string FileMetadataId, string Kind, string Title, string FileName,
+        string MimeType, string FileSize, string OriginalDownloadUrl, string ConvertedDownloadUrl,
+        string ConversionStatus, string ThumbnailUrl, string LinkUrl, string EmbedCode,
+        string LaunchUrl, JsonElement Source)
+    {
+        public static NormalizedSchoologyAttachment From(JsonElement source, string kind = "")
+        {
+            var type = (ProfileValue(source, "attachment_type", "attachmentType", "type", "file_type", "fileType") ?? "")
+                .Trim().ToLowerInvariant();
+            var fileUrl = ProfileValue(source, "file_download_url", "fileDownloadURL", "download_path",
+                "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url") ?? "";
+            var convertedUrl = ProfileValue(source, "file_converted_download_url", "fileConvertedDownloadURL",
+                "converted_download_path", "convertedDownloadPath") ?? "";
+            var linkUrl = ProfileValue(source, "link_url", "linkURL", "linkUrl", "href", "web_url", "webUrl") ?? "";
+            var embedCode = ProfileValue(source, "embed_code", "embedCode") ?? "";
+            var launchUrl = ProfileValue(source, "launch_url", "launchUrl", "tool_url", "toolUrl") ?? "";
+            var resolvedKind = kind.Trim().ToLowerInvariant();
+            if (resolvedKind.Length == 0)
+            {
+                if (type.Contains("embed") || embedCode.Length > 0) resolvedKind = "embed";
+                else if (type.Contains("external") || type.Contains("lti") || launchUrl.Length > 0) resolvedKind = "external_tool";
+                else if (type.Contains("video") || ProfileValue(source, "video_url", "videoURL", "videoUrl") is not null) resolvedKind = "video";
+                else if (type.Contains("link") || linkUrl.Length > 0) resolvedKind = "link";
+                else if (fileUrl.Length > 0 || convertedUrl.Length > 0 ||
+                    ProfileValue(source, "file_metadata_id", "fileMetadataId", "file_id", "fileId") is not null) resolvedKind = "file";
+            }
+
+            var title = ProfileValue(source, "title", "file_title", "fileTitle", "link_title", "linkTitle",
+                "video_title", "videoTitle", "tool_name", "toolName", "name") ?? "";
+            var filename = ProfileValue(source, "filename", "fileName", "file_name", "name", "title") ?? title;
+            var mime = ProfileValue(source, "filemime", "fileMIME", "mime", "mime_type", "mimeType",
+                "converted_file_mime", "convertedFileMime") ?? "application/octet-stream";
+            var size = ProfileValue(source, "file_size", "fileSize", "filesize", "size", "content_length",
+                "contentLength", "filesize_bytes") ?? "";
+            var thumbnail = ProfileValue(source, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url",
+                "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url") ?? "";
+            var id = ProfileValue(source, "id", "fid", "file_id", "fileId") ?? "";
+            var metadataId = ProfileValue(source, "file_metadata_id", "fileMetadataId", "metadata_id", "metadataId") ?? "";
+            var conversion = ProfileValue(source, "converted_status", "convertedStatus",
+                "file_converted_status", "fileConvertedStatus") ?? "";
+            var url = resolvedKind == "link" ? linkUrl :
+                fileUrl.Length > 0 ? fileUrl : convertedUrl.Length > 0 ? convertedUrl :
+                ProfileValue(source, "url", "href", "video_url", "videoURL", "videoUrl") ?? "";
+            return new NormalizedSchoologyAttachment(id, metadataId, resolvedKind, title, filename, mime,
+                size, url, convertedUrl, conversion, thumbnail, linkUrl, embedCode, launchUrl, source.Clone());
+        }
+    }
+
+
     private Grid BuildNotificationsPage()
     {
         var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
@@ -9976,17 +10026,15 @@ try {{
 
     private async Task ShowAttachmentOptionsAsync(JsonElement attachment, Action onBack)
     {
-        var name = SafeMaterialFileName(ProfileValue(attachment, "filename", "fileName", "file_title",
-            "fileTitle", "title", "name"), "Schoology attachment");
-        var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ??
-            "application/octet-stream";
-        var originalUrl = ProfileValue(attachment, "file_download_url", "fileDownloadURL", "download_path",
-            "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url");
-        var convertedUrl = ProfileValue(attachment, "file_converted_download_url", "fileConvertedDownloadURL",
-            "converted_download_path", "convertedDownloadPath");
-        var convertedStatus = ProfileValue(attachment, "converted_status", "convertedStatus")?.ToLowerInvariant() ?? "";
-        var thumbnail = ProfileValue(attachment, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
-        originalUrl ??= ProfileValue(attachment, "url", "href", "video_url", "videoURL", "videoUrl") ?? convertedUrl ?? thumbnail;
+        var normalized = NormalizedSchoologyAttachment.From(attachment);
+        var name = SafeMaterialFileName(
+            string.IsNullOrWhiteSpace(normalized.FileName) ? normalized.Title : normalized.FileName,
+            "Schoology attachment");
+        var mime = normalized.MimeType;
+        var originalUrl = string.IsNullOrWhiteSpace(normalized.OriginalDownloadUrl) ? null : normalized.OriginalDownloadUrl;
+        var convertedUrl = string.IsNullOrWhiteSpace(normalized.ConvertedDownloadUrl) ? null : normalized.ConvertedDownloadUrl;
+        var convertedStatus = normalized.ConversionStatus.ToLowerInvariant();
+        var thumbnail = normalized.ThumbnailUrl;
         var declaredMediaType = ProfileValue(attachment, "type", "attachment_type", "attachmentType")?.ToLowerInvariant();
         if (declaredMediaType == "video" && !mime.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
             mime = "video/mp4";
@@ -10036,13 +10084,15 @@ try {{
 
     private static string AttachmentGlyph(JsonElement attachment)
     {
-        var filename = ProfileValue(attachment, "filename", "fileName", "file_title", "fileTitle",
-            "title", "name") ?? string.Empty;
-        var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ?? string.Empty;
-        var extension = Path.GetExtension(filename).ToLowerInvariant();
-        if (extension == ".pptx" || mime.Contains("presentation", StringComparison.OrdinalIgnoreCase))
+        // Resource links use the same Fluent link glyph as course materials,
+        // including Schoology's nested attachments.links response shape.
+        if (FirstLinkAttachment(attachment).ValueKind == JsonValueKind.Object)
+            return "\uE71B";
+        var normalized = NormalizedSchoologyAttachment.From(attachment);
+        var extension = Path.GetExtension(normalized.FileName).ToLowerInvariant();
+        if (extension == ".pptx" || normalized.MimeType.Contains("presentation", StringComparison.OrdinalIgnoreCase))
             return "\uE786"; // Segoe Fluent Icons: Slideshow
-        if (mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+        if (normalized.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
             extension is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".tif" or ".tiff" or ".heic")
             return "\uE91B"; // Segoe Fluent Icons: Photo
         return MaterialGlyph(attachment);
@@ -10186,7 +10236,8 @@ try {{
         var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime_type")?.ToLowerInvariant() ?? "";
         var kind = type + " " + documentType + " " + name + " " + mime;
         if (type == "page") return "\uE7C3";
-        if (type == "link" || documentType == "link" || kind.Contains("url")) return "\uE71B";
+        if (type == "link" || documentType == "link" || kind.Contains("url") ||
+            FirstLinkAttachment(data).ValueKind == JsonValueKind.Object) return "\uE71B";
         if (kind.Contains("assignment")) return "\uE70F";
         if (kind.Contains("discussion")) return "\uE8BD";
         if (kind.Contains("assessment") || kind.Contains("quiz") || kind.Contains("test")) return "\uE9D5";

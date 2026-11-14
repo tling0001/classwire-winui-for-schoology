@@ -1,3 +1,14 @@
+## [2026.10.0-port.144] - 2026-11-14
+
+### Attachment metadata and resource link icons
+- Introduce a normalized WinUI attachment metadata representation for stable IDs, file metadata IDs, type, title, filename, MIME type, size, original and converted download URLs, conversion status, thumbnails, links, embeds, and external-tool launch URLs.
+- Use normalized metadata when opening attachments while retaining the original Schoology JSON for fields not yet consumed by native presentation.
+- Make resource rows recognize nested Schoology link attachments and use the same Segoe Fluent link glyph as course materials.
+- Preserve existing authenticated download, preview, and media-opening flows.
+
+### Build
+- Increment WinUI assembly and package version to `2026.10.0-port.144`.
+
 ## [2026.10.0-port.143] - 2026-11-14
 
 ### Resource folder navigation
