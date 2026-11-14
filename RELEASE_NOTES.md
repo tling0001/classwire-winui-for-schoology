@@ -1,3 +1,13 @@
+## [2026.10.0-port.137] - 2026-11-14
+
+### Resource creation consistency
+- Standardize the resource-item action as **New Resource Item** and expose **New Folder** as its own menu action.
+- Keep both flows in the same scrollable native ContentDialog composer, with the appropriate resource type and fields visible together; the folder entry opens directly into the folder form.
+- Preserve the existing page, discussion, assignment, document-link, upload, video, and embed creation paths, permission checks, upload re-check, and native file picker.
+
+### Build
+- Increment the WinUI assembly and package version to `2026.10.0-port.137`.
+
 ## [2026.10.0-port.136] - 2026-11-14
 
 ### Resource creation

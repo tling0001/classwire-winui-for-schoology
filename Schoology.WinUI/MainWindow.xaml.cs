@@ -5375,13 +5375,13 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var session = _session ?? throw new InvalidOperationException("Sign in to create Schoology resources.");
             var choices = new List<string>();
             if (_resourceCanCreateCollection) choices.Add("New collection");
-            if (_resourceCreatableCollections.Count > 0) choices.Add("New resource");
+            if (_resourceCreatableCollections.Count > 0) { choices.Add("New Resource Item"); choices.Add("New Folder"); }
             if (choices.Count == 0)
                 throw new InvalidOperationException("Schoology does not allow this account to create resource collections or resources.");
             if (choices.Count == 1)
             {
                 if (choices[0] == "New collection") await ShowResourceCollectionComposerAsync(session);
-                else await ShowResourceTemplateComposerAsync(session);
+                else await ShowResourceTemplateComposerAsync(session, choices[0] == "New Folder" ? "Folder" : "Page");
                 return;
             }
             var picker = new ComboBox
@@ -5405,7 +5405,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (picker.SelectedItem as string == "New collection")
                 await ShowResourceCollectionComposerAsync(session);
             else
-                await ShowResourceTemplateComposerAsync(session);
+                await ShowResourceTemplateComposerAsync(session, picker.SelectedItem as string == "New Folder" ? "Folder" : "Page");
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to create resource", ex.Message); }
     }
@@ -5443,7 +5443,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { await ShowApiErrorAsync("Unable to create resource collection", ex.Message); }
     }
 
-    private async Task ShowResourceTemplateComposerAsync(SchoologyAuthService.Session session)
+    private async Task ShowResourceTemplateComposerAsync(SchoologyAuthService.Session session, string initialType = "Page")
     {
         var collections = _resourceCreatableCollections.OrderBy(pair => pair.Value, StringComparer.CurrentCultureIgnoreCase)
             .Select(pair => new ResourceCreateCollectionOption(pair.Key, pair.Value)).ToArray();
@@ -5461,7 +5461,9 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var type = new ComboBox
         {
             Header = "Resource type",
-            ItemsSource = new[] { "Page", "Discussion", "Assignment", "Document link", "Upload a file", "Video link", "Embed code", "Folder" },
+            ItemsSource = initialType == "Folder"
+                ? new[] { "Folder" }
+                : new[] { "Page", "Discussion", "Assignment", "Document link", "Upload a file", "Video link", "Embed code" },
             SelectedIndex = 0,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
@@ -5545,7 +5547,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         form.Children.Add(notes);
         var dialog = new ContentDialog
         {
-            Title = "New Schoology Resource",
+            Title = initialType == "Folder" ? "New Folder" : "New Resource Item",
             Content = CreateDialogScrollViewport(form, 620),
             PrimaryButtonText = "Create",
             CloseButtonText = "Cancel",
