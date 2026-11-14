@@ -399,18 +399,27 @@ internal sealed class SchoologyApiClient
 
     internal Task<JsonDocument> CreateResourceTemplateAsync(
         SchoologyAuthService.Session session, long collectionId, string title, string type,
-        string body, string notes, string linkUrl, int maxPoints, CancellationToken ct = default)
+        string body, string notes, string linkUrl, int maxPoints,
+        string? uploadedFileId = null, string videoUrl = "", string embedCode = "",
+        string folderColor = "blue", long folderId = 0, CancellationToken ct = default)
     {
-        if (collectionId <= 0 || string.IsNullOrWhiteSpace(title) ||
-            type is not ("page" or "discussion" or "assignment" or "document"))
+        var supportedTypes = new[]
+        {
+            "page", "discussion", "assignment", "document",
+            "document-file", "document-video", "document-embed", "folder"
+        };
+        if (collectionId <= 0 || string.IsNullOrWhiteSpace(title) || !supportedTypes.Contains(type, StringComparer.Ordinal))
             throw new InvalidOperationException("The resource details are invalid.");
+
+        var resourceType = type.StartsWith("document-", StringComparison.Ordinal) ? "document" : type;
         var fields = new Dictionary<string, object>();
         var payload = new Dictionary<string, object>
         {
             ["title"] = title.Trim(),
-            ["type"] = type,
+            ["type"] = resourceType,
             ["resource_notes"] = notes.Trim()
         };
+
         switch (type)
         {
             case "page":
@@ -428,7 +437,54 @@ internal sealed class SchoologyApiClient
                 fields["document_type"] = "link";
                 payload["attachments"] = new[] { new Dictionary<string, string> { ["url"] = url.AbsoluteUri } };
                 break;
+            case "document-file":
+                if (string.IsNullOrWhiteSpace(uploadedFileId))
+                    throw new InvalidOperationException("Upload a file before creating this resource.");
+                fields["document_type"] = "file";
+                payload["attachments"] = new Dictionary<string, object>
+                {
+                    ["files"] = new Dictionary<string, object>
+                    {
+                        ["file"] = new[] { new Dictionary<string, string> { ["id"] = uploadedFileId } }
+                    }
+                };
+                break;
+            case "document-video":
+                if (!Uri.TryCreate(videoUrl, UriKind.Absolute, out var video) ||
+                    video.Scheme is not ("http" or "https"))
+                    throw new InvalidOperationException("Enter a valid HTTP or HTTPS video address.");
+                fields["document_type"] = "video";
+                payload["attachments"] = new Dictionary<string, object>
+                {
+                    ["videos"] = new Dictionary<string, object>
+                    {
+                        ["video"] = new[] { new Dictionary<string, string>
+                            { ["url"] = video.AbsoluteUri, ["title"] = title.Trim(), ["type"] = "video" } }
+                    }
+                };
+                break;
+            case "document-embed":
+                if (string.IsNullOrWhiteSpace(embedCode))
+                    throw new InvalidOperationException("Enter the embed code.");
+                fields["document_type"] = "embed";
+                payload["attachments"] = new Dictionary<string, object>
+                {
+                    ["embeds"] = new Dictionary<string, object>
+                    {
+                        ["embed"] = new[] { new Dictionary<string, string>
+                            { ["embed_code"] = embedCode.Trim(), ["type"] = "embed" } }
+                    }
+                };
+                break;
+            case "folder":
+                var allowedColors = new[] { "blue", "pink", "orange", "purple", "yellow", "red", "gray", "black", "green" };
+                if (!allowedColors.Contains(folderColor, StringComparer.Ordinal))
+                    throw new InvalidOperationException("Choose a supported folder color.");
+                payload["folder_id"] = Math.Max(0, folderId);
+                payload["color"] = folderColor;
+                break;
         }
+
         payload["template_fields"] = fields;
         return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post,
             $"collections/{collectionId}/resources", payload, ct);

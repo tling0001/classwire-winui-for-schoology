@@ -1,3 +1,15 @@
+## [2026.10.0-port.136] - 2026-11-14
+
+### Resource creation
+- Extend the permission-gated Resources composer with document file uploads, video links, iframe embeds, and color-coded collection folders.
+- Re-check the selected collection's Schoology POST permission before uploading and again immediately before creating the resource.
+- Reuse the existing Android-aligned FileService multipart upload and fallback path; enforce the app's 60 MB file limit.
+- Validate link and embed destinations as HTTP/HTTPS and reject script/object/embed tags in iframe input.
+- Use native WinUI file picking, ContentDialog controls, theme-aware surfaces, and scrollable form content.
+
+### Build
+- Increment the WinUI assembly and package version to `2026.10.0-port.136`.
+
 ## [2026.10.0-port.135] - 2026-11-14
 
 ### Standalone Resources creation

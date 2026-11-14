@@ -5449,6 +5449,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             .Select(pair => new ResourceCreateCollectionOption(pair.Key, pair.Value)).ToArray();
         if (collections.Length == 0)
             throw new InvalidOperationException("No resource collection currently allows resource creation.");
+
         var destination = new ComboBox
         {
             Header = "Save to collection",
@@ -5460,7 +5461,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var type = new ComboBox
         {
             Header = "Resource type",
-            ItemsSource = new[] { "Page", "Discussion", "Assignment", "Document link" },
+            ItemsSource = new[] { "Page", "Discussion", "Assignment", "Document link", "Upload a file", "Video link", "Embed code", "Folder" },
             SelectedIndex = 0,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
@@ -5470,24 +5471,77 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var notes = new TextBox { Header = "Resource notes (optional)", AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap, MinHeight = 54, MaxHeight = 100 };
         var link = new TextBox { Header = "Web address", PlaceholderText = "https://example.com" };
+        var video = new TextBox { Header = "Video address", PlaceholderText = "https://…" };
+        var embed = new TextBox { Header = "Embed code", PlaceholderText = "<iframe …></iframe>",
+            AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 100, MaxHeight = 180 };
         var points = new NumberBox { Header = "Maximum points", Value = 100, Minimum = 0, Maximum = 10000,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
+        var folderColor = new ComboBox
+        {
+            Header = "Folder color",
+            ItemsSource = new[] { "blue", "pink", "orange", "purple", "yellow", "red", "gray", "black", "green" },
+            SelectedItem = "blue",
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var fileStatus = Text("No file selected", 12);
+        fileStatus.TextWrapping = TextWrapping.Wrap;
+        byte[]? fileBytes = null;
+        string? fileName = null;
+        var chooseFile = new Button { Content = "Choose file" };
+        AutomationProperties.SetName(chooseFile, "Choose a document to upload");
+        chooseFile.Click += async (_, _) =>
+        {
+            try
+            {
+                var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
+                picker.FileTypeFilter.Add("*");
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, Win32Interop.GetWindowFromWindowId(AppWindow.Id));
+                var selected = await picker.PickSingleFileAsync();
+                if (selected is null) return;
+                var info = new FileInfo(selected.Path);
+                if (!info.Exists || info.Length <= 0)
+                    throw new InvalidOperationException("The selected file is empty or no longer available.");
+                if (info.Length > 60L * 1024 * 1024)
+                    throw new InvalidOperationException("Resource files are limited to 60 MB.");
+                fileBytes = await File.ReadAllBytesAsync(selected.Path);
+                fileName = selected.Name;
+                fileStatus.Text = $"{selected.Name} · {info.Length:N0} bytes";
+            }
+            catch (Exception ex)
+            {
+                fileBytes = null;
+                fileName = null;
+                fileStatus.Text = $"Unable to select file: {ex.Message}";
+            }
+        };
+
         void UpdateFields()
         {
             var selected = type.SelectedItem as string ?? "Page";
-            body.Visibility = selected == "Document link" ? Visibility.Collapsed : Visibility.Visible;
+            body.Visibility = selected is "Page" or "Discussion" or "Assignment" ? Visibility.Visible : Visibility.Collapsed;
             link.Visibility = selected == "Document link" ? Visibility.Visible : Visibility.Collapsed;
+            video.Visibility = selected == "Video link" ? Visibility.Visible : Visibility.Collapsed;
+            embed.Visibility = selected == "Embed code" ? Visibility.Visible : Visibility.Collapsed;
+            chooseFile.Visibility = selected == "Upload a file" ? Visibility.Visible : Visibility.Collapsed;
+            fileStatus.Visibility = selected == "Upload a file" ? Visibility.Visible : Visibility.Collapsed;
             points.Visibility = selected == "Assignment" ? Visibility.Visible : Visibility.Collapsed;
+            folderColor.Visibility = selected == "Folder" ? Visibility.Visible : Visibility.Collapsed;
         }
         type.SelectionChanged += (_, _) => UpdateFields();
         UpdateFields();
+
         var form = new StackPanel { Spacing = 10, MinWidth = 380 };
         form.Children.Add(destination);
         form.Children.Add(type);
         form.Children.Add(title);
         form.Children.Add(body);
         form.Children.Add(link);
+        form.Children.Add(video);
+        form.Children.Add(embed);
+        form.Children.Add(chooseFile);
+        form.Children.Add(fileStatus);
         form.Children.Add(points);
+        form.Children.Add(folderColor);
         form.Children.Add(notes);
         var dialog = new ContentDialog
         {
@@ -5506,27 +5560,76 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             await ShowApiErrorAsync("Resource details required", "Choose a collection and enter a title.");
             return;
         }
+
         var selectedType = type.SelectedItem as string ?? "Page";
         var apiType = selectedType switch
         {
             "Discussion" => "discussion",
             "Assignment" => "assignment",
             "Document link" => "document",
+            "Upload a file" => "document-file",
+            "Video link" => "document-video",
+            "Embed code" => "document-embed",
+            "Folder" => "folder",
             _ => "page"
         };
+        string videoUrl = "";
+        string embedCode = "";
+        if (selectedType == "Document link" && !IsSafeHttpUrl(link.Text))
+        {
+            await ShowApiErrorAsync("Invalid document link", "Enter a valid HTTP or HTTPS web address.");
+            return;
+        }
+        if (selectedType == "Video link" && !IsSafeHttpUrl(video.Text))
+        {
+            await ShowApiErrorAsync("Invalid video link", "Enter a valid HTTP or HTTPS video address.");
+            return;
+        }
+        if (selectedType == "Video link") videoUrl = video.Text.Trim();
+        if (selectedType == "Embed code")
+        {
+            embedCode = embed.Text.Trim();
+            var iframe = Regex.Match(embedCode, @"(?is)^\s*<iframe\b[^>]*\bsrc\s*=\s*[""']([^""']+)[""'][^>]*>\s*</iframe>\s*$");
+            if (!iframe.Success || !IsSafeHttpUrl(iframe.Groups[1].Value) ||
+                Regex.IsMatch(embedCode, @"(?is)<\s*(script|object|embed)\b"))
+            {
+                await ShowApiErrorAsync("Invalid embed code", "Enter a single iframe embed with an HTTP or HTTPS source. Script, object, and embed tags are not accepted.");
+                return;
+            }
+        }
+        if (selectedType == "Upload a file" && (fileBytes is null || string.IsNullOrWhiteSpace(fileName)))
+        {
+            await ShowApiErrorAsync("File required", "Choose a file to upload.");
+            return;
+        }
+
         try
         {
             var permissionPath = $"/v1/collections/{selectedCollection.Id}/resources";
-            using var permissions = await _api.GetPostPermissionsAsync(session, [permissionPath]);
-            if (!ResourcePermissionAllowsPost(permissions, permissionPath))
-                throw new InvalidOperationException("Schoology no longer allows this account to add resources to the selected collection.");
+            using (var permissions = await _api.GetPostPermissionsAsync(session, [permissionPath]))
+                if (!ResourcePermissionAllowsPost(permissions, permissionPath))
+                    throw new InvalidOperationException("Schoology no longer allows this account to add resources to the selected collection.");
+
+            string? uploadedFileId = null;
+            if (selectedType == "Upload a file" && fileBytes is not null && fileName is not null)
+                uploadedFileId = await _api.UploadMessageFileAsync(session, fileName, GetSubmissionMimeType(fileName), fileBytes);
+
+            // Re-check after a potentially long upload so a changed permission is never bypassed.
+            using (var permissions = await _api.GetPostPermissionsAsync(session, [permissionPath]))
+                if (!ResourcePermissionAllowsPost(permissions, permissionPath))
+                    throw new InvalidOperationException("Schoology no longer allows this account to add resources to the selected collection.");
+
             var pointsValue = double.IsFinite(points.Value) ? (int)Math.Clamp(points.Value, 0, 10000) : 100;
             using var created = await _api.CreateResourceTemplateAsync(session, selectedCollection.Id,
-                title.Text.Trim(), apiType, body.Text, notes.Text, link.Text.Trim(), pointsValue);
+                title.Text.Trim(), apiType, body.Text, notes.Text, link.Text.Trim(), pointsValue,
+                uploadedFileId, videoUrl, embedCode, folderColor.SelectedItem as string ?? "blue", 0);
             ShowHome("Resources");
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to create Schoology resource", ex.Message); }
     }
+
+    private static bool IsSafeHttpUrl(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var url) && url.Scheme is "http" or "https";
 
     private Grid BuildResourcesPage()
     {
