@@ -55,6 +55,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private string _profileReturnSection = "Recent Activity";
     private Button? _titleBarCreateButton;
     private string _titleBarCreateContext = string.Empty;
+    private bool _resourceCanCreateCollection;
+    private readonly Dictionary<long, string> _resourceCreatableCollections = new();
     private Func<Task>? _titleBarCreateAction;
     private readonly SchoologyAuthService _auth = new(false);
     private bool _highContrastReadAvailable = true;
@@ -2312,6 +2314,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             _ = _titleBarCreateAction();
             return;
         }
+        if (_titleBarCreateContext == "resources")
+        {
+            _ = ShowResourceCreateMenuAsync();
+            return;
+        }
         ShowCreateMenu();
     }
 
@@ -2326,6 +2333,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             "assignment-comment" or "content-comment" => "＋ Comment",
             "assignment-actions" => "＋ Create",
             "course-update" or "group-update" => "＋ Post update",
+            "resources" => "＋ Create",
             _ => "＋ Create"
         };
         AutomationProperties.SetName(_titleBarCreateButton, context switch
@@ -2335,6 +2343,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             "assignment-actions" => "Assignment actions",
             "course-update" => "Post a course update",
             "group-update" => "Post a group update",
+            "resources" => "Create a resource or collection",
             "home" => "Create ClassWire content",
             _ => "Create"
         });
@@ -3723,11 +3732,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             "Recent Activity" or "Home" => "home",
             "Courses" when tab == "Updates" => "course-update",
             "Groups" when tab == "Updates" => "group-update",
+            "Resources" => "resources",
             _ => string.Empty
         };
         _titleBarCreateContext = context;
         if (_titleBarCreateButton is null) return;
-        _titleBarCreateButton.Visibility = context.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        _titleBarCreateButton.Visibility = context.Length == 0 ||
+            (context == "resources" && !_resourceCanCreateCollection && _resourceCreatableCollections.Count == 0)
+            ? Visibility.Collapsed : Visibility.Visible;
         _titleBarCreateButton.Content = context switch
         {
             "course-update" or "group-update" => "＋ Post update",
@@ -5309,6 +5321,213 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }).ToArray();
     }
 
+    private sealed record ResourceCreateCollectionOption(long Id, string Title);
+
+    private static bool ResourcePermissionAllowsPost(JsonDocument permissions, string path)
+    {
+        var root = permissions.RootElement;
+        if (!root.TryGetProperty("response", out var rows) &&
+            !root.TryGetProperty("responses", out rows)) return false;
+        if (rows.ValueKind != JsonValueKind.Array) return false;
+        foreach (var row in rows.EnumerateArray())
+        {
+            var location = row.TryGetProperty("location", out var locationValue)
+                ? locationValue.GetString() : null;
+            if (!string.Equals(location, path, StringComparison.Ordinal)) continue;
+            var body = row.TryGetProperty("body", out var bodyValue) ? bodyValue.ToString() : string.Empty;
+            return Regex.IsMatch(body, @"\bpost\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+        return false;
+    }
+
+    private async Task RefreshResourceCreationPermissionsAsync(
+        SchoologyAuthService.Session session, IReadOnlyList<SchoologyApiRecord> collections)
+    {
+        _resourceCanCreateCollection = false;
+        _resourceCreatableCollections.Clear();
+        var paths = new List<string> { "/v1/collections" };
+        var candidates = collections.Select(record =>
+        {
+            var id = JsonLong(record.Data, "collection_id", "collectionID", "id");
+            var title = ProfileValue(record.Data, "collection_title", "title", "name") ?? record.Title;
+            return new ResourceCreateCollectionOption(id, title);
+        }).Where(item => item.Id > 0).GroupBy(item => item.Id).Select(group => group.First()).ToArray();
+        paths.AddRange(candidates.Select(item => $"/v1/collections/{item.Id}/resources"));
+        try
+        {
+            using var permissions = await _api.GetPostPermissionsAsync(session, paths);
+            _resourceCanCreateCollection = ResourcePermissionAllowsPost(permissions, "/v1/collections");
+            foreach (var collection in candidates)
+                if (ResourcePermissionAllowsPost(permissions, $"/v1/collections/{collection.Id}/resources"))
+                    _resourceCreatableCollections[collection.Id] = collection.Title;
+        }
+        catch (Exception ex)
+        {
+            App.WriteStartupLog("Standalone resource creation permissions could not be checked; creation remains hidden.", ex);
+        }
+        UpdateTitleBarCreateButton("Resources", null);
+    }
+
+    private async Task ShowResourceCreateMenuAsync()
+    {
+        try
+        {
+            var session = _session ?? throw new InvalidOperationException("Sign in to create Schoology resources.");
+            var choices = new List<string>();
+            if (_resourceCanCreateCollection) choices.Add("New collection");
+            if (_resourceCreatableCollections.Count > 0) choices.Add("New resource");
+            if (choices.Count == 0)
+                throw new InvalidOperationException("Schoology does not allow this account to create resource collections or resources.");
+            if (choices.Count == 1)
+            {
+                if (choices[0] == "New collection") await ShowResourceCollectionComposerAsync(session);
+                else await ShowResourceTemplateComposerAsync(session);
+                return;
+            }
+            var picker = new ComboBox
+            {
+                Header = "What would you like to create?",
+                ItemsSource = choices,
+                SelectedIndex = 0,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            var dialog = new ContentDialog
+            {
+                Title = "Create in Resources",
+                Content = picker,
+                PrimaryButtonText = "Continue",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = _root.XamlRoot,
+                RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (picker.SelectedItem as string == "New collection")
+                await ShowResourceCollectionComposerAsync(session);
+            else
+                await ShowResourceTemplateComposerAsync(session);
+        }
+        catch (Exception ex) { await ShowApiErrorAsync("Unable to create resource", ex.Message); }
+    }
+
+    private async Task ShowResourceCollectionComposerAsync(SchoologyAuthService.Session session)
+    {
+        var title = new TextBox { Header = "Collection name", PlaceholderText = "Enter a collection name" };
+        var content = new StackPanel { Spacing = 10, MinWidth = 340 };
+        content.Children.Add(title);
+        var dialog = new ContentDialog
+        {
+            Title = "New Resource Collection",
+            Content = content,
+            PrimaryButtonText = "Create",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        var cleanTitle = title.Text.Trim();
+        if (cleanTitle.Length == 0)
+        {
+            await ShowApiErrorAsync("Collection name required", "Enter a name for this resource collection.");
+            return;
+        }
+        try
+        {
+            using var permissions = await _api.GetPostPermissionsAsync(session, ["/v1/collections"]);
+            if (!ResourcePermissionAllowsPost(permissions, "/v1/collections"))
+                throw new InvalidOperationException("Schoology no longer allows this account to create resource collections.");
+            using var created = await _api.CreateResourceCollectionAsync(session, cleanTitle);
+            ShowHome("Resources");
+        }
+        catch (Exception ex) { await ShowApiErrorAsync("Unable to create resource collection", ex.Message); }
+    }
+
+    private async Task ShowResourceTemplateComposerAsync(SchoologyAuthService.Session session)
+    {
+        var collections = _resourceCreatableCollections.OrderBy(pair => pair.Value, StringComparer.CurrentCultureIgnoreCase)
+            .Select(pair => new ResourceCreateCollectionOption(pair.Key, pair.Value)).ToArray();
+        if (collections.Length == 0)
+            throw new InvalidOperationException("No resource collection currently allows resource creation.");
+        var destination = new ComboBox
+        {
+            Header = "Save to collection",
+            ItemsSource = collections,
+            DisplayMemberPath = nameof(ResourceCreateCollectionOption.Title),
+            SelectedIndex = 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var type = new ComboBox
+        {
+            Header = "Resource type",
+            ItemsSource = new[] { "Page", "Discussion", "Assignment", "Document link" },
+            SelectedIndex = 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var title = new TextBox { Header = "Title", PlaceholderText = "Resource title" };
+        var body = new TextBox { Header = "Body", PlaceholderText = "Describe this resource…",
+            AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 88, MaxHeight = 180 };
+        var notes = new TextBox { Header = "Resource notes (optional)", AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap, MinHeight = 54, MaxHeight = 100 };
+        var link = new TextBox { Header = "Web address", PlaceholderText = "https://example.com" };
+        var points = new NumberBox { Header = "Maximum points", Value = 100, Minimum = 0, Maximum = 10000,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
+        void UpdateFields()
+        {
+            var selected = type.SelectedItem as string ?? "Page";
+            body.Visibility = selected == "Document link" ? Visibility.Collapsed : Visibility.Visible;
+            link.Visibility = selected == "Document link" ? Visibility.Visible : Visibility.Collapsed;
+            points.Visibility = selected == "Assignment" ? Visibility.Visible : Visibility.Collapsed;
+        }
+        type.SelectionChanged += (_, _) => UpdateFields();
+        UpdateFields();
+        var form = new StackPanel { Spacing = 10, MinWidth = 380 };
+        form.Children.Add(destination);
+        form.Children.Add(type);
+        form.Children.Add(title);
+        form.Children.Add(body);
+        form.Children.Add(link);
+        form.Children.Add(points);
+        form.Children.Add(notes);
+        var dialog = new ContentDialog
+        {
+            Title = "New Schoology Resource",
+            Content = CreateDialogScrollViewport(form, 620),
+            PrimaryButtonText = "Create",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (destination.SelectedItem is not ResourceCreateCollectionOption selectedCollection ||
+            string.IsNullOrWhiteSpace(title.Text))
+        {
+            await ShowApiErrorAsync("Resource details required", "Choose a collection and enter a title.");
+            return;
+        }
+        var selectedType = type.SelectedItem as string ?? "Page";
+        var apiType = selectedType switch
+        {
+            "Discussion" => "discussion",
+            "Assignment" => "assignment",
+            "Document link" => "document",
+            _ => "page"
+        };
+        try
+        {
+            var permissionPath = $"/v1/collections/{selectedCollection.Id}/resources";
+            using var permissions = await _api.GetPostPermissionsAsync(session, [permissionPath]);
+            if (!ResourcePermissionAllowsPost(permissions, permissionPath))
+                throw new InvalidOperationException("Schoology no longer allows this account to add resources to the selected collection.");
+            var pointsValue = double.IsFinite(points.Value) ? (int)Math.Clamp(points.Value, 0, 10000) : 100;
+            using var created = await _api.CreateResourceTemplateAsync(session, selectedCollection.Id,
+                title.Text.Trim(), apiType, body.Text, notes.Text, link.Text.Trim(), pointsValue);
+            ShowHome("Resources");
+        }
+        catch (Exception ex) { await ShowApiErrorAsync("Unable to create Schoology resource", ex.Message); }
+    }
+
     private Grid BuildResourcesPage()
     {
         var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
@@ -5335,6 +5554,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 }
                 catch (Exception ex) { App.WriteStartupLog("Schoology resource apps could not be loaded; keeping resource collections available.", ex); }
                 var all = SchoologyApiClient.ReadRecords(collectionsDocument.RootElement, "collection", "collections", "collection_list");
+                await RefreshResourceCreationPermissionsAsync(session, all);
                 var mine = new List<ResourceTreeEntry>();
                 var shared = new List<ResourceTreeEntry>();
                 var groups = new List<ResourceTreeEntry>();

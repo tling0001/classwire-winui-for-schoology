@@ -393,6 +393,47 @@ internal sealed class SchoologyApiClient
         _auth.GetApiJsonAsync(session, "collections", new Dictionary<string, string> { ["limit"] = "200" }, ct);
     internal Task<JsonDocument> GetResourceAppsAsync(SchoologyAuthService.Session session, CancellationToken ct = default) =>
         _auth.GetApiJsonAsync(session, "resource_apps", new Dictionary<string, string> { ["limit"] = "200" }, ct);
+    internal Task<JsonDocument> CreateResourceCollectionAsync(
+        SchoologyAuthService.Session session, string title, CancellationToken ct = default) =>
+        _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, "collections", new { title }, ct);
+
+    internal Task<JsonDocument> CreateResourceTemplateAsync(
+        SchoologyAuthService.Session session, long collectionId, string title, string type,
+        string body, string notes, string linkUrl, int maxPoints, CancellationToken ct = default)
+    {
+        if (collectionId <= 0 || string.IsNullOrWhiteSpace(title) ||
+            type is not ("page" or "discussion" or "assignment" or "document"))
+            throw new InvalidOperationException("The resource details are invalid.");
+        var fields = new Dictionary<string, object>();
+        var payload = new Dictionary<string, object>
+        {
+            ["title"] = title.Trim(),
+            ["type"] = type,
+            ["resource_notes"] = notes.Trim()
+        };
+        switch (type)
+        {
+            case "page":
+            case "discussion":
+                fields["body"] = body;
+                break;
+            case "assignment":
+                fields["body"] = body;
+                fields["max_points"] = Math.Max(0, maxPoints);
+                break;
+            case "document":
+                if (!Uri.TryCreate(linkUrl, UriKind.Absolute, out var url) ||
+                    url.Scheme is not ("http" or "https"))
+                    throw new InvalidOperationException("Enter a valid HTTP or HTTPS document link.");
+                fields["document_type"] = "link";
+                payload["attachments"] = new[] { new Dictionary<string, string> { ["url"] = url.AbsoluteUri } };
+                break;
+        }
+        payload["template_fields"] = fields;
+        return _auth.SendApiJsonBodyAsync(session, HttpMethod.Post,
+            $"collections/{collectionId}/resources", payload, ct);
+    }
+
     internal Task<JsonDocument> GetCollectionResourcesAsync(SchoologyAuthService.Session session, long collectionId, long folderId = 0, CancellationToken ct = default)
     {
         var query = new Dictionary<string, string> { ["start"] = "0", ["limit"] = "200", ["with_attachments"] = "TRUE" };

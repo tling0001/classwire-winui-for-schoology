@@ -1,3 +1,11 @@
+## [2026.10.0-port.135] - 2026-11-14
+
+### Standalone Resources creation
+- Add a permission-gated Create action to the Resources title bar, offering New Collection and New Resource when Schoology's multioptions response allows those operations.
+- Re-check the relevant Schoology POST permission immediately before creating a collection or resource template.
+- Support the documented Page, Discussion, Assignment, and Document Link resource template types, including resource notes and assignment maximum points.
+- Refresh the standalone Resources page after successful creation and keep the title-bar action hidden when permission is denied or unavailable.
+
 ## [2026.10.0-port.134] - 2026-11-12
 
 ### Upcoming assessments
