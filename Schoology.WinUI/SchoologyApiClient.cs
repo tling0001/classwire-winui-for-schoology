@@ -419,6 +419,7 @@ internal sealed class SchoologyApiClient
             ["type"] = resourceType,
             ["resource_notes"] = notes.Trim()
         };
+        if (folderId > 0) payload["folder_id"] = folderId;
 
         switch (type)
         {

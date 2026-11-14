@@ -1060,6 +1060,19 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         indicators.Item1.IsActive = animate;
         indicators.Item1.Visibility = animate ? Visibility.Visible : Visibility.Collapsed;
         indicators.Item2.Visibility = active && !AnimationsEnabled ? Visibility.Visible : Visibility.Collapsed;
+
+        // Once loading finishes, the status becomes ordinary supporting text
+        // (for example, "12 upcoming items"), not a centered loading-state card.
+        if (indicators.Item1.Parent is StackPanel content && content.Parent is Grid host)
+        {
+            host.MinHeight = active ? 128 : 0;
+            host.VerticalAlignment = active ? VerticalAlignment.Stretch : VerticalAlignment.Top;
+            content.Spacing = active ? 10 : 0;
+            content.HorizontalAlignment = active ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+            content.VerticalAlignment = active ? VerticalAlignment.Center : VerticalAlignment.Top;
+            status.HorizontalAlignment = active ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+            status.TextAlignment = active ? TextAlignment.Center : TextAlignment.Left;
+        }
     }
 
     private static void RemoveLoadingStatus(TextBlock status)
@@ -5275,6 +5288,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     await OpenResourceTreeEntryAsync(entry, onBack);
                     return;
                 }
+                if (onSelect is null)
+                {
+                    await OpenResourceFolderAsync(entry, contextKind, contextId, onBack);
+                    return;
+                }
                 if (expanded)
                 {
                     expanded = false;
@@ -5465,19 +5483,25 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         catch (Exception ex) { await ShowApiErrorAsync("Unable to create resource collection", ex.Message); }
     }
 
-    private async Task ShowResourceTemplateComposerAsync(SchoologyAuthService.Session session, string initialType = "Page")
+    private async Task ShowResourceTemplateComposerAsync(
+        SchoologyAuthService.Session session, string initialType = "Page",
+        long? preferredCollectionId = null, long folderId = 0, Action? onCreated = null)
     {
-        var collections = _resourceCreatableCollections.OrderBy(pair => pair.Value, StringComparer.CurrentCultureIgnoreCase)
+        var availableCollections = _resourceCreatableCollections.OrderBy(pair => pair.Value, StringComparer.CurrentCultureIgnoreCase)
             .Select(pair => new ResourceCreateCollectionOption(pair.Key, pair.Value)).ToArray();
+        var collections = preferredCollectionId is long preferredId
+            ? availableCollections.Where(item => item.Id == preferredId).ToArray()
+            : availableCollections;
         if (collections.Length == 0)
             throw new InvalidOperationException("No resource collection currently allows resource creation.");
 
         var destination = new ComboBox
         {
-            Header = "Save to collection",
+            Header = preferredCollectionId.HasValue ? "Collection" : "Save to collection",
             ItemsSource = collections,
             DisplayMemberPath = nameof(ResourceCreateCollectionOption.Title),
             SelectedIndex = 0,
+            IsEnabled = !preferredCollectionId.HasValue,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
         var type = new ComboBox
@@ -5646,14 +5670,111 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var pointsValue = double.IsFinite(points.Value) ? (int)Math.Clamp(points.Value, 0, 10000) : 100;
             using var created = await _api.CreateResourceTemplateAsync(session, selectedCollection.Id,
                 title.Text.Trim(), apiType, body.Text, notes.Text, link.Text.Trim(), pointsValue,
-                uploadedFileId, videoUrl, embedCode, folderColor.SelectedItem as string ?? "blue", 0);
-            ShowHome("Resources");
+                uploadedFileId, videoUrl, embedCode, folderColor.SelectedItem as string ?? "blue", folderId);
+            if (onCreated is not null) onCreated();
+            else ShowHome("Resources");
         }
         catch (Exception ex) { await ShowApiErrorAsync("Unable to create Schoology resource", ex.Message); }
     }
 
     private static bool IsSafeHttpUrl(string value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var url) && url.Scheme is "http" or "https";
+
+    private async Task OpenResourceFolderAsync(
+        ResourceTreeEntry folder, string contextKind, long contextId, Action? onBack = null)
+    {
+        var session = _session;
+        if (session is null) return;
+        onBack ??= () => ShowHome("Resources");
+
+        var root = new Grid { Margin = new Thickness(24), RowSpacing = 12 };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var header = new Grid { ColumnSpacing = 10 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var backButton = new Button { Content = new SymbolIcon(Symbol.Back), Padding = new Thickness(10) };
+        AutomationProperties.SetName(backButton, "Back to parent folder");
+        AutomationProperties.SetAutomationId(backButton, "ResourceFolderBackButton");
+        backButton.Click += (_, _) => onBack();
+        header.Children.Add(backButton);
+        var title = Text(folder.Title, 22, true);
+        title.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(title, 1);
+        header.Children.Add(title);
+
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var refresh = new Button { Content = new SymbolIcon(Symbol.Refresh), Padding = new Thickness(10) };
+        AutomationProperties.SetName(refresh, "Refresh this folder");
+        AutomationProperties.SetAutomationId(refresh, "ResourceFolderRefreshButton");
+        refresh.Click += async (_, _) => await OpenResourceFolderAsync(folder, contextKind, contextId, onBack);
+        actions.Children.Add(refresh);
+
+        if (folder.CollectionId > 0 && _resourceCreatableCollections.ContainsKey(folder.CollectionId))
+        {
+            var create = new Button { Content = "＋ Create" };
+            AutomationProperties.SetName(create, "Create a resource item or folder in this folder");
+            AutomationProperties.SetAutomationId(create, "ResourceFolderCreateButton");
+            var flyout = new MenuFlyout();
+            var resource = new MenuFlyoutItem { Text = "New Resource Item", Icon = new SymbolIcon(Symbol.Page) };
+            resource.Click += async (_, _) => await ShowResourceTemplateComposerAsync(
+                session, "Page", folder.CollectionId, folder.Id,
+                () => _ = OpenResourceFolderAsync(folder, contextKind, contextId, onBack));
+            var childFolder = new MenuFlyoutItem { Text = "New Folder", Icon = new SymbolIcon(Symbol.NewFolder) };
+            childFolder.Click += async (_, _) => await ShowResourceTemplateComposerAsync(
+                session, "Folder", folder.CollectionId, folder.Id,
+                () => _ = OpenResourceFolderAsync(folder, contextKind, contextId, onBack));
+            flyout.Items.Add(resource);
+            flyout.Items.Add(childFolder);
+            create.Click += (_, _) => flyout.ShowAt(create);
+            actions.Children.Add(create);
+        }
+        Grid.SetColumn(actions, 2);
+        header.Children.Add(actions);
+        root.Children.Add(header);
+
+        var host = new Grid();
+        Grid.SetRow(host, 1);
+        root.Children.Add(host);
+        host.Children.Add(LoadingStatus("Loading folder resources…"));
+
+        _page = "home";
+        _section = "Resources";
+        UpdateTitleBarCreateButton("ResourceFolder", null);
+        if (_sectionFrame is not null) NavigateMainSection(root, "Resources");
+        else Reset(BuildApplicationShell("Resources", root));
+
+        try
+        {
+            var children = await LoadResourceChildrenAsync(folder, contextKind, contextId);
+            host.Children.Clear();
+            if (children.Count == 0)
+            {
+                host.Children.Add(EmptyState("This folder is empty.",
+                    "Create a resource item or child folder to add content here."));
+                return;
+            }
+            Action returnToThisFolder = () => _ = OpenResourceFolderAsync(folder, contextKind, contextId, onBack);
+            host.Children.Add(new ScrollViewer
+            {
+                Content = BuildResourceEntriesView(
+                    [("Resources", children)], contextKind, contextId, returnToThisFolder),
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Background = new SolidColorBrush(Colors.Transparent)
+            });
+        }
+        catch (Exception ex)
+        {
+            host.Children.Clear();
+            var error = new StackPanel { Spacing = 8 };
+            error.Children.Add(EmptyState("Unable to load this folder.", ex.Message));
+            error.Children.Add(Action("Retry", async (_, _) =>
+                await OpenResourceFolderAsync(folder, contextKind, contextId, onBack)));
+            host.Children.Add(error);
+        }
+    }
 
     private Grid BuildResourcesPage()
     {

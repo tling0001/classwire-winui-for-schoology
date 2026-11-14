@@ -1,3 +1,23 @@
+## [2026.10.0-port.141] - 2026-11-14
+
+### Nested resource folders
+- Open resource collections and folders as dedicated navigable folder pages, with a Back action returning to the immediately containing level.
+- Keep nested folder loading on the same authenticated collection context and preserve the parent path when opening resources or refreshing.
+- Add permission-aware New Resource Item and New Folder actions inside writable folders.
+- Forward the active folder ID for both resource items and child folders so newly created content is placed at the current level.
+
+### Build
+- Increment the WinUI assembly and package version to `2026.10.0-port.141`.
+
+## [2026.10.0-port.140] - 2026-11-14
+
+### Upcoming status text
+- Restore the normal supporting-text layout after upcoming items finish loading, so the `<number> upcoming items` count remains readable above the list.
+- Keep the centered spinner-and-caption composition while loading, including the reduced-motion static indicator.
+
+### Build
+- Increment the WinUI assembly and package version to `2026.10.0-port.140`.
+
 ## [2026.10.0-port.139] - 2026-11-14
 
 ### Consistent centered loading states
