@@ -5272,6 +5272,39 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var item = new ListViewItem { Content = row, Tag = entry,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(0) };
             AutomationProperties.SetName(item, entry.Title);
+            AutomationProperties.SetAutomationId(item, $"ResourceEntry_{entry.Kind}_{entry.Id}");
+            if (entry.Kind is "resource" or "folder")
+            {
+                var menu = new MenuFlyout();
+                var edit = new MenuFlyoutItem { Text = "Edit", Icon = new SymbolIcon(Symbol.Edit) };
+                AutomationProperties.SetName(edit, $"Edit {entry.Title}");
+                edit.Click += async (_, _) => await ShowResourceTemplateEditorAsync(entry, onBack);
+                menu.Items.Add(edit);
+                if (entry.Kind == "folder" && entry.CollectionId > 0 &&
+                    _resourceCreatableCollections.ContainsKey(entry.CollectionId))
+                {
+                    var createResource = new MenuFlyoutItem
+                    {
+                        Text = "New Resource Item",
+                        Icon = new SymbolIcon(Symbol.Page)
+                    };
+                    createResource.Click += async (_, _) => await ShowResourceTemplateComposerAsync(
+                        _session!, "Page", entry.CollectionId, entry.Id,
+                        () => onBack?.Invoke());
+                    var createFolder = new MenuFlyoutItem
+                    {
+                        Text = "New Folder",
+                        Icon = new SymbolIcon(Symbol.NewFolder)
+                    };
+                    createFolder.Click += async (_, _) => await ShowResourceTemplateComposerAsync(
+                        _session!, "Folder", entry.CollectionId, entry.Id,
+                        () => onBack?.Invoke());
+                    menu.Items.Add(new MenuFlyoutSeparator());
+                    menu.Items.Add(createResource);
+                    menu.Items.Add(createFolder);
+                }
+                item.ContextFlyout = menu;
+            }
             wrapper.Children.Add(item);
             item.Tapped += async (_, args) =>
             {
@@ -5288,7 +5321,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                     await OpenResourceTreeEntryAsync(entry, onBack);
                     return;
                 }
-                if (onSelect is null)
+                if (entry.Kind == "collection")
                 {
                     await OpenResourceFolderAsync(entry, contextKind, contextId, onBack);
                     return;
@@ -5774,6 +5807,98 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 await OpenResourceFolderAsync(folder, contextKind, contextId, onBack)));
             host.Children.Add(error);
         }
+    }
+
+    private async Task ShowResourceTemplateEditorAsync(ResourceTreeEntry entry, Action? onRefresh)
+    {
+        var session = _session;
+        if (session is null || entry.CollectionId <= 0 || entry.Id <= 0) return;
+        var raw = entry.Data;
+        var fields = raw.ValueKind == JsonValueKind.Object &&
+            raw.TryGetProperty("template_fields", out var templateFields) &&
+            templateFields.ValueKind == JsonValueKind.Object ? templateFields : default;
+        var title = new TextBox
+        {
+            Header = "Title",
+            Text = entry.Title,
+            MaxLength = 180,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetAutomationId(title, "ResourceEditTitle");
+        var notes = new TextBox
+        {
+            Header = "Resource notes",
+            Text = ProfileValue(raw, "resource_notes", "resourceNotes") ?? string.Empty,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 60,
+            MaxHeight = 110
+        };
+        AutomationProperties.SetAutomationId(notes, "ResourceEditNotes");
+        TextBox? body = null;
+        if (fields.ValueKind == JsonValueKind.Object && fields.TryGetProperty("body", out var bodyValue))
+        {
+            body = new TextBox
+            {
+                Header = "Body",
+                Text = bodyValue.ValueKind == JsonValueKind.String ? bodyValue.GetString() ?? string.Empty : bodyValue.ToString(),
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap,
+                MinHeight = 110,
+                MaxHeight = 220
+            };
+            AutomationProperties.SetAutomationId(body, "ResourceEditBody");
+        }
+        var folderColor = new ComboBox
+        {
+            Header = "Folder color",
+            ItemsSource = new[] { "blue", "pink", "orange", "purple", "yellow", "red", "gray", "black", "green" },
+            SelectedItem = FolderColorName(raw),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetAutomationId(folderColor, "ResourceEditFolderColor");
+
+        var content = new StackPanel { Spacing = 12, MinWidth = 340 };
+        content.Children.Add(title);
+        if (body is not null) content.Children.Add(body);
+        content.Children.Add(notes);
+        if (entry.Kind == "folder") content.Children.Add(folderColor);
+        content.Children.Add(new TextBlock
+        {
+            Text = "Existing attachments and template fields are retained when you save.",
+            TextWrapping = TextWrapping.Wrap,
+            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+            Foreground = ThemeBrush("TextFillColorSecondaryBrush")
+        });
+        var dialog = new ContentDialog
+        {
+            Title = entry.Kind == "folder" ? "Edit Folder" : "Edit Resource",
+            Content = new ScrollViewer { Content = content, MaxHeight = 520 },
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _root.XamlRoot,
+            RequestedTheme = _highContrastEnabled ? ElementTheme.Default : _root.ActualTheme
+        };
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true;
+            dialog.IsPrimaryButtonEnabled = false;
+            try
+            {
+                using var updated = await _api.UpdateResourceTemplateAsync(
+                    session, entry.CollectionId, entry.Id, raw,
+                    title.Text, body?.Text, notes.Text, folderColor.SelectedItem as string ?? FolderColorName(raw));
+                dialog.Hide();
+                onRefresh?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                dialog.IsPrimaryButtonEnabled = true;
+                await ShowApiErrorAsync("Unable to edit Schoology resource", ex.Message);
+            }
+        };
+        await dialog.ShowAsync();
     }
 
     private Grid BuildResourcesPage()

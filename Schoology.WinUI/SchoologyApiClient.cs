@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Web;
 
 namespace Schoology.WinUI;
@@ -396,6 +397,105 @@ internal sealed class SchoologyApiClient
     internal Task<JsonDocument> CreateResourceCollectionAsync(
         SchoologyAuthService.Session session, string title, CancellationToken ct = default) =>
         _auth.SendApiJsonBodyAsync(session, HttpMethod.Post, "collections", new { title }, ct);
+
+    internal async Task<JsonDocument> UpdateResourceTemplateAsync(
+        SchoologyAuthService.Session session, long collectionId, long resourceId,
+        JsonElement existingResource, string title, string? body, string notes,
+        string folderColor, CancellationToken ct = default)
+    {
+        if (collectionId <= 0 || resourceId <= 0 || string.IsNullOrWhiteSpace(title))
+            throw new InvalidOperationException("The resource details are invalid.");
+        var path = $"/v1/collections/{collectionId}/resources/{resourceId}";
+        using var permissions = await GetPostPermissionsAsync(session, [path], ct);
+        if (!ResourcePermissionAllowsVerb(permissions, path, "put"))
+            throw new InvalidOperationException("Schoology does not currently grant permission to edit this resource.");
+
+        var payload = new Dictionary<string, object?>();
+        if (existingResource.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in existingResource.EnumerateObject())
+            {
+                if (property.Name is "id" or "collection_id" or "uid" or "created" or "last_updated" or "links")
+                    continue;
+                if (property.Name is "attachments" or "attachment") continue;
+                payload[property.Name] = property.Value.Clone();
+            }
+        }
+        payload["title"] = title.Trim();
+        payload["resource_notes"] = notes.Trim();
+        if (existingResource.ValueKind == JsonValueKind.Object &&
+            existingResource.TryGetProperty("template_fields", out var fields) &&
+            fields.ValueKind == JsonValueKind.Object)
+        {
+            var updatedFields = new Dictionary<string, object?>();
+            foreach (var property in fields.EnumerateObject())
+                updatedFields[property.Name] = property.Name == "body" && body is not null
+                    ? body : property.Value.Clone();
+            payload["template_fields"] = updatedFields;
+        }
+        var resourceType = existingResource.ValueKind == JsonValueKind.Object &&
+            existingResource.TryGetProperty("type", out var resourceTypeValue)
+            ? resourceTypeValue.GetString() : null;
+        if (string.Equals(resourceType, "folder", StringComparison.OrdinalIgnoreCase))
+        {
+            var allowedColors = new[] { "blue", "pink", "orange", "purple", "yellow", "red", "gray", "black", "green" };
+            payload["color"] = allowedColors.Contains(folderColor, StringComparer.Ordinal) ? folderColor : "blue";
+        }
+        if (existingResource.ValueKind == JsonValueKind.Object &&
+            (existingResource.TryGetProperty("attachments", out var attachments) ||
+             existingResource.TryGetProperty("attachment", out attachments)))
+        {
+            payload["attachments"] = ResourceAttachmentPutValue(attachments);
+        }
+        return await _auth.SendApiJsonBodyAsync(session, HttpMethod.Put,
+            $"collections/{collectionId}/resources/{resourceId}", payload, ct);
+    }
+
+    private static bool ResourcePermissionAllowsVerb(JsonDocument permissions, string path, string verb)
+    {
+        var root = permissions.RootElement;
+        if (!root.TryGetProperty("response", out var rows) && !root.TryGetProperty("responses", out rows))
+            return false;
+        if (rows.ValueKind != JsonValueKind.Array) return false;
+        foreach (var row in rows.EnumerateArray())
+        {
+            var location = row.TryGetProperty("location", out var locationValue) ? locationValue.GetString() : null;
+            if (!string.Equals(location, path, StringComparison.Ordinal)) continue;
+            var body = row.TryGetProperty("body", out var bodyValue) ? bodyValue.ToString() : string.Empty;
+            return Regex.IsMatch(body, $@"\b{Regex.Escape(verb)}\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+        return false;
+    }
+
+    private static object ResourceAttachmentPutValue(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Array)
+            return value.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.Object)
+                .Select(item => item.EnumerateObject().ToDictionary(property => property.Name,
+                    property => (object?)property.Value.Clone())).ToList();
+        var result = new List<Dictionary<string, object?>>();
+        if (value.ValueKind != JsonValueKind.Object) return value.Clone();
+        foreach (var group in value.EnumerateObject())
+        {
+            if (group.Value.ValueKind != JsonValueKind.Object) continue;
+            foreach (var listOrItem in group.Value.EnumerateObject())
+            {
+                var values = listOrItem.Value.ValueKind == JsonValueKind.Array
+                    ? listOrItem.Value.EnumerateArray().ToArray()
+                    : listOrItem.Value.ValueKind == JsonValueKind.Object ? [listOrItem.Value] : [];
+                foreach (var attachment in values.Where(item => item.ValueKind == JsonValueKind.Object))
+                {
+                    var entry = attachment.EnumerateObject().ToDictionary(property => property.Name,
+                        property => (object?)property.Value.Clone());
+                    if (entry.TryGetValue("embed_code", out var embedCode) && !entry.ContainsKey("embed"))
+                        entry["embed"] = embedCode;
+                    result.Add(entry);
+                }
+            }
+        }
+        return result.Count == 0 ? value.Clone() : result;
+    }
 
     internal Task<JsonDocument> CreateResourceTemplateAsync(
         SchoologyAuthService.Session session, long collectionId, string title, string type,

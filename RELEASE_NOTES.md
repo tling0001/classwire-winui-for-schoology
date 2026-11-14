@@ -1,3 +1,15 @@
+## [2026.10.0-port.142] - 2026-11-14
+
+### Resource navigation and editing
+- Keep each collection as a navigable destination while restoring recursively expandable inline folders within its contents.
+- Add folder context actions for creating child resource items and folders.
+- Add a native WinUI edit dialog for resource and folder titles, notes, page/discussion/assignment body content, and folder color.
+- Preserve the existing template fields and attachment IDs on update; verify PUT permission with Schoology multioptions before saving.
+- Keep folder navigation, loading, and refresh behavior native to the collection page.
+
+### Build
+- Increment WinUI assembly and package version to `2026.10.0-port.142`.
+
 ## [2026.10.0-port.141] - 2026-11-14
 
 ### Nested resource folders
