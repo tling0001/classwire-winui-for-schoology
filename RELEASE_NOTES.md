@@ -1,3 +1,14 @@
+## [2026.10.0-port.145] - 2026-11-14
+
+### Resource attachment opening parity
+- Extend the shared attachment reader to recognize external-tool/LTI records as their own attachment kind rather than misclassifying them as ordinary links.
+- Launch external tools in the authenticated Schoology WebView with LTI handling; keep ordinary links and non-playable video URLs on the external-link path.
+- Route resource collection items through the same normalized attachment dispatcher used by activity, message, page, and assignment attachments.
+- Open a single resource attachment directly and provide a native, accessible attachment chooser when a resource contains multiple attachments.
+- Preserve original-file URLs separately from converted previews, and recognize the expanded Schoology URL aliases for original and converted file paths.
+- Keep the existing authenticated download and native preview/media-opening flows.
+- Bump WinUI assembly, installer, and manifest versions to `2026.10.0-port.145`.
+
 ## [2026.10.0-port.144] - 2026-11-14
 
 ### Attachment metadata and resource link icons

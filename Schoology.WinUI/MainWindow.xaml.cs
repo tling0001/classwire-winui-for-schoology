@@ -2873,8 +2873,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             await ShowApiErrorAsync("Unable to import resources", importError);
     }
 
-    private async Task ShowAssignmentAttachmentsDialogAsync(
-        IReadOnlyList<(JsonElement Item, string Kind)> attachments, long sectionId)
+    private Task ShowAssignmentAttachmentsDialogAsync(
+        IReadOnlyList<(JsonElement Item, string Kind)> attachments, long sectionId) =>
+        ShowAttachmentItemsDialogAsync(attachments, () => ReturnFromAssignment(sectionId),
+            "Assignment attachments", "AssignmentAttachmentsList");
+
+    private async Task ShowAttachmentItemsDialogAsync(
+        IReadOnlyList<(JsonElement Item, string Kind)> attachments, Action onBack,
+        string title, string automationId)
     {
         var list = new ListView
         {
@@ -2883,14 +2889,14 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             MaxHeight = 480
         };
-        AutomationProperties.SetAutomationId(list, "AssignmentAttachmentsList");
+        AutomationProperties.SetAutomationId(list, automationId);
         JsonElement selectedAttachment = default;
         string? selectedAttachmentKind = null;
         ContentDialog dialog = null!;
         foreach (var attachment in attachments)
         {
             var name = ProfileValue(attachment.Item, "filename", "fileName", "file_title", "fileTitle",
-                "title", "name", "link_title", "linkTitle") ?? "Attachment";
+                "title", "name", "link_title", "linkTitle", "tool_name", "toolName") ?? "Attachment";
             var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 7, 8, 7) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -2902,7 +2908,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             row.Children.Add(label);
             var item = new ListViewItem { Content = row, Tag = attachment.Item,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            AutomationProperties.SetName(item, $"Open attachment {name}");
+            AutomationProperties.SetName(item, $"Open {attachment.Kind.Replace('_', ' ')} attachment {name}");
             item.Tapped += (_, _) =>
             {
                 selectedAttachment = attachment.Item.Clone();
@@ -2913,7 +2919,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         }
         dialog = new ContentDialog
         {
-            Title = "Assignment attachments",
+            Title = title,
             Content = list,
             CloseButtonText = "Close",
             XamlRoot = _root.XamlRoot,
@@ -2922,12 +2928,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         await dialog.ShowAsync();
         if (selectedAttachment.ValueKind != JsonValueKind.Undefined && selectedAttachmentKind is not null)
         {
-            try
-            {
-                await OpenAttachmentAsync(selectedAttachment, selectedAttachmentKind,
-                    () => ReturnFromAssignment(sectionId));
-            }
-            catch (Exception ex) { await ShowApiErrorAsync("Unable to open assignment attachment", ex.Message); }
+            try { await OpenAttachmentAsync(selectedAttachment, selectedAttachmentKind, onBack); }
+            catch (Exception ex) { await ShowApiErrorAsync("Unable to open attachment", ex.Message); }
         }
     }
 
@@ -4616,12 +4618,15 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             var type = (ProfileValue(source, "attachment_type", "attachmentType", "type", "file_type", "fileType") ?? "")
                 .Trim().ToLowerInvariant();
             var fileUrl = ProfileValue(source, "file_download_url", "fileDownloadURL", "download_path",
-                "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url") ?? "";
+                "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url",
+                "original_download_url", "originalDownloadURL", "original_url", "originalUrl") ?? "";
             var convertedUrl = ProfileValue(source, "file_converted_download_url", "fileConvertedDownloadURL",
-                "converted_download_path", "convertedDownloadPath") ?? "";
+                "converted_download_path", "convertedDownloadPath", "converted_download_url", "convertedDownloadURL") ?? "";
             var linkUrl = ProfileValue(source, "link_url", "linkURL", "linkUrl", "href", "web_url", "webUrl") ?? "";
             var embedCode = ProfileValue(source, "embed_code", "embedCode") ?? "";
-            var launchUrl = ProfileValue(source, "launch_url", "launchUrl", "tool_url", "toolUrl") ?? "";
+            var launchUrl = ProfileValue(source, "launch_url", "launchUrl", "launch_uri", "launchURI",
+                "tool_url", "toolUrl") ?? "";
+            var videoUrl = ProfileValue(source, "video_url", "videoURL", "videoUrl") ?? "";
             var resolvedKind = kind.Trim().ToLowerInvariant();
             if (resolvedKind.Length == 0)
             {
@@ -4642,15 +4647,18 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 "contentLength", "filesize_bytes") ?? "";
             var thumbnail = ProfileValue(source, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url",
                 "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url") ?? "";
-            var id = ProfileValue(source, "id", "fid", "file_id", "fileId") ?? "";
+            var id = ProfileValue(source, "attachment_id", "attachmentId", "id", "fid", "file_id", "fileId") ?? "";
             var metadataId = ProfileValue(source, "file_metadata_id", "fileMetadataId", "metadata_id", "metadataId") ?? "";
             var conversion = ProfileValue(source, "converted_status", "convertedStatus",
-                "file_converted_status", "fileConvertedStatus") ?? "";
-            var url = resolvedKind == "link" ? linkUrl :
-                fileUrl.Length > 0 ? fileUrl : convertedUrl.Length > 0 ? convertedUrl :
-                ProfileValue(source, "url", "href", "video_url", "videoURL", "videoUrl") ?? "";
+                "file_converted_status", "fileConvertedStatus", "conversion_status", "conversionStatus") ?? "";
+            var originalDownloadUrl = resolvedKind switch
+            {
+                "video" => videoUrl.Length > 0 ? videoUrl : ProfileValue(source, "url", "href") ?? "",
+                "file" => fileUrl.Length > 0 ? fileUrl : ProfileValue(source, "url", "href") ?? "",
+                _ => ""
+            };
             return new NormalizedSchoologyAttachment(id, metadataId, resolvedKind, title, filename, mime,
-                size, url, convertedUrl, conversion, thumbnail, linkUrl, embedCode, launchUrl, source.Clone());
+                size, originalDownloadUrl, convertedUrl, conversion, thumbnail, linkUrl, embedCode, launchUrl, source.Clone());
         }
     }
 
@@ -6152,10 +6160,16 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
             var type = (ProfileValue(entry.Data, "type", "resource_type", "document_type",
                 "documentType", "template_type", "templateType") ?? "").ToLowerInvariant();
-            var file = FirstFileAttachment(entry.Data);
-            if (file.ValueKind == JsonValueKind.Object)
+            var resourceAttachments = ReadAttachmentItems(entry.Data);
+            if (resourceAttachments.Count == 1)
             {
-                await ShowAttachmentOptionsAsync(file, onBack);
+                await OpenAttachmentAsync(resourceAttachments[0].Item, resourceAttachments[0].Kind, onBack);
+                return;
+            }
+            if (resourceAttachments.Count > 1)
+            {
+                await ShowAttachmentItemsDialogAsync(resourceAttachments, onBack,
+                    "Resource attachments", "ResourceAttachmentsList");
                 return;
             }
             var url = ProfileValue(entry.Data, "web_url", "webUrl", "launch_url", "launchUrl",
@@ -9897,28 +9911,39 @@ try {{
             var declaredType = ProfileValue(node, "type", "attachment_type", "attachmentType")?.ToLowerInvariant() ?? "";
             var mime = ProfileValue(node, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ?? "";
             var fileUrl = ProfileValue(node, "file_download_url", "fileDownloadURL", "download_path",
-                "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url");
+                "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url",
+                "original_download_url", "originalDownloadURL", "original_url", "originalUrl");
             var convertedUrl = ProfileValue(node, "file_converted_download_url", "fileConvertedDownloadURL",
-                "converted_download_path", "convertedDownloadPath");
-            var url = ProfileValue(node, "url", "href", "link_url", "linkURL", "linkUrl", "video_url", "videoURL", "videoUrl");
-            var thumbnail = ProfileValue(node, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
+                "converted_download_path", "convertedDownloadPath", "converted_download_url", "convertedDownloadURL");
+            var launchUrl = ProfileValue(node, "launch_url", "launchUrl", "launch_uri", "launchURI",
+                "tool_url", "toolUrl");
+            var url = ProfileValue(node, "url", "href", "link_url", "linkURL", "linkUrl",
+                "video_url", "videoURL", "videoUrl");
+            var thumbnail = ProfileValue(node, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url",
+                "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
             var itemKind = kind;
             if (itemKind == "container")
             {
-                if (declaredType.Contains("file") || declaredType is "image" or "photo" ||
+                if (declaredType.Contains("external") || declaredType.Contains("lti") || launchUrl is not null)
+                    itemKind = "external_tool";
+                else if (declaredType.Contains("embed") || ProfileValue(node, "embed_code", "embedCode") is not null)
+                    itemKind = "embed";
+                else if (declaredType.Contains("video") || ProfileValue(node, "video_url", "videoURL", "videoUrl") is not null)
+                    itemKind = "video";
+                else if (declaredType.Contains("link") || ProfileValue(node, "link_url", "linkURL", "linkUrl", "href") is not null)
+                    itemKind = "link";
+                else if (declaredType.Contains("file") || declaredType is "image" or "photo" ||
                     fileUrl is not null || convertedUrl is not null ||
                     mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                     itemKind = "file";
-                else if (declaredType.Contains("embed") || ProfileValue(node, "embed_code", "embedCode") is not null) itemKind = "embed";
-                else if (declaredType.Contains("video")) itemKind = "video";
-                else if (declaredType.Contains("link") || url is not null) itemKind = "link";
+                else if (url is not null) itemKind = "link";
                 else if (thumbnail is not null) itemKind = "file";
             }
 
-            if (itemKind is "file" or "link" or "video" or "embed")
+            if (itemKind is "file" or "link" or "video" or "embed" or "external_tool")
             {
-                var key = string.Join("|", ProfileValue(node, "id", "fid", "file_id", "fileId") ?? "",
-                    fileUrl ?? convertedUrl ?? url ?? thumbnail ?? "",
+                var key = string.Join("|", ProfileValue(node, "attachment_id", "attachmentId", "id", "fid", "file_id", "fileId") ?? "",
+                    fileUrl ?? convertedUrl ?? launchUrl ?? url ?? thumbnail ?? "",
                     ProfileValue(node, "filename", "fileName", "title", "name") ?? "");
                 if (key != "||" && seen.Add(itemKind + "|" + key))
                     result.Add((node.Clone(), itemKind));
@@ -9942,7 +9967,8 @@ try {{
                     case "embeds":
                     case "embed": Visit(property.Value, "embed", depth + 1); break;
                     case "externaltools":
-                    case "externaltool": Visit(property.Value, "link", depth + 1); break;
+                    case "externaltool":
+                    case "tools": Visit(property.Value, "external_tool", depth + 1); break;
                     case "annotationfiles":
                     case "images":
                     case "image":
@@ -9971,11 +9997,32 @@ try {{
     {
         if (kind == "link")
         {
-            var rawUrl = ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url",
-                "launch_url", "launchUrl");
+            var rawUrl = ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url");
             if (string.IsNullOrWhiteSpace(rawUrl))
                 throw new InvalidOperationException("Schoology did not provide a URL for this link.");
             await OpenExternalLinkAsync(rawUrl);
+            return;
+        }
+        if (kind == "external_tool")
+        {
+            var launchUrl = ProfileValue(attachment, "launch_url", "launchUrl", "launch_uri", "launchURI",
+                "tool_url", "toolUrl", "url", "web_url", "webUrl", "href");
+            if (string.IsNullOrWhiteSpace(launchUrl))
+                throw new InvalidOperationException("Schoology did not provide a launch URL for this external tool.");
+            await OpenSharedWebViewAsync(launchUrl,
+                ProfileValue(attachment, "tool_name", "toolName", "title", "name") ?? "External Tool",
+                allowLtiExternal: true, onBack: onBack);
+            return;
+        }
+        if (kind == "embed")
+        {
+            var embedCode = ProfileValue(attachment, "embed_code", "embedCode");
+            var embeddedUrl = ExtractEmbeddedContentUrls(embedCode).FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(embeddedUrl))
+                throw new InvalidOperationException("Schoology did not provide a secure embedded content URL.");
+            await OpenSharedWebViewAsync(embeddedUrl,
+                ProfileValue(attachment, "title", "name") ?? "Embedded content",
+                allowLtiExternal: true, onBack: onBack);
             return;
         }
         if (kind == "video")
@@ -10044,7 +10091,7 @@ try {{
         // route audio/video through that conversion: keep the original stream.
         var convertedReady = !IsPlayableMedia(name, mime, originalUrl) &&
             !string.IsNullOrWhiteSpace(convertedUrl) &&
-            (convertedStatus.Length == 0 || convertedStatus is "success" or "converted" or "1");
+            (convertedStatus.Length == 0 || convertedStatus is "success" or "converted" or "complete" or "completed" or "ready" or "1" or "true");
         if (!IsPlayableMedia(name, mime, originalUrl) && !string.IsNullOrWhiteSpace(originalUrl) &&
             await TryOpenDocumentAttachmentAsync(originalUrl, onBack)) return;
         if (string.IsNullOrWhiteSpace(originalUrl))
@@ -10107,14 +10154,19 @@ try {{
                 "title", "name", "link_title", "linkTitle") ?? (kind == "link" ? "Open link" : "Attachment");
             var mime = ProfileValue(attachment, "filemime", "fileMIME", "mime", "mime_type", "mimeType") ?? "";
             var originalUrl = ProfileValue(attachment, "file_download_url", "fileDownloadURL", "download_path",
-                "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url");
+                "downloadPath", "download_url", "downloadUrl", "resolveDownloadUrl", "resolve_download_url",
+                "original_download_url", "originalDownloadURL", "original_url", "originalUrl");
             var convertedUrl = ProfileValue(attachment, "file_converted_download_url", "fileConvertedDownloadURL",
-                "converted_download_path", "convertedDownloadPath");
+                "converted_download_path", "convertedDownloadPath", "converted_download_url", "convertedDownloadURL");
             var thumbnail = ProfileValue(attachment, "thumbnail", "thumbnail_url", "thumbnailUrl", "preview_url", "previewUrl", "fileThumbnailURL", "file_thumbnail_url", "videoThumbnailURL", "video_thumbnail_url");
-            var url = kind == "link"
-                ? ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url",
-                    "launch_url", "launchUrl")
-                : originalUrl ?? convertedUrl ?? ProfileValue(attachment, "url", "href", "video_url", "videoURL", "videoUrl") ?? thumbnail;
+            var url = kind switch
+            {
+                "link" => ProfileValue(attachment, "link_url", "linkURL", "linkUrl", "href", "url"),
+                "external_tool" => ProfileValue(attachment, "launch_url", "launchUrl", "launch_uri", "launchURI",
+                    "tool_url", "toolUrl", "url", "web_url", "webUrl"),
+                "video" => ProfileValue(attachment, "video_url", "videoURL", "videoUrl", "url", "href"),
+                _ => originalUrl ?? convertedUrl ?? ProfileValue(attachment, "url", "href") ?? thumbnail
+            };
 
             if (kind == "embed" && ProfileValue(attachment, "embed_code", "embedCode") is { Length: > 0 } embedCode)
             {
@@ -10196,13 +10248,13 @@ try {{
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.Children.Add(new FontIcon
             {
-                Glyph = kind == "link" ? ((char)0xE71B).ToString() : MaterialGlyph(attachment),
+                Glyph = kind is "link" or "external_tool" ? ((char)0xE71B).ToString() : MaterialGlyph(attachment),
                 FontSize = 18,
                 Foreground = ThemeBrush("SchoologyBlueBrush")
             });
             var label = new StackPanel { Spacing = 2 };
             label.Children.Add(Text(name, 13, true));
-            label.Children.Add(Text(kind == "link" ? "Link" : string.IsNullOrWhiteSpace(mime) ? "File" : mime.ToUpperInvariant(), 11));
+            label.Children.Add(Text(kind switch { "link" => "Link", "video" => "Video", "embed" => "Embedded content", "external_tool" => "External tool", _ => string.IsNullOrWhiteSpace(mime) ? "File" : mime.ToUpperInvariant() }, 11));
             Grid.SetColumn(label, 1);
             row.Children.Add(label);
             var button = new Button
@@ -10218,7 +10270,7 @@ try {{
             {
                 await OpenAttachmentAsync(attachment, kind, onBack);
             };
-            AutomationProperties.SetName(button, kind == "link" ? $"Open link {name}" : $"Open attachment {name}");
+            AutomationProperties.SetName(button, kind switch { "link" => $"Open link {name}", "external_tool" => $"Open external tool {name}", "video" => $"Open video {name}", "embed" => $"Open embedded content {name}", _ => $"Open attachment {name}" });
             panel.Children.Add(button);
         }
         return panel;
