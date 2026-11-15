@@ -1,3 +1,14 @@
+## [2026.10.0-port.146] - 2026-11-15
+
+### Composer formatting state and Resources commands
+- Reflect the current Bold, Italic, Underline, Bulleted list, and Numbered list selection in every native rich-text composer toolbar.
+- Use the native WinUI AccentButtonStyle for active formatting options and return to DefaultButtonStyle when the option is inactive; refresh the states when the editor selection or text changes.
+- Put the Resources root refresh and Create commands in the page header, aligned with the nested-folder header actions.
+- Use the same standard refresh and accent Create button treatments at the Resources root and inside folders, while retaining permission-gated visibility and folder-scoped creation.
+
+### Build
+- Increment the WinUI assembly and installer version to 2026.10.0-port.146.
+
 ## [2026.10.0-port.145] - 2026-11-14
 
 ### Resource attachment opening parity

@@ -56,6 +56,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
     private Button? _titleBarCreateButton;
     private string _titleBarCreateContext = string.Empty;
     private bool _resourceCanCreateCollection;
+    private Button? _resourcePageCreateButton;
     private readonly Dictionary<long, string> _resourceCreatableCollections = new();
     private Func<Task>? _titleBarCreateAction;
     private readonly SchoologyAuthService _auth = new(false);
@@ -3019,13 +3020,31 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             selection.CharacterFormat = format;
             editor.Focus(FocusState.Programmatic);
         }
-        Button AddFormattingButton(string name, string glyph, Action apply)
+        var formatButtons = new Dictionary<string, Button>(StringComparer.Ordinal);
+        void UpdateFormattingButtonStates()
+        {
+            var character = editor.Document.Selection.CharacterFormat;
+            var listType = editor.Document.Selection.ParagraphFormat.ListType;
+            SetFormatState("Bold", character.Bold == Microsoft.UI.Text.FormatEffect.On);
+            SetFormatState("Italic", character.Italic == Microsoft.UI.Text.FormatEffect.On);
+            SetFormatState("Underline", character.Underline != Microsoft.UI.Text.UnderlineType.None);
+            SetFormatState("Bulleted list", listType == Microsoft.UI.Text.MarkerType.Bullet);
+            SetFormatState("Numbered list", listType == Microsoft.UI.Text.MarkerType.Arabic);
+        }
+        void SetFormatState(string name, bool isActive)
+        {
+            if (!formatButtons.TryGetValue(name, out var button)) return;
+            button.Style = (Style)Application.Current.Resources[isActive ? "AccentButtonStyle" : "DefaultButtonStyle"];
+            AutomationProperties.SetName(button, isActive ? name + " enabled" : name);
+        }
+        Button AddFormattingButton(string name, string glyph, Action apply, bool isToggle = false)
         {
             var button = new Button
             {
                 Width = 40,
                 Height = 40,
                 Padding = new Thickness(8),
+                Style = (Style)Application.Current.Resources["DefaultButtonStyle"],
                 Content = new FontIcon
                 {
                     Glyph = glyph,
@@ -3036,20 +3055,27 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             AutomationProperties.SetName(button, name);
             AutomationProperties.SetAutomationId(button, "TextSubmissionFormat" + name.Replace(" ", string.Empty));
             ToolTipService.SetToolTip(button, name);
-            button.Click += (_, _) => apply();
+            if (isToggle) formatButtons[name] = button;
+            button.Click += (_, _) =>
+            {
+                apply();
+                UpdateFormattingButtonStates();
+            };
             toolbar.Children.Add(button);
             return button;
         }
+        editor.SelectionChanged += (_, _) => UpdateFormattingButtonStates();
+        editor.TextChanged += (_, _) => UpdateFormattingButtonStates();
 
         AddFormattingButton("Bold", "\uE8DD", () => ApplyInlineFormat(format =>
             format.Bold = format.Bold == Microsoft.UI.Text.FormatEffect.On
-                ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On));
+                ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On), true);
         AddFormattingButton("Italic", "\uE8DB", () => ApplyInlineFormat(format =>
             format.Italic = format.Italic == Microsoft.UI.Text.FormatEffect.On
-                ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On));
+                ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On), true);
         AddFormattingButton("Underline", "\uE8DC", () => ApplyInlineFormat(format =>
             format.Underline = format.Underline == Microsoft.UI.Text.UnderlineType.None
-                ? Microsoft.UI.Text.UnderlineType.Single : Microsoft.UI.Text.UnderlineType.None));
+                ? Microsoft.UI.Text.UnderlineType.Single : Microsoft.UI.Text.UnderlineType.None), true);
         AddFormattingButton("Bulleted list", "\uE8FD", () =>
         {
             var paragraph = editor.Document.Selection.ParagraphFormat;
@@ -3057,7 +3083,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 ? Microsoft.UI.Text.MarkerType.None : Microsoft.UI.Text.MarkerType.Bullet;
             editor.Document.Selection.ParagraphFormat = paragraph;
             editor.Focus(FocusState.Programmatic);
-        });
+        }, true);
         AddFormattingButton("Numbered list", "\uE8F7", () =>
         {
             var paragraph = editor.Document.Selection.ParagraphFormat;
@@ -3065,7 +3091,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
                 ? Microsoft.UI.Text.MarkerType.None : Microsoft.UI.Text.MarkerType.Arabic;
             editor.Document.Selection.ParagraphFormat = paragraph;
             editor.Focus(FocusState.Programmatic);
-        });
+        }, true);
         AddFormattingButton("Clear formatting", "\uE75C", () =>
         {
             ApplyInlineFormat(format =>
@@ -3262,40 +3288,65 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             selection.CharacterFormat = format;
             editor.Focus(FocusState.Programmatic);
         }
-        void AddFormatButton(string name, string glyph, Action action)
+        var formatButtons = new Dictionary<string, Button>(StringComparer.Ordinal);
+        void UpdateFormattingButtonStates()
+        {
+            var character = editor.Document.Selection.CharacterFormat;
+            var listType = editor.Document.Selection.ParagraphFormat.ListType;
+            SetFormatState("Bold", character.Bold == Microsoft.UI.Text.FormatEffect.On);
+            SetFormatState("Italic", character.Italic == Microsoft.UI.Text.FormatEffect.On);
+            SetFormatState("Underline", character.Underline != Microsoft.UI.Text.UnderlineType.None);
+            SetFormatState("Bulleted list", listType == Microsoft.UI.Text.MarkerType.Bullet);
+            SetFormatState("Numbered list", listType == Microsoft.UI.Text.MarkerType.Arabic);
+        }
+        void SetFormatState(string name, bool isActive)
+        {
+            if (!formatButtons.TryGetValue(name, out var button)) return;
+            button.Style = (Style)Application.Current.Resources[isActive ? "AccentButtonStyle" : "DefaultButtonStyle"];
+            AutomationProperties.SetName(button, isActive ? name + " enabled" : name);
+        }
+        void AddFormatButton(string name, string glyph, Action action, bool isToggle = false)
         {
             var button = new Button
             {
                 Width = 40, Height = 40, Padding = new Thickness(8),
+                Style = (Style)Application.Current.Resources["DefaultButtonStyle"],
                 Content = new FontIcon { Glyph = glyph, FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 16 }
             };
             AutomationProperties.SetName(button, name);
             AutomationProperties.SetAutomationId(button, automationPrefix + "Format" +
                 Regex.Replace(name, "[^A-Za-z0-9]", string.Empty));
             ToolTipService.SetToolTip(button, name);
-            button.Click += (_, _) => action();
+            if (isToggle) formatButtons[name] = button;
+            button.Click += (_, _) =>
+            {
+                action();
+                UpdateFormattingButtonStates();
+            };
             toolbar.Children.Add(button);
         }
+        editor.SelectionChanged += (_, _) => UpdateFormattingButtonStates();
+        editor.TextChanged += (_, _) => UpdateFormattingButtonStates();
         AddFormatButton("Bold", "\uE8DD", () => ApplyInlineFormat(format =>
-            format.Bold = format.Bold == Microsoft.UI.Text.FormatEffect.On ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On));
+            format.Bold = format.Bold == Microsoft.UI.Text.FormatEffect.On ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On), true);
         AddFormatButton("Italic", "\uE8DB", () => ApplyInlineFormat(format =>
-            format.Italic = format.Italic == Microsoft.UI.Text.FormatEffect.On ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On));
+            format.Italic = format.Italic == Microsoft.UI.Text.FormatEffect.On ? Microsoft.UI.Text.FormatEffect.Off : Microsoft.UI.Text.FormatEffect.On), true);
         AddFormatButton("Underline", "\uE8DC", () => ApplyInlineFormat(format =>
-            format.Underline = format.Underline == Microsoft.UI.Text.UnderlineType.None ? Microsoft.UI.Text.UnderlineType.Single : Microsoft.UI.Text.UnderlineType.None));
+            format.Underline = format.Underline == Microsoft.UI.Text.UnderlineType.None ? Microsoft.UI.Text.UnderlineType.Single : Microsoft.UI.Text.UnderlineType.None), true);
         AddFormatButton("Bulleted list", "\uE8FD", () =>
         {
             var paragraph = editor.Document.Selection.ParagraphFormat;
             paragraph.ListType = paragraph.ListType == Microsoft.UI.Text.MarkerType.Bullet ? Microsoft.UI.Text.MarkerType.None : Microsoft.UI.Text.MarkerType.Bullet;
             editor.Document.Selection.ParagraphFormat = paragraph;
             editor.Focus(FocusState.Programmatic);
-        });
+        }, true);
         AddFormatButton("Numbered list", "\uE8F7", () =>
         {
             var paragraph = editor.Document.Selection.ParagraphFormat;
             paragraph.ListType = paragraph.ListType == Microsoft.UI.Text.MarkerType.Arabic ? Microsoft.UI.Text.MarkerType.None : Microsoft.UI.Text.MarkerType.Arabic;
             editor.Document.Selection.ParagraphFormat = paragraph;
             editor.Focus(FocusState.Programmatic);
-        });
+        }, true);
         AddFormatButton("Clear formatting", "\uE75C", () =>
         {
             ApplyInlineFormat(format =>
@@ -3762,7 +3813,7 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             "Recent Activity" or "Home" => "home",
             "Courses" when tab == "Updates" => "course-update",
             "Groups" when tab == "Updates" => "group-update",
-            "Resources" => "resources",
+            "Resources" => string.Empty,
             _ => string.Empty
         };
         _titleBarCreateContext = context;
@@ -5487,10 +5538,13 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         {
             App.WriteStartupLog("Standalone resource creation permissions could not be checked; creation remains hidden.", ex);
         }
+        if (_resourcePageCreateButton is not null)
+            _resourcePageCreateButton.Visibility = _resourceCanCreateCollection || _resourceCreatableCollections.Count > 0
+                ? Visibility.Visible : Visibility.Collapsed;
         UpdateTitleBarCreateButton("Resources", null);
     }
 
-    private async Task ShowResourceCreateMenuAsync()
+    private async Task ShowResourceCreateMenuAsync(Button? anchorButton = null)
     {
         try
         {
@@ -5530,10 +5584,11 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
             if (flyout.Items.Count == 0)
                 throw new InvalidOperationException("Schoology does not allow this account to create resource collections or resources.");
 
-            if (_titleBarCreateButton is null)
+            var anchor = anchorButton ?? _titleBarCreateButton;
+            if (anchor is null)
                 throw new InvalidOperationException("The Resources creation button is unavailable.");
 
-            flyout.ShowAt(_titleBarCreateButton);
+            flyout.ShowAt(anchor);
         }
         catch (Exception ex)
         {
@@ -5804,7 +5859,12 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
 
         if (folder.CollectionId > 0 && _resourceCreatableCollections.ContainsKey(folder.CollectionId))
         {
-            var create = new Button { Content = "＋ Create" };
+            var create = new Button
+            {
+                Content = "＋ Create",
+                Height = 40,
+                Style = (Style)Application.Current.Resources["AccentButtonStyle"]
+            };
             AutomationProperties.SetName(create, "Create a resource item or folder in this folder");
             AutomationProperties.SetAutomationId(create, "ResourceFolderCreateButton");
             var flyout = new MenuFlyout();
@@ -5964,7 +6024,39 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.Children.Add(Text("Resources", 24, true));
+        var header = new Grid { ColumnSpacing = 10 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.Children.Add(Text("Resources", 24, true));
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var refresh = new Button
+        {
+            Content = new SymbolIcon(Symbol.Refresh),
+            Width = 40,
+            Height = 40,
+            Style = (Style)Application.Current.Resources["DefaultButtonStyle"]
+        };
+        AutomationProperties.SetName(refresh, "Refresh resources");
+        AutomationProperties.SetAutomationId(refresh, "ResourcesRefreshButton");
+        ToolTipService.SetToolTip(refresh, "Refresh resources");
+        refresh.Click += async (_, _) => await LoadRootAsync();
+        actions.Children.Add(refresh);
+        var create = new Button
+        {
+            Content = "＋ Create",
+            Height = 40,
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            Visibility = Visibility.Collapsed
+        };
+        AutomationProperties.SetName(create, "Create a resource or collection");
+        AutomationProperties.SetAutomationId(create, "ResourcesCreateButton");
+        ToolTipService.SetToolTip(create, "Create a resource or collection");
+        create.Click += async (_, _) => await ShowResourceCreateMenuAsync(create);
+        _resourcePageCreateButton = create;
+        actions.Children.Add(create);
+        Grid.SetColumn(actions, 1);
+        header.Children.Add(actions);
+        root.Children.Add(header);
         var host = new Grid();
         Grid.SetRow(host, 1);
         root.Children.Add(host);
