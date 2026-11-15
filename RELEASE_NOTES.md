@@ -1,3 +1,13 @@
+## [2026.10.0-port.147] - 2026-11-15
+
+### Fix WinUI publish failure
+- Initialize the Resources root-page content host before registering the Refresh event handler that invokes the local asynchronous loader.
+- Resolve CS0165 (use of unassigned local variable `host`) for both x64 and ARM64 publish targets without changing the Resources header, permissions, or refresh behavior.
+- Retain the composer formatting-state and Resources action styling changes from port.146.
+
+### Build
+- Increment WinUI assembly and installer version to 2026.10.0-port.147.
+
 ## [2026.10.0-port.146] - 2026-11-15
 
 ### Composer formatting state and Resources commands

@@ -6024,6 +6024,8 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         var root = new Grid { Margin = new Thickness(24), RowSpacing = 10 };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        // Initialize the captured content host before wiring the Refresh handler to LoadRootAsync.
+        var host = new Grid();
         var header = new Grid { ColumnSpacing = 10 };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -6057,7 +6059,6 @@ public sealed partial class MainWindow : Window, IAsyncDisposable
         Grid.SetColumn(actions, 1);
         header.Children.Add(actions);
         root.Children.Add(header);
-        var host = new Grid();
         Grid.SetRow(host, 1);
         root.Children.Add(host);
         async Task LoadRootAsync()
