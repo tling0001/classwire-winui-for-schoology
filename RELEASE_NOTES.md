@@ -1,3 +1,11 @@
+## [2026.10.0-port.157] - 2026-11-17
+
+### Administrator update and private OAuth policies
+- Add an administrator control to disable update checks, update notifications, and update installation for this WinUI installation.
+- Add an administrator option for private embedded school OAuth sign-in. Each attempt receives a fresh WebView2 profile, disables password autosave, and clears website data when the view closes.
+- Preserve the existing embedded WebView2 flow and shared configuration controls when private mode is disabled.
+- Bump assembly, file, informational, installer, and package manifest versions to 2026.10.0-port.157.
+
 ## [2026.10.0-port.147] - 2026-11-15
 
 ### Fix WinUI publish failure

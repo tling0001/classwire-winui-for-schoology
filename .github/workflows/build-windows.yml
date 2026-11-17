@@ -1,0 +1,260 @@
+name: Build ClassWire
+
+on:
+  push:
+    branches: [main]
+  repository_dispatch:
+    types: [private-source-updated]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.client_payload.source_sha || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build per-user installer (${{ matrix.architecture }})
+    runs-on: windows-latest
+    env:
+      GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            rid: win-x64
+          - architecture: ARM64
+            rid: win-arm64
+    steps:
+      - name: Checkout private source
+        uses: actions/checkout@v5
+        with:
+          repository: ClassWire/classwire-winui-for-schoology
+          ref: ${{ github.event.client_payload.source_sha || 'main' }}
+          token: ${{ secrets.PRIVATE_SOURCE_READ_TOKEN }}
+          persist-credentials: false
+
+      - name: Setup Node.js for PDF.js and icon assets
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Generate shared ClassWire app icon
+        shell: pwsh
+        run: |
+          npm install --prefix .build/icon --no-save sharp@0.33.5
+          if ($LASTEXITCODE -ne 0) { throw "Icon image tooling installation failed." }
+          node Scripts/build-classwire-icon.mjs
+          if ($LASTEXITCODE -ne 0) { throw "ClassWire icon generation failed." }
+
+      - name: Stage PDF.js viewer assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm install --prefix .build/pdfjs --no-save pdfjs-dist@4.10.38
+          if ($LASTEXITCODE -ne 0) { throw "PDF.js installation failed." }
+          $source = Join-Path $env:GITHUB_WORKSPACE ".build/pdfjs/node_modules/pdfjs-dist"
+          $destination = Join-Path $env:GITHUB_WORKSPACE "Schoology.WinUI/Assets/PdfJs"
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+          foreach ($folder in @("build", "cmaps")) {
+            Copy-Item -LiteralPath (Join-Path $source $folder) -Destination $destination -Recurse -Force
+          }
+          Copy-Item -LiteralPath (Join-Path $source "LICENSE") -Destination (Join-Path $destination "PDFJS-LICENSE.txt") -Force
+          foreach ($required in @("build/pdf.mjs", "build/pdf.worker.mjs")) {
+            if (!(Test-Path -LiteralPath (Join-Path $destination $required))) { throw "Required PDF.js runtime asset is missing: $required" }
+          }
+          Write-Host "Staged $((Get-ChildItem -LiteralPath $destination -Recurse -File).Count) PDF.js runtime files."
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Configure Google OAuth client for the desktop build
+        shell: pwsh
+        run: |
+          $clientId = $env:GOOGLE_OAUTH_CLIENT_ID
+          if ([string]::IsNullOrWhiteSpace($clientId)) {
+            $clientId = "813096753007-fb3mqttvtampk2j0klquf0cckeicc67r.apps.googleusercontent.com"
+          }
+          $clientSecret = [string]$env:GOOGLE_OAUTH_CLIENT_SECRET
+          $clientIdLiteral = ConvertTo-Json -InputObject $clientId -Compress
+          $clientSecretLiteral = ConvertTo-Json -InputObject $clientSecret -Compress
+          $source = @"
+          namespace Schoology.WinUI;
+          internal static class GoogleOAuthConfiguration
+          {
+              internal const string ClientId = $clientIdLiteral;
+              internal const string ClientSecret = $clientSecretLiteral;
+          }
+          "@
+          Set-Content -LiteralPath "Schoology.WinUI/GoogleOAuthConfiguration.cs" -Value $source -Encoding utf8
+
+      - name: Restore
+        shell: pwsh
+        run: |
+          dotnet restore Schoology.WinUI/Schoology.WinUI.csproj --runtime ${{ matrix.rid }} -p:Platform=${{ matrix.architecture }}
+          if ($LASTEXITCODE -ne 0) { throw "Restore failed for ${{ matrix.architecture }}." }
+
+      - name: Publish self-contained WinUI app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $output = Join-Path $env:GITHUB_WORKSPACE "publish\${{ matrix.rid }}"
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          dotnet publish Schoology.WinUI/Schoology.WinUI.csproj --configuration Release --no-restore --runtime ${{ matrix.rid }} --self-contained true -p:Platform=${{ matrix.architecture }} -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true -o $output
+          if ($LASTEXITCODE -ne 0) { throw "Publish failed for ${{ matrix.architecture }}." }
+
+      - name: Verify WinUI resource index
+        shell: pwsh
+        run: |
+          $output = "publish/${{ matrix.rid }}"
+          $resourceIndexes = @(Get-ChildItem -LiteralPath $output -Filter "*.pri" -File)
+          if ($resourceIndexes.Count -eq 0) { throw "No WinUI PRI resource index was published to $output." }
+          $resourceIndexes | ForEach-Object { Write-Host "Verified WinUI resource index: $($_.Name)" }
+
+      - name: Verify published executable
+        shell: pwsh
+        run: |
+          $exe = "publish/${{ matrix.rid }}/ClassWire.exe"
+          if (!(Test-Path -LiteralPath $exe)) { throw "Expected executable was not produced: $exe" }
+          Write-Host "Verified executable: $exe"
+          $pdfRoot = "publish/${{ matrix.rid }}/PdfJs"
+          $requiredPdfAssets = @(
+            "$pdfRoot/PdfViewer.html",
+            "$pdfRoot/build/pdf.mjs",
+            "$pdfRoot/build/pdf.worker.mjs",
+            "$pdfRoot/cmaps/Adobe-Japan1-UCS2.bcmap"
+          )
+          foreach ($asset in $requiredPdfAssets) {
+            if (!(Test-Path -LiteralPath $asset -PathType Leaf)) { throw "PDF.js runtime asset was not published: $asset" }
+            Write-Host "Verified PDF.js asset: $asset"
+          }
+          # PDF.js uses installed Windows/browser fonts for standard-font substitution.
+          $cmapFiles = @(Get-ChildItem -LiteralPath (Join-Path $pdfRoot "cmaps") -Recurse -File)
+          if ($cmapFiles.Count -eq 0) { throw "PDF.js CMap directory is empty." }
+          $pdfAssetCount = @(Get-ChildItem -LiteralPath $pdfRoot -Recurse -File).Count
+          if ($pdfAssetCount -lt 10) { throw "PDF.js publish folder is incomplete ($pdfAssetCount files): $pdfRoot" }
+          Write-Host "Verified $pdfAssetCount bundled PDF.js files."
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed." }
+
+      - name: Build per-user installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $iscc = $null
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$env:ChocolateyInstall\lib\innosetup\tools\ISCC.exe"
+          )
+          foreach ($candidate in $candidates) {
+            if (Test-Path -LiteralPath $candidate) { $iscc = $candidate; break }
+          }
+          if (!$iscc) {
+            $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if ($command) { $iscc = $command.Source }
+          }
+          if (!$iscc) { throw "Inno Setup compiler was not found." }
+
+          [xml]$project = Get-Content -LiteralPath "Schoology.WinUI/Schoology.WinUI.csproj" -Raw
+          $version = $project.Project.PropertyGroup.Version | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "Could not read the application version." }
+          $sourceDir = Join-Path $env:GITHUB_WORKSPACE "publish\${{ matrix.rid }}"
+          & $iscc "/DArchitecture=${{ matrix.architecture }}" "/DAppVersion=$version" "/DSourceDir=$sourceDir" "installer\Schoology-WinUI.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for ${{ matrix.architecture }}." }
+
+          $installer = Join-Path $env:GITHUB_WORKSPACE "installer-output\ClassWire-WinUI-$version-${{ matrix.architecture }}-Setup.exe"
+          if (!(Test-Path -LiteralPath $installer)) { throw "Expected installer was not created: $installer" }
+          Write-Host "Created per-user installer: $installer"
+
+      - name: Upload installer and published files
+        uses: actions/upload-artifact@v6
+        with:
+          name: ClassWire-WinUI-${{ matrix.rid }}
+          path: |
+            installer-output/*.exe
+            publish/${{ matrix.rid }}/**
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish versioned ClassWire release
+    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ClassWire/classwire-winui-for-schoology
+          ref: ${{ github.event.client_payload.source_sha || 'main' }}
+          token: ${{ secrets.PRIVATE_SOURCE_READ_TOKEN }}
+          persist-credentials: false
+
+      - name: Read version and matching release notes
+        id: release_meta
+        shell: bash
+        run: |
+          VERSION="$(python3 -c 'import xml.etree.ElementTree as ET; print(ET.parse("Schoology.WinUI/Schoology.WinUI.csproj").findtext(".//Version"))')"
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          python3 - "$VERSION" RELEASE_NOTES.md release-notes.md <<'PY'
+          import sys
+          from pathlib import Path
+          version, source, destination = sys.argv[1:]
+          text = Path(source).read_text(encoding="utf-8")
+          selected = []
+          for section in text.split("## [")[1:]:
+              heading, separator, remainder = section.partition("]")
+              if separator and heading == version:
+                  selected.append("## [" + heading + "]" + remainder)
+          if not selected:
+              raise SystemExit(f"No release notes found for {version}")
+          Path(destination).write_text("\n\n".join(selected).strip() + "\n", encoding="utf-8")
+          PY
+
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: ClassWire-WinUI-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release_meta.outputs.version }}
+        shell: bash
+        run: |
+          mapfile -d '' installers < <(find release-assets -type f -name '*-Setup.exe' -print0)
+          if [ "${#installers[@]}" -ne 2 ]; then
+            echo "Expected exactly two per-user installer EXEs (x64 and ARM64), found ${#installers[@]}." >&2
+            find release-assets -maxdepth 3 -type f -print >&2
+            exit 1
+          fi
+          if gh release view "$VERSION" --repo tling0001/classwire-winui-for-schoology >/dev/null 2>&1; then
+            gh release edit "$VERSION" --repo tling0001/classwire-winui-for-schoology --title "$VERSION" --notes-file release-notes.md
+          else
+            gh release create "$VERSION" --repo tling0001/classwire-winui-for-schoology --title "$VERSION" --notes-file release-notes.md --target main
+          fi
+          schoology_installers=()
+          for installer in "${installers[@]}"; do
+            case "$installer" in
+              *-ARM64-Setup.exe) architecture="ARM64" ;;
+              *-x64-Setup.exe) architecture="x64" ;;
+              *) echo "Unexpected WinUI installer filename: $installer" >&2; exit 1 ;;
+            esac
+            alias="release-assets/Schoology-WinUI-${VERSION}-${architecture}-Setup.exe"
+            cp "$installer" "$alias"
+            schoology_installers+=("$alias")
+          done
+          gh release upload "$VERSION" --repo tling0001/classwire-winui-for-schoology "${installers[@]}" "${schoology_installers[@]}" --clobber
