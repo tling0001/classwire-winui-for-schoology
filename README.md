@@ -4,16 +4,46 @@ A native Windows desktop client branded ClassWire, built with WinUI 3 and the Wi
 
 ## Features
 
+### Native Windows experience
+
 - Native WinUI 3 shell with a left NavigationView integrated into the Windows title bar.
 - Light and dark themes, high-contrast resources, Windows Mica/Acrylic surfaces, and a reduced-motion setting.
+- Native Windows dialogs, flyouts, menus, notifications, and keyboard-accessible controls.
+- Responsive navigation and content layouts, including narrow-window navigation behavior.
+
+### Sign-in and account
+
 - Schoology OAuth 1.0a sign-in with locally protected session storage; passwords are not retained.
-- Home and Upcoming dashboards, course and group spaces, school profiles, members, materials, assignments, grades, discussions, resources, and events.
-- Recent activity and course/group updates with shared post cards, comments, likes, image/file attachments, and polls.
-- Inbox, unread, sent, and message-thread views with profile resolution and participant avatars.
-- Native assignment details, comments, and submission information; LTI and assessment content can be opened in the shared WebView2 surface.
-- Shared authenticated WebView2 environment for supported Schoology web content, with Schoology session cookies installed before navigation.
-- Windows notifications, optional notification sound, startup/background operation, notification-area controls, and first-launch release notes.
 - QR sign-in support where the required camera hardware is available.
+- Parent-account support with a navigation student switcher when Schoology exposes linked student accounts.
+- Session-aware authenticated Schoology WebView2 environment, with Schoology session cookies installed before navigation.
+
+### Schoology learning and communication
+
+- Home and Upcoming dashboards, course and group spaces, school profiles, members, materials, assignments, gradebook, discussions, resources, and events.
+- Course-material folders with recursive inline expansion and lazy loading.
+- Resources browsing for personal, shared, group, and supported resource collections; nested folders, creation, and permission-checked editing.
+- Recent activity and course/group updates with shared post cards, comments, likes, image/file attachments, and polls.
+- Inbox, unread, sent, and message-thread views with profile resolution, participant avatars, attachments, and message composition.
+- Native assignment details, comments, student submission history, text/file submissions, and supported attachment viewing/downloading.
+- Teacher grading for authorized section instructors, including student submission review, grade and comment editing, comment visibility, rubric criteria scores/comments, and supported total-grade overrides.
+- Calendar and Upcoming event browsing, with supported native creation flows.
+
+### ClassWire AI
+
+- Optional AI assistant with Google Gemini, OpenAI, Anthropic, Ollama, and Puter provider choices.
+- Schoology-aware tools for courses, groups, upcoming work, assignments, grades, materials, updates, message search, and message threads.
+- Page-aware context and navigation to supported Schoology destinations.
+- Proposed actions for supported assignment submissions, messages, course updates, and teacher grade changes require the user to review and explicitly confirm before execution.
+- Provider/model availability and attachment support vary. Prompts and relevant Schoology context are sent to the selected provider; review provider terms before sharing education information.
+
+### Attachments and embedded content
+
+- Shared attachment actions for supported file types, with native document/image viewing and downloads.
+- Authenticated WebView2 for supported Schoology pages, LTI content, assessments, and external tools.
+- Schoology session cookies are installed into the shared WebView2 environment before authenticated navigation.
+
+Some Schoology features depend on account permissions, school configuration, and server-side API support. Certain specialized workflows and file formats may still open in Schoology web content or may not yet have a native WinUI equivalent. Availability can vary by account and school.
 
 ## Build and installation
 
@@ -36,7 +66,3 @@ The installer is currently unsigned. Windows SmartScreen may therefore show an u
 - Release history: `RELEASE_NOTES.md`
 
 The official Schoology Android 2026.10.0 source is the reference for Schoology API and authentication behavior. The supplied classic Tauri desktop port.28 source is the reference for desktop navigation, content organization, and expected workflows. The WinUI interface is adapted to native Windows controls rather than copying Android or web UI.
-
-## Current limitations
-
-Some Schoology features depend on account permissions, school configuration, and server-side API support. Certain specialized workflows (including file-based assignment submission and some embedded third-party tools) may still open in Schoology web content or may not yet have a native WinUI equivalent. Availability can vary by account and school.
