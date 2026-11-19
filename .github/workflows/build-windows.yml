@@ -30,7 +30,7 @@ jobs:
           - architecture: ARM64
             rid: win-arm64
     steps:
-# CI checks out the current application source from ClassWire/classwire-winui-for-schoology; this mirror stores workflow logs and artifacts only.
+# Trigger port.159 from ClassWire/classwire-winui-for-schoology; this mirror stores workflow logs and artifacts only.
       - name: Checkout private source
         uses: actions/checkout@v5
         with:
