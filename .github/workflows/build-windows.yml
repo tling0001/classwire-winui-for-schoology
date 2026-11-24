@@ -30,7 +30,7 @@ jobs:
           - architecture: ARM64
             rid: win-arm64
     steps:
-# Trigger port.161 from ClassWire/classwire-winui-for-schoology; this mirror stores workflow logs and artifacts only.
+# Trigger port.162 source 8ef7410ff19c78d85f1e709cd4dca5cd2db1997c from ClassWire/classwire-winui-for-schoology; this mirror stores workflow logs and artifacts only.
       - name: Checkout private source
         uses: actions/checkout@v5
         with:
