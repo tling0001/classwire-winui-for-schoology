@@ -66,3 +66,5 @@ The installer is currently unsigned. Windows SmartScreen may therefore show an u
 - Release history: `RELEASE_NOTES.md`
 
 The official Schoology Android 2026.10.0 source is the reference for Schoology API and authentication behavior. The supplied classic Tauri desktop port.28 source is the reference for desktop navigation, content organization, and expected workflows. The WinUI interface is adapted to native Windows controls rather than copying Android or web UI.
+
+<!-- CI trigger: private source fix 89bbcee6eb730f947233605bc51564e25aa5e44b -->
